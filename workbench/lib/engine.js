@@ -408,6 +408,27 @@ function applyCells(state, cells) {
   return { columns: columns, rows: rows };
 }
 
+// 票 #15：按钮 id 单调不复用——取现有 b<number> 的最大号 +1，
+// 不用 buttons.length+1（删除中间按钮后重建会撞 id）。
+function nextButtonId(buttons) {
+  let max = 0;
+  (buttons || []).forEach(function (b) {
+    const m = /^b(\d+)$/.exec(String(b.id || ''));
+    if (m) max = Math.max(max, parseInt(m[1], 10) || 0);
+  });
+  return 'b' + (max + 1);
+}
+// 按钮是声明式配方 + 运行态标记；Host 权威源持久化时只需存这些字段（票 #15 / 用户故事 32）。
+// 这里做防御性拷贝，导出/水合都不共享内部引用、不含任何可执行代码。
+function cloneButton(b) {
+  return {
+    id: b.id, name: b.name, kind: b.kind,
+    params: Object.assign({}, b.params || {}),
+    medium: b.medium, steps: (b.steps || []).slice(),
+    lastAffectedRows: b.lastAffectedRows === undefined ? 0 : b.lastAffectedRows,
+    emptyRun: !!b.emptyRun
+  };
+}
 function initial(data) {
   data = data || {};
   return {
@@ -416,7 +437,8 @@ function initial(data) {
     columns: (data.columns || []).slice(),
     rows: (data.rows || []).map(function (r) { return Object.assign({}, r); }),
     sources: data.sources || {},
-    stage: 'IDLE', input: '', draft: null, preview: null, buttons: [],
+    stage: 'IDLE', input: '', draft: null, preview: null,
+    buttons: (data.buttons || []).map(cloneButton),  // 票 #15：Host 权威源水合
     log: [], note: '先写一句话并「理解」，或按一个快捷按钮。', noteTone: 'info'
   };
 }
@@ -489,13 +511,54 @@ function reduce(state, action) {
       if (state.stage !== 'EXECUTED' || !state.draft)
         return guard(state, '拦住了：还没执行过，不能把草稿固化成按钮。');
       const name = String(action.name || '').trim() || state.draft.name;
-      const b = {
-        id: 'b' + (state.buttons.length + 1), name: name, kind: state.draft.kind,
+      const affected = state.preview ? state.preview.affectedRows : 0;
+      const b = cloneButton({
+        id: nextButtonId(state.buttons), name: name, kind: state.draft.kind,
         params: Object.assign({}, state.draft.params, action.params || {}),
-        medium: state.draft.medium, steps: state.draft.steps.slice()
-      };
+        medium: state.draft.medium, steps: state.draft.steps.slice(),
+        lastAffectedRows: affected, emptyRun: affected === 0
+      });
       return set(state, { buttons: state.buttons.concat([b]), stage: 'SOLIDIFIED',
-        note: '已命名参数化为按钮「' + name + '」。', noteTone: 'ok', log: push(state, '固化为按钮：' + name, 'ok') });
+        note: '已命名参数化为按钮「' + name + '」' + (b.emptyRun ? '（空跑 / 上次影响 0 行）' : '') +
+          '。', noteTone: 'ok', log: push(state, '固化为按钮：' + name, 'ok') });
+    }
+    case 'RENAME_BUTTON': {
+      const id = action.id;
+      if (!state.buttons.some(function (x) { return x.id === id; })) return guard(state, '按钮库里没有这个按钮，无法重命名。');
+      const name = String(action.name || '').trim();
+      if (!name) return guard(state, '按钮名不能为空。');
+      return set(state, {
+        buttons: state.buttons.map(function (x) { return x.id === id ? Object.assign({}, x, { name: name }) : x; }),
+        note: '按钮已重命名为「' + name + '」。', noteTone: 'ok', log: push(state, '重命名按钮 → ' + name, 'ok')
+      });
+    }
+    case 'SET_BUTTON_PARAMS': {
+      const id = action.id;
+      const target = state.buttons.filter(function (x) { return x.id === id; })[0];
+      if (!target) return guard(state, '按钮库里没有这个按钮，无法改参数。');
+      const merged = Object.assign({}, target.params, action.params || {});
+      const rebuilt = buildDraft(target.kind, null, merged);
+      // 票 #15 code-review（两轴共同 MEDIUM）：改参数也走封闭校验，
+      // 不允许把非法/白名单外的参数写进 Host 权威源、还报成功；在变更边界就拦下。
+      const check = validate(rebuilt, state);
+      if (!check.ok) return guard(state, '按钮参数没通过封闭校验，未保存：' + check.errors.join('；'));
+      return set(state, {
+        buttons: state.buttons.map(function (x) {
+          return x.id === id ? Object.assign({}, x, {
+            params: merged, steps: rebuilt.steps, medium: rebuilt.medium
+          }) : x;
+        }),
+        note: '按钮「' + target.name + '」的参数已更新（改参数重跑时仍会强制退回预览确认）。',
+        noteTone: 'info', log: push(state, '改按钮参数：' + target.name)
+      });
+    }
+    case 'DELETE_BUTTON': {
+      const id = action.id;
+      if (!state.buttons.some(function (x) { return x.id === id; })) return guard(state, '按钮库里没有这个按钮，无法删除。');
+      return set(state, {
+        buttons: state.buttons.filter(function (x) { return x.id !== id; }),
+        note: '按钮已删除。', noteTone: 'info', log: push(state, '删除按钮：' + id)
+      });
     }
     case 'RUN_BUTTON': {
       const b = action.id === '__last__' ? state.buttons[state.buttons.length - 1]
@@ -519,8 +582,16 @@ function reduce(state, action) {
         });
       }
       const applied = applyCells(state, pv.cells);
-      return set(state, { columns: applied.columns, rows: applied.rows, draft: draft, preview: pv, stage: 'EXECUTED',
-        note: '一键运行「' + b.name + '」：参数未改，直接执行 ' + pv.cells.length + ' 格。', noteTone: 'ok',
+      // 票 #15 / 用户故事 18/32：重跑更新运行态标记（上次影响行数 / 空跑），不写回仓库。
+      const buttons = state.buttons.map(function (x) {
+        return x.id === b.id ? Object.assign({}, x, {
+          lastAffectedRows: pv.affectedRows, emptyRun: pv.affectedRows === 0
+        }) : x;
+      });
+      const emptyNote = pv.affectedRows === 0 ? '（空跑 / 影响 0 行）' : '';
+      return set(state, { columns: applied.columns, rows: applied.rows, draft: draft, preview: pv,
+        stage: 'EXECUTED', buttons: buttons,
+        note: '一键运行「' + b.name + '」：参数未改，直接执行 ' + pv.cells.length + ' 格' + emptyNote + '。', noteTone: 'ok',
         log: push(state, '一键运行「' + b.name + '」（参数未改）→ ' + pv.cells.length + ' 格变化', 'ok') });
     }
     case 'START_WALK': {
@@ -536,7 +607,12 @@ function reduce(state, action) {
   }
 }
 
+// 票 #15：Host 权威源的导出契约——返回按钮库声明式副本（无内部引用、无可执行代码）。
+function exportButtons(state) {
+  return (state.buttons || []).map(cloneButton);
+}
+
 module.exports = {
   SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, columnLetter, toFormula, extractOutputColumn, extractExpression,
-  initial, understand, buildDraft, validate, preview, applyCells, reduce
+  initial, understand, buildDraft, validate, preview, applyCells, reduce, exportButtons, nextButtonId
 };

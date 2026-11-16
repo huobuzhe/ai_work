@@ -1,8 +1,8 @@
 # dsh-workbench（表格工作台 · 第一刀）
 
-规格 [`#8`](https://github.com/huobuzhe/ai_work/issues/8) / 实施票 [`#9`](https://github.com/huobuzhe/ai_work/issues/9)、[`#11`](https://github.com/huobuzhe/ai_work/issues/11)、[`#12`](https://github.com/huobuzhe/ai_work/issues/12)、[`#13`](https://github.com/huobuzhe/ai_work/issues/13)、[`#14`](https://github.com/huobuzhe/ai_work/issues/14) 的可交付插件包。
+规格 [`#8`](https://github.com/huobuzhe/ai_work/issues/8) / 实施票 [`#9`](https://github.com/huobuzhe/ai_work/issues/9)、[`#11`](https://github.com/huobuzhe/ai_work/issues/11)、[`#12`](https://github.com/huobuzhe/ai_work/issues/12)、[`#13`](https://github.com/huobuzhe/ai_work/issues/13)、[`#14`](https://github.com/huobuzhe/ai_work/issues/14)、[`#15`](https://github.com/huobuzhe/ai_work/issues/15) 的可交付插件包。
 
-把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）+ 作用范围/条件对所有动作生效（票 #12）+ swap 半换边界与披露 / conditional 增删补齐（票 #13）+ 封闭校验系统与预览卡完整五段（票 #14）**；云端 adapter、NL 一步编译成函数等属后续票，不在本包范围。
+把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）+ 作用范围/条件对所有动作生效（票 #12）+ swap 半换边界与披露 / conditional 增删补齐（票 #13）+ 封闭校验系统与预览卡完整五段（票 #14）+ 按钮固化与一键重跑 / 按钮库生命周期（票 #15）**；云端 adapter、NL 一步编译成函数等属后续票，不在本包范围。
 
 ## 结构
 
@@ -14,13 +14,13 @@
 - `scripts/xlsx_bridge.py` — 本地 xlsx/csv 文件桥（仅读写文件，无业务逻辑）；需要 Python + openpyxl。`read-xlsx` 读公式字符串，`read-values`（data_only=True）读重算后的缓存值。
 - `scripts/acceptance-run.js` — extract 端到端验收编排：造 xlsx → 引擎 extract → 写回 → 读回断言。
 - `scripts/acceptance-formula.js` — function 端到端验收编排：造 xlsx → 引擎生成公式 → 写回 → 调 bundled LibreOffice Kit 重算 → data_only 读回缓存值断言。CLI 路径可用 `WORKBENCH_LO_NODE` / `WORKBENCH_LO_CLI` 覆盖。
-- `test/` — `node:test`：纯引擎 11 例、面板注册契约 4 例、extract 端到端 1 例、function 公式纯引擎 8 例、function 重算端到端 1 例、scope/条件公共字段 12 例、swap/conditional 半换边界与披露 15 例、封闭校验与预览卡五段 24 例（共 76 例）。
+- `test/` — `node:test`：纯引擎 11 例、面板注册契约 4 例、extract 端到端 1 例、function 公式纯引擎 8 例、function 重算端到端 1 例、scope/条件公共字段 12 例、swap/conditional 半换边界与披露 15 例、封闭校验与预览卡五段 24 例、按钮固化/一键重跑/按钮库生命周期 17 例（共 93 例）。
 
 ## 构建 / 验证
 
 ```bash
 npm run build:client      # 重新生成 client/client.js
-npm test                  # 全测（76 例）
+npm test                  # 全测（93 例）
 npm run acceptance        # extract 端到端验收，打印逐行读回结果
 npm run acceptance:formula # function 端到端验收（含 LibreOffice 重算），打印重算后缓存值
 ```
@@ -29,7 +29,7 @@ function 重算用 bundled LibreOffice Kit CLI（非系统 soffice）：默认�
 
 无第三方依赖：测试只用 Node 内置 `node:test` + `node:vm`；文件读写只用本机 Python + openpyxl。本仓无 TypeScript 编译器，全包为纯 JS，类型安全以 `node --check` 语法检查代替（无 tsc，不伪造 typecheck）。
 
-## 边界（Slice 1 / 票 #9、#11、#12、#13、#14）
+## 边界（Slice 1 / 票 #9、#11、#12、#13、#14、#15）
 
 - 零云凭据：不涉及飞书 / 腾讯 / Microsoft Graph。函数计算由本地 LibreOffice 重算，不调用任何云 API。
 - 配方是声明式数据（kind + params），不含可执行代码；function 的表达式经封闭校验后才生成公式。
@@ -39,5 +39,6 @@ function 重算用 bundled LibreOffice Kit CLI（非系统 soffice）：默认�
 - 封闭校验系统（票 #14）：`lib/engine.js` 的 `validate()` 是按参数类型派生的封闭清单——缺 schemaVersion / 版本读不懂 / 参数含白名单外字段 / 非法 scope·condition / 各类必填缺失一律拒绝，逐条产出结构化 `issue{field,reason}`；在预览前跑完、任一失败都不落盘。校验失败也出预览卡：第②段列出失败项、禁用确认（非法配方 CONFIRM 被状态机拦下、表格不动）。**这里修掉一个真实安全缺口**：票 #14 之前，含未知字段的配方能通过校验并被 CONFIRM 执行；现在封闭白名单拒绝它。CONFIRM 另加一道纵深防御：执行前对 `state.draft` 再跑一次 `validate()`，防止宿主持久化/重水合或外部改动让 state 在 PREVIEW 与 CONFIRM 间漂移后仍执行失效配方（Standards review finding #1，附 AC5b 测试）。issue 的「就地修正控件」由宿主按 `issue.field` 渲染，本包只交结构化视图模型、不内嵌 UI。
 - 预览卡五段 view-model 骨架（票 #14）：`client/index.js` 的 `projectPreviewCard(state)` 输出 `sections.{explain,validation,scopeParams,impact,confirm}`——① 解释（kind/medium/params/steps）② 校验清单（ok + 逐条 issue，带 `currentValue` 供宿主预填修正控件）③ 作用范围与命名参数（scope/条件/参数，可改联动重算）④ 影响预览（将改格子 + 影响 N 行/共 M 行 + swap 混合来源 banner，均来自引擎实际计算、非死数据）⑤ 确认/取消（canConfirm 仅在校验通过且 stage=PREVIEWED 时为真）。整卡是 5 步管线第②步、不是第 6 步；`#9/#12/#13` 的扁平字段保留向后兼容。
 - **诚实边界（Spec review finding 2/3/4/6，defer）**：五段的**数据**来自真实计算、非死数据，但以下属于「宿主渲染 / 更大数据模型」、不在本纯 seam 包内——② 的就地可编辑修正控件 UI（本包只给 `issue{field,reason,currentValue}`，控件由宿主渲染，与 #12 Spec F3 一致）；③ 的**带类型参数声明** `{key,类型,必填?,默认值?,取值约束?}`（当前 `KINDS.params` 是默认值 map、非 typed whitelist，需另起 effort 补参数类型系统）；④ 的命中行优先截断 / 「算不出来」标红可视化（cell.invalid 字段存在但当前校验在产格前就拒绝非法表达式，这条渲染路径暂不可达）。另：`主键列唯一非空` 是规格派生清单项、pre-existing 未纳入 #14 的 AC，defer。这些均如实记录、不冒充已实现。
-- 不暴露「一键运行跳过确认」：必须先预览、用户确认后才写值。
+- 按钮固化与一键重跑（票 #15）：执行后配方经 `SOLIDIFY` 固化为「命名 + 带参数」按钮存入按钮库（`buttons`，声明式、无可执行代码）；`RENAME_BUTTON` / `SET_BUTTON_PARAMS` / `DELETE_BUTTON` 全生命周期齐备，改参数在变更边界也走封闭校验（非法/白名单外参数当场拒绝，不写进 Host 权威源）。`nextButtonId` 扫描现有 id 取 max+1，删除后新建不与现存 id 冲突（修 `length+1` bug）；`cloneButton` 做顶层防御性拷贝（`params` / `steps` 的值按当前模型均为字符串字面量、无嵌套对象；若将来参数值允许嵌套需升级为深拷贝——如实记录）、`initial(data.buttons)` 水合、`exportButtons(state)` 导出——按钮库持久化走 Host 权威源，本包没有任何写文件/仓库的代码。一键重跑 `RUN_BUTTON` 走与首次同一条 `validate → preview → applyCells` 管线：**参数一处没改才真一键直接执行（跳过的是「用户确认」这一步，`validate`/`preview` 照跑不误）；改了任何参数就强制退回「解释与影响预览 → 用户确认」**。零命中也可固化为按钮、带 `emptyRun` / `lastAffectedRows` 运行态标记，每次重跑从当前数据重算标记。面板 `client/index.js` 的 `projectButtonLibrary(state)` 把按钮库投影成视图模型（仅 8 个声明字段、不含函数/内部引用），body 返回 `{preview, buttonLibrary}` 两块、所有按钮统一在面板呈现。不做云端原生按钮投影（AC5，后续 effort）。
+- 「一键运行跳过确认」仅限固化按钮且参数一字未改：跳过的是确认这一步、校验与影响预览照跑；其余任何写值（首次执行、导览、改过参数的重跑）必须先预览、用户确认后才写值。
 - 不改 `apps/web` shell，不起独立 Vite 应用；表格视图的可编辑 grid 形态（研究未验证 #4）留待后续票，本面板 body 仅验证注册契约。

@@ -119,6 +119,30 @@ function labelOfKind(kind) {
   return map[kind] || kind;
 }
 
+/**
+ * 按钮库投影（纯函数，无 DOM / 无 React）——票 #15。
+ * 把 Host 权威状态里的 state.buttons 映射成可序列化的按钮库视图模型，
+ * 供 client-plugin 面板的「按钮区」统一呈现（AC4）。
+ * 按钮是声明式配方 + 运行态标记：lastAffectedRows / emptyRun 如实带出（用户故事 18/32），
+ * 不含任何可执行代码；不做云端原生按钮投影（AC5，后续 effort）。
+ */
+function projectButtonLibrary(state) {
+  const buttons = (state && state.buttons || []).map(function (b) {
+    return {
+      id: b.id,
+      name: b.name,
+      kind: b.kind,
+      label: labelOfKind(b.kind),
+      params: Object.assign({}, b.params || {}),
+      medium: b.medium,
+      steps: (b.steps || []).slice(),
+      lastAffectedRows: b.lastAffectedRows === undefined ? 0 : b.lastAffectedRows,
+      emptyRun: !!b.emptyRun
+    };
+  });
+  return { total: buttons.length, buttons: buttons };
+}
+
 function registerWorkbenchPanel(ctx) {
   // 阶段 1：注册 tab 类型（priority=extension，外部包公开路径；keepMounted 常驻）
   ctx.inject(['sidebarRightTabs'], function (nativeCtx) {
@@ -136,14 +160,18 @@ function registerWorkbenchPanel(ctx) {
 
   // 阶段 2：面板 body 注册到 sidebar.right.pane.tab，key 等于 tab id
   ctx.slots.register({ name: 'sidebar.right.pane.tab', key: TAB_ID }, function WorkbenchPanelBody(hostState) {
-    // 工作台自渲染的「解释与影响预览」卡：把 Host 投影进来的状态映射成视图模型。
-    return projectPreviewCard(hostState);
+    // 工作台自渲染视图：把 Host 投影进来的状态映射成「预览卡 + 按钮库」两块视图模型。
+    // 票 #15：所有按钮统一在面板呈现（AC4），按钮库与预览卡来自同一份 Host 权威状态。
+    return {
+      preview: projectPreviewCard(hostState),
+      buttonLibrary: projectButtonLibrary(hostState)
+    };
   });
 
-  return { tabId: TAB_ID, kind: TAB_KIND, projectPreviewCard };
+  return { tabId: TAB_ID, kind: TAB_KIND, projectPreviewCard, projectButtonLibrary };
 }
 
-module.exports = { registerWorkbenchPanel, projectPreviewCard, TAB_ID, TAB_KIND };
+module.exports = { registerWorkbenchPanel, projectPreviewCard, projectButtonLibrary, TAB_ID, TAB_KIND };
 
     return module.exports;
   }
