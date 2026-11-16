@@ -66,6 +66,85 @@ const COMMON_PARAMS = [
 ];
 
 // ============================================================================
+// 票 #21（Slice 2 / S1）：统一表格操作 adapter 抽象层 + 公式能力位契约。
+// 规格 #8 Slice 2「Adapter 抽象」与「公式能力契约」段：
+//  - 一套按钮模型/动作配方落在不同平台，差异收敛在 adapter 内。
+//  - 能力位是 binary 结论（true/false），false 的动作在该 adapter 上禁用并明确提示，
+//    绝不静默降级、不写死值、不偷偷把公式算成值。
+//  - 本票只做接口 + 能力位契约 + 禁用/提示逻辑，不接真实云端后端（云端实装见 S3/S4）。
+//  - 能力位填充值取既有事实矩阵，不重新研究（证据：docs/research/cloud-capability-matrix.md）。
+//    · 本地 Excel（local）：四格 true —— 本仓已实测「写公式→LibreOffice 重算→读回缓存值」闭环
+//      （engine 的 function 介质 + xlsx_bridge.py read-values + acceptance:formula）。
+//    · 飞书（feishu）：四格 false —— 文档层无公式写入/重算/读计算值接口（矩阵按文档层 false）。
+//    · 腾讯（tencent）：四格 false —— 一手负面证据已验证：V3 batchUpdate 的 CellValue 无公式字段、
+//      无重算接口、无读计算值接口（见 docs/research/cloud-capability-matrix.md 与
+//      docs/research/tencent-v3-batchupdate-request-shape.md）。
+// adapter 是纯声明：字段只有 id / label / capabilities / formulaCapabilities / evidence，
+// 不含任何可执行函数（本引擎不在此处做 I/O；真实读写的文件桥/HTTP 在 scripts/ 与后续 S3/S4）。
+// ============================================================================
+
+// 统一表格操作接口的四类能力名（纯声明，供文档/校验/后续 adapter 实装对齐用）。
+const ADAPTER_INTERFACE = ['读表', '写单元格', '建表', '读回计算值'];
+
+// 四类动作对「公式能力」的依赖：只有 function（公式字符串产物）依赖公式能力位；
+// 结构化动作（extract/swap/conditional）只读写单元格值、不依赖公式能力，任何 adapter 都可用。
+// 每个依赖项写明：需要的能力位 + 该位为 false 时给出的原因提示（用户故事：不静默降级）。
+const KIND_CAPABILITY_DEPS = {
+  function: [
+    { cap: 'canWriteFormula', need: '写入公式', reason: '该平台能力位 canWriteFormula=false：不能写入公式，自定义函数计算在此平台禁用。' },
+    { cap: 'canRecalc', need: '重算公式', reason: '该平台能力位 canRecalc=false：不会重算公式，写入的公式无法得到计算值。' },
+    { cap: 'canReadComputed', need: '读回计算值', reason: '该平台能力位 canReadComputed=false：无法读回公式的计算值。' }
+  ]
+};
+
+const ADAPTERS = {
+  local: {
+    id: 'local',
+    label: '本地 Excel（零凭据）',
+    capabilities: { 读表: true, 写单元格: true, 建表: true, 读回计算值: true },
+    formulaCapabilities: { canWriteFormula: true, canRecalc: true, canReadComputed: true, functionSet: true },
+    evidence: '仓内实测：function 公式字符串产物 + LibreOffice recalculate + xlsx_bridge.py read-values 闭环（acceptance:formula，valuesMatch:true）。'
+  },
+  feishu: {
+    id: 'feishu',
+    label: '飞书多维表格 / 电子表格',
+    capabilities: { 读表: true, 写单元格: true, 建表: true, 读回计算值: false },
+    formulaCapabilities: { canWriteFormula: false, canRecalc: false, canReadComputed: false, functionSet: false },
+    evidence: '按文档层 false：飞书开放平台未见写公式/重算/读计算值的一手接口（docs/research/cloud-capability-matrix.md）。'
+  },
+  tencent: {
+    id: 'tencent',
+    label: '腾讯文档在线表格',
+    capabilities: { 读表: true, 写单元格: true, 建表: true, 读回计算值: false },
+    formulaCapabilities: { canWriteFormula: false, canRecalc: false, canReadComputed: false, functionSet: false },
+    evidence: '一手负面已验证：V3 batchUpdate 的 CellValue 无公式字段、无重算接口、无读计算值接口（docs/research/cloud-capability-matrix.md、tencent-v3-batchupdate-request-shape.md）。'
+  }
+};
+
+const DEFAULT_ADAPTER = 'local';
+
+// 纯函数：resolve 出当前 state 使用的 adapter（非法/缺省回退 local）。
+function adapterOf(state) {
+  const id = state && state.adapter;
+  return ADAPTERS[id] ? ADAPTERS[id] : ADAPTERS[DEFAULT_ADAPTER];
+}
+
+// 纯函数：给定配方草稿 draft 与 state，返回被当前 adapter 能力位挡下的 blocker 列表。
+// 每项 { cap, need, reason }；空数组 = 无阻塞（该动作在当前 adapter 可用）。
+// 只有依赖公式能力位的动作（function）可能被挡；结构化动作永远返回 []。
+function capabilityBlockersOf(draft, state) {
+  if (!draft || !draft.kind) return [];
+  const deps = KIND_CAPABILITY_DEPS[draft.kind];
+  if (!deps) return [];
+  const fc = adapterOf(state).formulaCapabilities;
+  const out = [];
+  deps.forEach(function (d) {
+    if (fc[d.cap] === false) out.push({ cap: d.cap, need: d.need, reason: d.reason });
+  });
+  return out;
+}
+
+// ============================================================================
 // 票 #10：模板库与建表（纯 seam，不读文件；字节探测由文件桥 xlsx_bridge.py probe 提供）
 // 规格 #8 line 110/111/121-123：
 //  - 清单类型枚举取三家交集 text/number/date/bool/enum；映射到平台字段类型的映射表进仓内。
@@ -614,13 +693,31 @@ function beforeOf(state, row, col) {
 // 纯函数：算出「会改哪些格子」，不改任何东西
 function preview(state, draft) {
   const totalRows = state.rows.length;
+  // 票 #21（S1）：把当前 adapter 及其能力位随预览带出（供预览卡第⑥段投影），三条返回路径都带。
+  const ad = adapterOf(state);
+  const adapterMeta = { adapter: ad.id, adapterLabel: ad.label, formulaCapabilities: Object.assign({}, ad.formulaCapabilities) };
+  // 票 #21（S1）：先查当前 adapter 的公式能力位——false 的动作在此平台禁用，
+  //   给出明确原因提示（disabled=true / capabilityBlockers），绝不静默降级、不写死值、不产 cells。
+  const capabilityBlockers = capabilityBlockersOf(draft, state);
+  if (capabilityBlockers.length > 0) {
+    const reasons = capabilityBlockers.map(function (b) { return b.reason; });
+    return Object.assign({
+      cells: [], summary: '该动作在「' + ad.label + '」上被禁用：' + reasons.join('；') +
+        ' 不静默降级、不写死值、不偷偷把公式算成值。',
+      affectedRows: 0, totalRows, invalid: true, disabled: true,
+      errors: reasons, issues: [], capabilityBlockers: capabilityBlockers,
+      disclosure: null, swapBanner: '',
+      paramSpec: (draft && draft.kind && KINDS[draft.kind]) ? typedParamSpec(draft.kind) : []
+    }, adapterMeta);
+  }
   const v = validate(draft, state);
   // 票 #20（T3 Contract）：预览带出 typed paramSpec（含类型/必填/默认值/约束），供预览卡第③段展示由宿主渲染控件。
   //   纯数据、不含 UI；非法与合法两条返回路径都带，宿主随时可显示参数元数据。
   const paramSpec = (draft && draft.kind && KINDS[draft.kind]) ? typedParamSpec(draft.kind) : [];
   if (!v.ok) {
-    return { cells: [], summary: '校验未通过，不能预览：' + v.errors.join('；'), affectedRows: 0, totalRows,
-      invalid: true, errors: v.errors, issues: v.issues, disclosure: null, swapBanner: '', paramSpec: paramSpec };
+    return Object.assign({ cells: [], summary: '校验未通过，不能预览：' + v.errors.join('；'), affectedRows: 0, totalRows,
+      invalid: true, disabled: false, errors: v.errors, issues: v.issues, capabilityBlockers: [],
+      disclosure: null, swapBanner: '', paramSpec: paramSpec }, adapterMeta);
   }
   let disclosure = null;   // 票 #13：swap 半换披露（swappedRows/unchangedRows/mixedColumns/partial）
   let summaryExtra = '';   // 票 #13：swap 半换 banner，接进 summary
@@ -690,9 +787,10 @@ function preview(state, draft) {
   if (summaryExtra) summary += summaryExtra;
   // 票 #12：预览如实反映当前作用范围，供预览卡渲染「作用范围」控件。
   // 票 #13：disclosure + swapBanner 随预览返回，供面板渲染「命中？列 + 混合来源 banner」。
-  return { cells, summary, affectedRows, totalRows, invalid: false, errors: [], issues: [],
+  return Object.assign({ cells, summary, affectedRows, totalRows, invalid: false, disabled: false, errors: [], issues: [],
+    capabilityBlockers: [],
     scope: p.scope || 'all', condition: p.条件 || '',
-    disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec };
+    disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec }, adapterMeta);
 }
 
 // 纯函数：把预览里的格子落到一份新表格上
@@ -735,8 +833,16 @@ function cloneButton(b) {
 }
 function initial(data) {
   data = data || {};
+  // 票 #21（S1）：adapter 选择。非法/缺省回退 local；非法值记一条 warn 让宿主/用户知情（不静默吞）。
+  const requestedAdapter = data.adapter;
+  const adapterOk = !requestedAdapter || !!ADAPTERS[requestedAdapter];
+  const adapter = adapterOk ? (requestedAdapter || DEFAULT_ADAPTER) : DEFAULT_ADAPTER;
+  const adapterNote = !adapterOk
+    ? { note: '未知的平台 adapter「' + requestedAdapter + '」，已回退到「' + ADAPTERS[DEFAULT_ADAPTER].label + '」。', noteTone: 'warn' }
+    : {};
   return {
     schemaVersion: SCHEMA_VERSION,
+    adapter: adapter,
     primaryKey: data.primaryKey || '姓名',
     columns: (data.columns || []).slice(),
     rows: (data.rows || []).map(function (r) { return Object.assign({}, r); }),
@@ -744,7 +850,8 @@ function initial(data) {
     stage: 'IDLE', input: '', draft: null, preview: null,
     buttons: (data.buttons || []).map(cloneButton),  // 票 #15：Host 权威源水合（使用者固化）
     registryButtons: (data.registryButtons || []).map(cloneButton),  // 票 #16：仓内注册表预置（git 来源）
-    log: [], note: '先写一句话并「理解」，或按一个快捷按钮。', noteTone: 'info'
+    log: [], note: adapterOk ? '先写一句话并「理解」，或按一个快捷按钮。' : adapterNote.note,
+    noteTone: adapterOk ? 'info' : 'warn'
   };
 }
 
@@ -1000,5 +1107,7 @@ module.exports = {
   loadRegistry, hydrateRegistry,
   TYPE_ENUM, TYPE_MAP, UPLOAD_WHITELIST, DEFAULT_PRIMARY_KEY,
   validateManifest, checkUpload, validateRows, detectConflicts, createTable,
-  COMMON_PARAMS, deriveIssues
+  COMMON_PARAMS, deriveIssues,
+  ADAPTERS, ADAPTER_INTERFACE, KIND_CAPABILITY_DEPS, DEFAULT_ADAPTER,
+  adapterOf, capabilityBlockers: capabilityBlockersOf
 };

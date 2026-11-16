@@ -38,7 +38,9 @@ function projectPreviewCard(state) {
       invalid: c.invalid, source: c.source };
   });
 
-  // 预览卡固定五段的 view-model 骨架（票 #14）。整卡就是 5 步管线第 ② 步，不是第 6 步。
+  // 预览卡 = 5 步管线第 ② 步的 view-model 骨架（票 #14），共六段：①②③④⑤ 是主五段，
+  // ⑥ capability 是票 #21 增补的「该 adapter 能力位/禁用」辅助视图段（5+1，辅助段不改变
+  // 「整卡就是 5 步管线第 ② 步、不是第 6 步」这一不变量）。
   // 诚实边界：五段的「数据」全部来自引擎实际计算、非死数据；但第②段的就地修正控件 UI、
   // 第④段的命中行截断/算不出来标红的可视化由宿主按本视图模型渲染，不在本纯 seam 包内
   //（与票 #12 Spec F3 的「本包只交 view model」一致）。第③段的带类型参数声明已由本包投影
@@ -91,6 +93,18 @@ function projectPreviewCard(state) {
     confirm: {
       canConfirm: ok && state.stage === 'PREVIEWED',
       canCancel: true
+    },
+    // ⑥ 能力位（票 #21 / S1）：当前平台 adapter 与公式能力位，false 的动作被禁用并给出原因。
+    //    纯视图模型：disabled / capabilityBlockers 直接来自引擎 preview，宿主据此渲染禁用态与提示；
+    //    本包不内嵌 I/O、不静默降级（用户故事：能力位 false 的动作禁用 + 明确提示）。
+    capability: {
+      adapter: pv.adapter || null,
+      adapterLabel: pv.adapterLabel || '',
+      formulaCapabilities: pv.formulaCapabilities || null,
+      disabled: !!pv.disabled,
+      blockers: (pv.capabilityBlockers || []).map(function (b) {
+        return { cap: b.cap, need: b.need, reason: b.reason };
+      })
     }
   };
 
