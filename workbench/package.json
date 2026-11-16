@@ -20,7 +20,8 @@
     "templates",
     "cordis.patch.yml",
     "README.md",
-    "SMOKE.md"
+    "SMOKE.md",
+    "capability-matrix.md"
   ],
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
@@ -31,7 +32,9 @@
     "test:formula": "node --test test/formula.test.js test/e2e-formula.test.js",
     "test:templates": "node --test test/templates.test.js test/e2e-templates.test.js",
     "acceptance": "node scripts/acceptance-run.js",
-    "acceptance:formula": "node scripts/acceptance-formula.js"
+    "acceptance:formula": "node scripts/acceptance-formula.js",
+    "test:capability": "node --test test/capability-matrix.test.js",
+    "capability:probe": "node scripts/capability-probe.js --run-local --write-matrix"
   },
   "engines": {
     "node": ">=22"

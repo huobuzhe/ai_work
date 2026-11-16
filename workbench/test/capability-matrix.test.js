@@ -1,0 +1,131 @@
+'use strict';
+/**
+ * 票 #25（Slice 2 / S5）：能力位矩阵端到端验尸。
+ * 钉住：
+ *  - AC1 每个 adapter 四格都有最小用例声明（写=乘→重算→读回→比对）
+ *  - AC2 每格带一手证据；文档未验证 → verdict false 且带 failingStep；true 必须 runnable（无证据不得 true）
+ *  - AC3 矩阵派生 formulaCapabilities 与 engine ADAPTERS.formulaCapabilities 完全一致（无漂移）；false 动作仍被能力位挡下
+ *  - AC4 矩阵可复现（getMatrix/renderMarkdown 稳定），不含真实凭据
+ *  - AC5 本地 Excel 真跑四格（写公式→LibreOffice 重算→读回→比对）全过
+ */
+const test = require('node:test');
+const assert = require('node:assert');
+const M = require('../lib/capability-matrix');
+const E = require('../lib/engine');
+
+// ---- AC1：四能力位 × 三平台，每格都有最小用例声明 ----
+test('AC1 每个 adapter 四个能力位都有最小用例声明', function () {
+  assert.deepEqual(M.CAPABILITY_BITS, ['canWriteFormula', 'canRecalc', 'canReadComputed', 'functionSet']);
+  M.ADAPTER_IDS.forEach(function (id) {
+    const p = M.PROBES[id];
+    assert.equal(p.cells.length, 4, id + ' 应有四格');
+    const bits = p.cells.map(function (c) { return c.bit; }).sort();
+    assert.deepEqual(bits, M.CAPABILITY_BITS.slice().sort(), id + ' 四格 bit 应齐');
+    p.cells.forEach(function (c) {
+      assert.ok(typeof c.minCase === 'string' && c.minCase.length > 0, id + '/' + c.bit + ' 缺最小用例');
+    });
+  });
+});
+
+// ---- AC2：每格带证据；false 带 failingStep；true 必 runnable ----
+test('AC2 每格带一手证据，false 带失败步骤，true 必须可真跑（无证据不得 true）', function () {
+  // 模块加载已自检一遍，这里再显式断言以保证回归时清晰失败。
+  assert.equal(M.assertNoUnbackedTrue(), true);
+  M.ADAPTER_IDS.forEach(function (id) {
+    M.PROBES[id].cells.forEach(function (c) {
+      assert.ok(c.evidence, id + '/' + c.bit + ' 缺 evidence');
+      if (c.verdict === 'true') assert.equal(c.runnable, true, id + '/' + c.bit + ' 记 true 必须 runnable');
+      if (c.verdict === 'false') assert.ok(c.failingStep, id + '/' + c.bit + ' 记 false 必须带 failingStep');
+    });
+  });
+});
+
+test('AC2 造一个无证据 true 会被 assertNoUnbackedTrue 拒绝（防漂移基建本身有效）', function () {
+  const bad = { x: { adapterId: 'x', label: 'x', cells: [{ bit: 'canWriteFormula', minCase: M.MIN_CASE, verdict: 'true', runnable: false, evidence: 'u' }] } };
+  assert.throws(function () { M.assertNoUnbackedTrue(bad); }, /记 true 但不可真跑/);
+});
+
+// ---- AC3：矩阵派生 formulaCapabilities 与 engine ADAPTERS 完全一致 ----
+test('AC3 矩阵派生 formulaCapabilities 与 engine ADAPTERS 无漂移', function () {
+  M.ADAPTER_IDS.forEach(function (id) {
+    const derived = M.formulaCapabilitiesFromMatrix(id);
+    const actual = E.ADAPTERS[id].formulaCapabilities;
+    assert.deepEqual(derived, actual, id + ' 矩阵结论应与 ADAPTERS.formulaCapabilities 一致（无漂移）');
+  });
+});
+
+test('AC3 false 位的动作仍被能力位挡下并提示（function 在飞书/腾讯被挡、本地不被挡）', function () {
+  function blocked(adapterId) {
+    const st = E.initial({ adapter: adapterId, primaryKey: '姓名', columns: ['姓名', '工时', '时薪'], rows: [{ 姓名: 'A', 工时: 8, 时薪: 100 }], sources: {} });
+    let s = E.reduce(st, { type: 'SET_INPUT', text: '把工时乘以时薪算成应发' });
+    s = E.reduce(s, { type: 'UNDERSTAND' });
+    s = E.reduce(s, { type: 'PREVIEW' });
+    return { preview: s.preview, stage: s.stage, blockers: E.capabilityBlockers(s.draft, s) };
+  }
+  // 本地：function 可用（无 blocker、有预览）
+  const local = blocked('local');
+  assert.equal(local.blockers.length, 0);
+  assert.ok(local.preview && !local.preview.invalid);
+  // 飞书 / 腾讯：被能力位挡下（preview 为 null、stage 未进 PREVIEWED、blocker 含 canWriteFormula）
+  ['feishu', 'tencent'].forEach(function (id) {
+    const r = blocked(id);
+    assert.ok(r.blockers.length > 0, id + ' 应有能力位 blocker');
+    assert.ok(r.blockers.some(function (b) { return b.cap === 'canWriteFormula'; }), id + ' blocker 应含 canWriteFormula');
+    assert.equal(r.preview, null, id + ' 被挡时 preview 应为 null');
+    assert.notEqual(r.stage, 'PREVIEWED', id + ' 被挡时不应进 PREVIEWED');
+  });
+});
+
+// ---- AC4：矩阵可复现 + 无真实凭据 ----
+test('AC4 getMatrix 稳定可复现，renderMarkdown 含每格结论与证据，且不含凭据字样', function () {
+  const a = JSON.stringify(M.getMatrix());
+  const b = JSON.stringify(M.getMatrix());
+  assert.equal(a, b, 'getMatrix 应可复现');
+  const md = M.renderMarkdown();
+  M.ADAPTER_IDS.forEach(function (id) { assert.ok(md.indexOf(M.PROBES[id].label) !== -1, '矩阵 Markdown 应含平台 ' + id); });
+  M.CAPABILITY_BITS.forEach(function (bit) { assert.ok(md.indexOf(bit) !== -1, '矩阵 Markdown 应含能力位 ' + bit); });
+  // 不含任何看起来像真实凭据的赋值
+  assert.ok(!/cli_[a-z0-9]{8,}/i.test(md), '矩阵不应含凭据样式字符串');
+});
+
+test('AC3 矩阵 verdict 单一真相源来自 engine（改 engine.ADAPTERS 矩阵即随之，非平行副本）', function () {
+  // 证明 PROBES 的 verdict 不是独立声明：直接读取时，其布尔必须等于 engine 里对应值。
+  M.ADAPTER_IDS.forEach(function (id) {
+    const fc = E.ADAPTERS[id].formulaCapabilities;
+    M.PROBES[id].cells.forEach(function (c) {
+      assert.equal(c.verdict, fc[c.bit] ? 'true' : 'false', id + '/' + c.bit + ' verdict 必须派生自 engine（单一真相源）');
+    });
+  });
+});
+
+test('AC4 renderMarkdown 可接受降级后的能力位覆盖，落盘产物如实反映（不印静态 true）', function () {
+  const override = { local: { canRecalc: false, functionSet: false } };
+  const md = M.renderMarkdown({ capabilities: override });
+  const localLine = md.split('\n').filter(function (l) { return l.indexOf(M.PROBES.local.label) !== -1; })[0];
+  // canRecalc 与 functionSet 两列应显示 false，且不再带 [本会话真跑]（因为该位已降级为 false）
+  assert.ok(/false/.test(localLine), '降级后本地行应含 false');
+  assert.equal((localLine.match(/\[本会话真跑\]/g) || []).length, 2, '降级两个 true 后只剩两个真跑标记');
+});
+
+// ---- AC4：落盘矩阵产物与当前渲染一致（漂移守卫）----
+test('AC4 落盘 capability-matrix.md 与 renderMarkdown() 一致（改矩阵须重新生成产物）', function () {
+  const { readFileSync, existsSync } = require('node:fs');
+  const { resolve } = require('node:path');
+  const path = resolve(__dirname, '..', 'capability-matrix.md');
+  assert.ok(existsSync(path), '矩阵产物 capability-matrix.md 应存在（跑 node scripts/capability-probe.js --write-matrix 生成）');
+  const onDisk = readFileSync(path, 'utf8');
+  assert.equal(onDisk, M.renderMarkdown(), '落盘矩阵与本模块 renderMarkdown() 不一致——矩阵变了请重新生成产物');
+});
+
+test('AC5 本地 Excel 探针真跑四格全过（=C2*D2 写存活 + 重算值正确）', function () {
+  const { runLocalProbe } = require('../scripts/capability-probe');
+  const r = runLocalProbe();
+  assert.equal(r.canWriteFormula, true, '公式应写入并存活');
+  assert.equal(r.canRecalc, true, '重算应得正确计算值');
+  assert.equal(r.canReadComputed, true, '应能读回计算值');
+  assert.equal(r.functionSet, true, '乘法函数应可用且正确');
+  assert.equal(r.detail.valuesMatch, true, JSON.stringify(r.detail));
+  // 结果与声明的 local 四格 true 一致
+  const declared = M.formulaCapabilitiesFromMatrix('local');
+  M.CAPABILITY_BITS.forEach(function (b) { assert.equal(r[b], declared[b], 'local/' + b + ' 真跑结果应与声明一致'); });
+});
