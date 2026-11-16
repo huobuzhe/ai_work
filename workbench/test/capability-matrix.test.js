@@ -108,13 +108,18 @@ test('AC4 renderMarkdown 可接受降级后的能力位覆盖，落盘产物如�
 });
 
 // ---- AC4：落盘矩阵产物与当前渲染一致（漂移守卫）----
+// 落盘产物可以携带「持凭据实测佐证」标注（由真跑回填，只在提交的产物里存在），
+// 但表结构/能力位/证据/失败步骤这些静态部分必须与 renderMarkdown() 一致。
+// 故两侧都先剥离持凭据实测佐证片段再比较，既守卫漂移又不误伤合法实测佐证。
 test('AC4 落盘 capability-matrix.md 与 renderMarkdown() 一致（改矩阵须重新生成产物）', function () {
   const { readFileSync, existsSync } = require('node:fs');
   const { resolve } = require('node:path');
   const path = resolve(__dirname, '..', 'capability-matrix.md');
   assert.ok(existsSync(path), '矩阵产物 capability-matrix.md 应存在（跑 node scripts/capability-probe.js --write-matrix 生成）');
-  const onDisk = readFileSync(path, 'utf8');
-  assert.equal(onDisk, M.renderMarkdown(), '落盘矩阵与本模块 renderMarkdown() 不一致——矩阵变了请重新生成产物');
+  const stripLive = function (s) { return s.replace(/ · \[持凭据实测佐证 [^\]]*\]/g, ''); };
+  const onDisk = stripLive(readFileSync(path, 'utf8').replace(/\r\n/g, '\n'));
+  const fresh = stripLive(M.renderMarkdown());
+  assert.equal(onDisk, fresh, '落盘矩阵与本模块 renderMarkdown() 不一致（已忽略持凭据实测佐证）——矩阵结构变了请重新生成产物');
 });
 
 test('AC5 本地 Excel 探针真跑四格全过（=C2*D2 写存活 + 重算值正确）', function () {

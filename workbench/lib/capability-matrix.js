@@ -151,8 +151,12 @@ function recordLiveEvidence(adapterId, result, meta) {
 // 从 readLive 返回里抽一个「不泄凭据」的读回摘要（只数行数/取前几行字段名，不回显敏感值）。
 function summarizeReadBack(result) {
   if (!result) return null;
-  if (result.readBack && Array.isArray(result.readBack)) {
-    return { kind: 'rows', rowCount: result.readBack.length, sample: result.readBack.slice(0, 2) };
+  // 首选：真跑解析出的行数据（腾讯 runLive 返回 readBackRows；两个键名都兼容）。
+  const rows = (result.readBackRows && Array.isArray(result.readBackRows))
+    ? result.readBackRows
+    : (result.readBack && Array.isArray(result.readBack) ? result.readBack : null);
+  if (rows) {
+    return { kind: 'rows', rowCount: rows.length, sample: rows.slice(0, 2) };
   }
   if (result.readBackRaw) {
     return { kind: 'raw', note: '平台读回回包结构未统一，打印完整回包供肉眼核对（见 live 输出）' };
