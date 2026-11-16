@@ -16,13 +16,13 @@
 - `scripts/acceptance-formula.js` — function 端到端验收编排：造 xlsx → 引擎生成公式 → 写回 → 调 bundled LibreOffice Kit 重算 → data_only 读回缓存值断言。CLI 路径可用 `WORKBENCH_LO_NODE` / `WORKBENCH_LO_CLI` 覆盖。
 - `registry/*.json` — 仓内声明式按钮注册表（票 #16，git 作「线上」来源）：每份 JSON 一个预置按钮，含 name / source=preset / kind / params / schemaVersion；`lib/engine.js` 的 `loadRegistry()` 加载时做封闭校验（与配方校验共用规则），非法条目逐条拒绝不影响合法条目。
 - `scripts/load-registry.js` — 注册表加载脚本（纯文件桥，票 #16）：读 `registry/*.json` → 调引擎 `loadRegistry()` → 输出校验结果与按钮清单；无网络、无云凭据、不写仓库。
-- `test/` — `node:test`：纯引擎 11 例、面板注册契约 4 例、extract 端到端 1 例、function 公式纯引擎 8 例、function 重算端到端 1 例、scope/条件公共字段 12 例、swap/conditional 半换边界与披露 15 例、封闭校验与预览卡五段 24 例、按钮固化/一键重跑/按钮库生命周期 17 例、仓内注册表统一入口 25 例、模板库与建表 25 例 + 端到端 5 例（共 148 例）。
+- `test/` — `node:test`：纯引擎 11 例、面板注册契约 4 例、extract 端到端 1 例、function 公式纯引擎 8 例、function 重算端到端 1 例、scope/条件公共字段 12 例、swap/conditional 半换边界与披露 15 例、封闭校验与预览卡五段 24 例、按钮固化/一键重跑/按钮库生命周期 17 例、仓内注册表统一入口 25 例、模板库与建表 25 例 + 端到端 5 例、带类型参数声明层 13 例、paramSpec 校验迁移 15 例、typed 声明统一来源 9 例（共 185 例）。
 
 ## 构建 / 验证
 
 ```bash
 npm run build:client      # 重新生成 client/client.js
-npm test                  # 全测（141 例）
+npm test                  # 全测（185 例）
 npm run acceptance        # extract 端到端验收，打印逐行读回结果
 npm run acceptance:formula # function 端到端验收（含 LibreOffice 重算），打印重算后缓存值
 ```

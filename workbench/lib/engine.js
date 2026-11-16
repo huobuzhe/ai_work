@@ -59,7 +59,7 @@ const KINDS = {
 };
 
 // 票 #18：公共字段（scope / 条件）——所有动作共有，不算私有参数，故不列入各动作 paramSpec。
-// 供 T2/T3 由公共声明派生校验；本期仅声明。
+// 自 #19（T2）起由 validate 经 typedParamSpec() 合并进 paramSpec 一并派生校验；默认值仍由 defaultsFor() 统一派生。
 const COMMON_PARAMS = [
   { key: 'scope', 类型: '枚举', 必填: false, 默认值: 'all', 约束: { enum: ['all', 'match'] } },
   { key: '条件', 类型: 'text', 必填: false, 默认值: '' }
