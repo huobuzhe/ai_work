@@ -151,17 +151,48 @@ function recordLiveEvidence(adapterId, result, meta) {
 // 从 readLive 返回里抽一个「不泄凭据」的读回摘要（只数行数/取前几行字段名，不回显敏感值）。
 function summarizeReadBack(result) {
   if (!result) return null;
-  // 首选：真跑解析出的行数据（腾讯 runLive 返回 readBackRows；两个键名都兼容）。
+  // 首选：真跑解析出的行数据（腾讯 runLive 返回 readBackRows；飞书返回 readBack；两个键名都兼容）。
   const rows = (result.readBackRows && Array.isArray(result.readBackRows))
     ? result.readBackRows
     : (result.readBack && Array.isArray(result.readBack) ? result.readBack : null);
   if (rows) {
-    return { kind: 'rows', rowCount: rows.length, sample: rows.slice(0, 2) };
+    // 平台（尤其飞书多维表格）建表时会预置若干空行/空 record（形如 {} 或诸字段皆空），
+    // 这些不是写入的数据。摘要只统计「有内容」的行，sample 也取真实行，避免把空行当数据。
+    const nonEmpty = rows.filter(isNonEmptyRow);
+    const emptyCount = rows.length - nonEmpty.length;
+    return {
+      kind: 'rows',
+      rowCount: rows.length,
+      nonEmptyRowCount: nonEmpty.length,
+      emptyRowCount: emptyCount,
+      sample: nonEmpty.slice(0, 2)
+    };
   }
   if (result.readBackRaw) {
     return { kind: 'raw', note: '平台读回回包结构未统一，打印完整回包供肉眼核对（见 live 输出）' };
   }
   return null;
+}
+
+// 判断读回的一行是否「有内容」（排除平台预置空行/空 record）。
+function isNonEmptyRow(row) {
+  if (row === null || row === undefined) return false;
+  if (Array.isArray(row)) return row.some(function (v) { return v !== null && v !== undefined && v !== ''; });
+  if (typeof row !== 'object') return true;
+  return Object.keys(row).some(function (k) { return !isEmptyCell(row[k]); });
+}
+
+function isEmptyCell(v) {
+  if (v === null || v === undefined || v === '') return true;
+  if (Array.isArray(v)) return v.length === 0 || v.every(isEmptyCell);
+  if (typeof v === 'object') {
+    // 飞书形如 {text:"阿岚",type:"text"} / {text:""} / {} 都按内容判
+    if ('text' in v) return !v.text; // {text:""} 视为空
+    const keys = Object.keys(v);
+    if (keys.length === 0) return true;
+    return keys.every(function (k) { return isEmptyCell(v[k]); });
+  }
+  return false;
 }
 
 // 断言/自检：任何一格 verdict=true 必须 runnable=true（不能靠文档/链路事实冒充真跑通过）。

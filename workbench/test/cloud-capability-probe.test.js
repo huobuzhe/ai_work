@@ -45,6 +45,25 @@ test('AC2 recordLiveEvidence 链路成功也不翻 true，只加 evidenceLive', 
   });
 });
 
+// AC2b：飞书读回含平台预置空行（{} / {text:""}）时，摘要只统计有内容的行、sample 取真实行
+test('AC2b recordLiveEvidence 读回摘要剔除平台预置空行、rowCount 与 sample 如实', function () {
+  const blanks = Array(10).fill({});
+  const real = [
+    { 姓名: [{ text: '阿岚', type: 'text' }], 工时: 8, 时薪: 100 },
+    { 姓名: [{ text: '柏舟', type: 'text' }], 工时: 10, 时薪: 80 }
+  ];
+  M.recordLiveEvidence('feishu', { ok: true, readBack: blanks.concat(real) }, { ranAt: '2026-11-16T22:10:00Z', tableRows: 2 });
+  const feishu = M.getMatrix().find(function (a) { return a.adapterId === 'feishu'; });
+  const s = feishu.cells.canWriteFormula.evidenceLive.readBackSummary;
+  assert.strictEqual(s.kind, 'rows');
+  assert.strictEqual(s.rowCount, 12, '总行数保留（含空行）');
+  assert.strictEqual(s.nonEmptyRowCount, 2, '有内容行 = 2');
+  assert.strictEqual(s.emptyRowCount, 10, '空行 = 10');
+  assert.strictEqual(s.sample.length, 2, 'sample 取两行真实数据，不是空行');
+  assert.strictEqual(s.sample[0].工时, 8, 'sample 首行是真实数据（阿岚 8）');
+  assert.ok(!('text' in s.sample[0] || s.sample[0][0] !== undefined), 'sample 不得是空 {} 行');
+});
+
 // AC3：链路失败也如实记录（chainOk:false），verdict 仍 false
 test('AC3 recordLiveEvidence 链路失败如实记录 chainOk:false', function () {
   const r = M.recordLiveEvidence('tencent', { ok: false, failed: { step: '写值', msg: 'ret!=0' } }, { ranAt: '2026-11-16T22:01:00Z' });
