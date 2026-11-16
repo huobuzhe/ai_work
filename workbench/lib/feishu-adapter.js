@@ -36,11 +36,11 @@ const E = require('./engine');
 // `--allow-unverified-types` 时**拒绝真跑**——绝不把未验证 magic number 悄悄塞进真实请求
 // （Standards HARD / MEDIUM 修复）。未知类型（TYPE_MAP 无此键）仍直接记 error、不猜。
 const FEISHU_CODE_BY_NAME = {
-  text:   { code: 1, verified: false, note: '文本；官方页未取到逐字常量，按 Bitable 字段类型惯例记 1（未验证）' },
-  number: { code: 2, verified: true,  note: '数字；票 #5 实测 TypeNumber=2' },
-  date:   { code: 5, verified: false, note: '日期；未在票 #5 实测、官方页未核对（未验证）' },
-  checkbox: { code: 7, verified: false, note: '复选框；未在票 #5 实测、官方页未核对（未验证）' },
-  single_select: { code: 3, verified: false, note: '单选；未在票 #5 实测、官方页未核对（未验证）' }
+  text:   { code: 1, verified: true, note: '文本/多行文本；官方 Go SDK TypeText = 1（枚举释义「1：多行文本」） https://raw.githubusercontent.com/larksuite/oapi-sdk-go/v3_main/service/bitable/v1/model.go' },
+  number: { code: 2, verified: true,  note: '数字；票 #5 实测 TypeNumber=2 + 官方 Go SDK TypeNumber = 2 https://raw.githubusercontent.com/larksuite/oapi-sdk-go/v3_main/service/bitable/v1/model.go' },
+  date:   { code: 5, verified: true, note: '日期（含日期时间显示样式）；官方 Go SDK TypeDateTime = 5 https://raw.githubusercontent.com/larksuite/oapi-sdk-go/v3_main/service/bitable/v1/model.go' },
+  checkbox: { code: 7, verified: true, note: '复选框；官方 Go SDK TypeCheckbox = 7 https://raw.githubusercontent.com/larksuite/oapi-sdk-go/v3_main/service/bitable/v1/model.go' },
+  single_select: { code: 3, verified: true, note: '单选；官方 Go SDK TypeSingleSelect = 3 https://raw.githubusercontent.com/larksuite/oapi-sdk-go/v3_main/service/bitable/v1/model.go' }
 };
 
 // 仅供测试/可读性：把名字级表投影成 { name: code }（保留旧 FEISHU_FIELD_TYPE 的形状，值仍是数字码）。

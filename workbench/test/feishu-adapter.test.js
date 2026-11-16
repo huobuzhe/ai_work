@@ -76,20 +76,25 @@ test('AC1 飞书类型映射：number→type:2、text→type:1（复用票 #5 ty
 });
 
 // ---- HARD/MEDIUM 修复回归：类型解析单一来源、不静默降级、未验证码不静默 ----
-test('HARD 修复：类型名取自 engine.TYPE_MAP（单源），number 已验证、text 未验证进 unverifiedTypes', function () {
-  const table = { primaryKey: '姓名', columns: ['姓名', '工时', '时薪'], types: { 姓名: 'text', 工时: 'number', 时薪: 'number' }, rows: [] };
+test('类型解析单一来源：五类数字码均已一手核实（verified:true），unverifiedTypes 为空', function () {
+  const table = { primaryKey: '姓名', columns: ['姓名', '工时', '时薪', '入职日', '在职', '级别'], types: { 姓名: 'text', 工时: 'number', 时薪: 'number', 入职日: 'date', 在职: 'bool', 级别: 'enum' }, rows: [] };
   const plan = F.buildFeishuPlan(table);
-  assert.equal(plan.ok, true);
-  // text 列（姓名）数字码未验证 → 进 unverifiedTypes；number 列已验证 → 不进
-  const fields = plan.unverifiedTypes.map(function (u) { return u.field; });
-  assert.deepEqual(fields, ['姓名'], '只有未验证类型的列（姓名/text）进 unverifiedTypes');
-  assert.equal(plan.unverifiedTypes[0].code, 1);
+  assert.equal(plan.ok, true, JSON.stringify(plan.errors));
+  // 官方 Go SDK 常量核实后：text=1/number=2/date=5/checkbox(=bool)=7/single_select(=enum)=3 全部 verified:true
+  // → 不再有任何列进 unverifiedTypes（安全护栏按 verified 拦，不是按码拦）
+  assert.deepEqual(plan.unverifiedTypes, [], '五类码均已一手核实，unverifiedTypes 应为空');
   // 单源：解析结果的名字来自 engine.TYPE_MAP[x].feishu
   const r = F.resolveFeishuType('number');
   assert.equal(r.ok, true);
   assert.equal(r.name, E.TYPE_MAP.number.feishu, '类型名取自 engine.TYPE_MAP');
-  assert.equal(r.verified, true, 'number 已验证');
-  assert.equal(F.resolveFeishuType('text').verified, false, 'text 未验证（如实标记）');
+  // 五类（engine 规范名）的数字码与 verified 全部正确；bool→checkbox=7、enum→single_select=3
+  const expect = { text: 1, number: 2, date: 5, bool: 7, enum: 3 };
+  Object.keys(expect).forEach(function (t) {
+    const res = F.resolveFeishuType(t);
+    assert.equal(res.ok, true, t + ' 应可解析');
+    assert.equal(res.code, expect[t], t + ' 数字码应为 ' + expect[t]);
+    assert.equal(res.verified, true, t + ' 应已一手核实（verified:true）');
+  });
 });
 
 test('MEDIUM 修复：未知/缺失类型不静默降级为 text——记 error 且整计划 fail', function () {
@@ -109,25 +114,27 @@ test('MEDIUM 修复：未知/缺失类型不静默降级为 text——记 error 
 });
 
 test('MEDIUM 修复：--live 在含未验证数字码时默认拒绝真跑（不静默发 magic number）', function () {
-  // 通过子进程跑 --live（无凭据）验证：即便有凭据，含未验证 type 也应先被 refused 兜住。
-  // 这里不真连网——先设假凭据、含 text 列 → 应在「凭据齐全→ plan 含未验证→refused」处被拦。
-  const { execFileSync } = require('node:child_process');
-  const { resolve } = require('node:path');
-  const SCRIPT = resolve(__dirname, '..', 'scripts', 'feishu-adapter.js');
-  // 造一个只有 text 列的表（未验证码），走 --live
-  const tmp = resolve(require('node:os').tmpdir(), 'feishu-live-text-only.json');
-  require('node:fs').writeFileSync(tmp, JSON.stringify({ primaryKey: '姓名', columns: ['姓名'], types: { 姓名: 'text' }, rows: [] }));
-  let out;
-  try {
-    out = execFileSync(process.execPath, [SCRIPT, '--live', '--table', tmp], {
-      encoding: 'utf8', env: Object.assign({}, process.env, { FEISHU_APP_ID: 'stub-id', FEISHU_APP_SECRET: 'stub-secret' })
+  // 五类码现已一手核实，真实建表计划不再产生 unverifiedTypes；此测试用单元级注入验证
+  // 「护栏本身仍在」：若某计划携带了未验证码，runLive 必须在联网前 refused。
+  const ScriptMod = require('../scripts/feishu-adapter');
+  const orig = F.buildFeishuPlan;
+  F.buildFeishuPlan = function () {
+    return { ok: true, steps: [], unverifiedTypes: [{ field: '实验列', type: 'text', code: 99, note: '造数据：未验证码' }] };
+  };
+  const savedId = process.env.FEISHU_APP_ID, savedSecret = process.env.FEISHU_APP_SECRET;
+  process.env.FEISHU_APP_ID = 'stub-id'; process.env.FEISHU_APP_SECRET = 'stub-secret';
+  return ScriptMod.runLive({ primaryKey: '姓名', columns: ['姓名'], types: { 姓名: 'text' }, rows: [] }, 't', false)
+    .then(function (r) {
+      assert.equal(r.ok, false, '含未验证 type 的 live 应被拒绝');
+      assert.equal(r.refused, true, '应标记 refused');
+      assert.ok(Array.isArray(r.unverifiedTypes) && r.unverifiedTypes.length === 1, '应列出未验证的字段');
+      assert.ok(/allow-unverified-types/.test(r.error), '错误应提示显式开关');
+    })
+    .finally(function () {
+      F.buildFeishuPlan = orig;
+      if (savedId === undefined) delete process.env.FEISHU_APP_ID; else process.env.FEISHU_APP_ID = savedId;
+      if (savedSecret === undefined) delete process.env.FEISHU_APP_SECRET; else process.env.FEISHU_APP_SECRET = savedSecret;
     });
-  } catch (e) { out = e.stdout || ''; }
-  const r = JSON.parse(out);
-  assert.equal(r.ok, false, '含未验证 type 的 live 应被拒绝');
-  assert.equal(r.refused, true, '应标记 refused');
-  assert.ok(Array.isArray(r.unverifiedTypes) && r.unverifiedTypes.length === 1, '应列出未验证的字段');
-  assert.ok(/allow-unverified-types/.test(r.error), '错误应提示显式开关');
 });
 
 // ---- AC2：能力位 false、function 被挡、extract 不被挡 ----
