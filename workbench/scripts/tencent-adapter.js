@@ -114,14 +114,14 @@ async function runLive(table, title, allowUnverifiedTypes) {
       if (!got.ok) return { ok: false, failed: { step: '建表', msg: got.reason, raw: r.raw } };
       ctx.fileId = got.fileId;
     } else if (step.step === '查sheet') {
-      if (r.status !== 200 || !T.isV2Success(r.json)) {
-        return { ok: false, failed: { step: '查sheet', httpStatus: r.status, json: r.json } };
+      // V3 查sheet 端点直出 {properties:[{sheetId,...}]}，回包无 ret 字段（不是 V2 的 ret===0 契约）
+      // → 只认 HTTP 200，成功与否由 properties[].sheetId 提取判定（逻辑集中在 lib，可单测）。
+      const chk = T.classifySheetResponse(r.status, r.json);
+      if (!chk.ok) {
+        if (chk.failed.msg) return { ok: false, failed: Object.assign({}, chk.failed, { raw: r.raw }) };
+        return { ok: false, failed: chk.failed };
       }
-      const props = (r.json.data && r.json.data.properties) || r.json.properties || [];
-      if (!props.length || !props[0].sheetId) {
-        return { ok: false, failed: { step: '查sheet', msg: '回包未含 properties[].sheetId', raw: r.raw } };
-      }
-      ctx.sheetId = props[0].sheetId;
+      ctx.sheetId = chk.sheetId;
     } else if (step.step === '写值') {
       if (!T.isV3Success(r.status, r.json)) {
         return { ok: false, failed: { step: '写值', httpStatus: r.status, json: r.json, raw: r.raw } };

@@ -142,6 +142,26 @@ test('AC2 成功判据统一走 isSuccess：腾讯 ret==0 / 飞书 code==0 不�
   assert.equal(T.isV3Success(400, { code: 400001 }), false, '非 200 判失败');
 });
 
+// ---- 回归：V3 查sheet 回包无 ret 字段，不得用 isV2Success 误判为失败（票 #27 实测暴露） ----
+test('回归 classifySheetResponse：V3 查sheet 直出 properties（无 ret）也判成功', function () {
+  // 真实回包形态：{properties:[{sheetId,...}]} —— 无 ret 字段
+  const real = { properties: [{ sheetId: 'BB08J2', title: '工作表1', rowTotal: 200, columnTotal: 26 }] };
+  const ok = T.classifySheetResponse(200, real);
+  assert.equal(ok.ok, true, 'HTTP200 + properties[].sheetId → 成功（不再因缺 ret 误判）');
+  assert.equal(ok.sheetId, 'BB08J2');
+  // 若错误地套用 isV2Success，会把这份真实回包判成 false（这正是被修掉的 bug）
+  assert.equal(T.isV2Success(real), false, 'isV2Success 对 V3 查sheet 回包返回 false（故不可用）');
+  // 兼容 data.properties 包裹形态
+  assert.equal(T.classifySheetResponse(200, { data: { properties: [{ sheetId: 'S2' }] } }).sheetId, 'S2');
+  // 非 200 → 失败
+  assert.equal(T.classifySheetResponse(403, real).ok, false);
+  assert.equal(T.classifySheetResponse(403, real).failed.step, '查sheet');
+  // 200 但无 properties/sheetId → 失败（不猜）
+  assert.equal(T.classifySheetResponse(200, {}).ok, false);
+  assert.equal(T.classifySheetResponse(200, { properties: [] }).ok, false);
+  assert.equal(T.classifySheetResponse(200, { properties: [{}] }).ok, false);
+});
+
 // ---- AC3：能力位 false、function 被挡、extract 不被挡 ----
 test('AC3 腾讯 formulaCapabilities 四格 false、函数动作被能力位挡下并提示', function () {
   const fc = E.ADAPTERS.tencent.formulaCapabilities;

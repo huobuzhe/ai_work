@@ -110,6 +110,23 @@ function extractFileId(json) {
 }
 
 /**
+ * V3 查 sheet 回包判定（纯函数、可单测）：端点 GET .../files/{fileId}?concise=1
+ * 直出 {properties:[{sheetId,...}]} —— **无 ret 字段**，不能用 isV2Success 判。
+ * 只认 HTTP 200，成功与否由 properties[].sheetId 提取判定。
+ * @return {ok:true, sheetId} | {ok:false, failed:{step:'查sheet',...}}
+ */
+function classifySheetResponse(status, json) {
+  if (status !== 200) {
+    return { ok: false, failed: { step: '查sheet', httpStatus: status, json: json } };
+  }
+  const props = (json && ((json.data && json.data.properties) || json.properties)) || [];
+  if (!props.length || !props[0].sheetId) {
+    return { ok: false, failed: { step: '查sheet', msg: '回包未含 properties[].sheetId' } };
+  }
+  return { ok: true, sheetId: props[0].sheetId };
+}
+
+/**
  * 纯函数：把主表结构 + 选项落成腾讯四段请求计划。
  * @param table {columns:[name], types:{name→localType}, rows:[{...}]}
  * @param opts  {title?:string, chunkSize?:number, wantsFormula?:boolean}
@@ -332,6 +349,7 @@ module.exports = {
   isV2Success,
   isV3Success,
   extractFileId,
+  classifySheetResponse,
   buildTencentPlan,
   runTencentPlanWithStub,
   buildTencentUrl,
