@@ -225,10 +225,11 @@ function buildTencentPlan(table, opts) {
   if (errors.length) return { ok: false, steps: [], errors: errors };
 
   // 组装写值的「整块网格」：第 0 行是表头，第 1..N 行是数据。逐个单元格转 CellValue。
-  // 网格按行铺满（官方示例连续填满 4 个 values），每行 values 数 = columns.length。
-  const allCells = []; // [{r,c,cellValue}]
-  const gridRows = []; // 每行 [{cellValue}]
-  const headerRow = columns.map(function (col) { return { cellValue: { text: String(col) } }; });
+  // 官方 proto：gridData.rows = array(RowData)，RowData = { values: array(CellData) }，
+  // 不是裸的 cellData 数组——每行必须包成 `{ values: [...] }`，否则腾讯转码 proto 报
+  // `unexpected token [`（票 #27 实测暴露，见 docs/research/tencent-v3-batchupdate-body-structure.md）。
+  const gridRows = []; // 每行 { values: [{cellValue}] }
+  const headerRow = { values: columns.map(function (col) { return { cellValue: { text: String(col) } }; }) };
   gridRows.push(headerRow);
   rows.forEach(function (row) {
     const line = columns.map(function (col) {
@@ -237,7 +238,7 @@ function buildTencentPlan(table, opts) {
       if (v === undefined || v === '') return { cellValue: { text: '' } };
       return { cellValue: toTencentCell(types[col], v) };
     });
-    gridRows.push(line);
+    gridRows.push({ values: line });
   });
 
   // 按 chunkSize 把「连续若干行」拆成多个 updateRangeRequest：
@@ -360,7 +361,7 @@ function runTencentPlanWithStub(plan, opts) {
           const absRow = urr.gridData.startRow + idxNow;
           if (absRow === 0) return; // 表头
           const obj = {};
-          line.forEach(function (cell, ci) {
+          (line.values || []).forEach(function (cell, ci) {
             const cv = cell.cellValue || {};
             const val = cv.text !== undefined ? cv.text : (cv.number !== undefined ? cv.number : '');
             obj[ci] = val;
@@ -378,7 +379,7 @@ function runTencentPlanWithStub(plan, opts) {
       // 从 plan.steps 拿不到列名，改用第一条 updateRangeRequest 的 rows[0]（表头）还原列名
       const allReqs = [];
       (plan.chunks || []).forEach(function (ch) { allReqs.push.apply(allReqs, ch.requests); });
-      allReqs[0].updateRangeRequest.gridData.rows[0].forEach(function (cell) {
+      (allReqs[0].updateRangeRequest.gridData.rows[0].values || []).forEach(function (cell) {
         columns.push(cell.cellValue.text);
       });
       const readBack = wroteRows.map(function (r) {

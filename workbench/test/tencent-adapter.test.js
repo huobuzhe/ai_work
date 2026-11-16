@@ -94,6 +94,32 @@ test('AC2 写值 ≤5 requests：多个 updateRangeRequest 时按每请求 ≤5 
   assert.equal(covered, 13, '所有网格行都被某个 updateRangeRequest 覆盖（表头 + 12 数据行）');
 });
 
+test('AC2 写值请求体符合官方 proto：gridData.rows 是 [{values:[{cellValue}]}]，不是裸数组（票 #27 实测 bug 回归）', function () {
+  // 腾讯 proto：GridData.rows = array(RowData)，RowData = { values: array(CellData) }。
+  // 曾把 rows 写成裸的 cellData 数组 → 服务端 proto 转码报 `unexpected token [`(line 1:108)。
+  const plan = T.buildTencentPlan(TABLE, { title: 't' });
+  assert.equal(plan.ok, true, JSON.stringify(plan.errors));
+  plan.chunks.forEach(function (ch) {
+    ch.requests.forEach(function (r) {
+      const rows = r.updateRangeRequest.gridData.rows;
+      assert.ok(Array.isArray(rows), 'gridData.rows 是数组');
+      rows.forEach(function (row, ri) {
+        assert.ok(!Array.isArray(row), '第 ' + ri + ' 行不是裸数组（曾导致 proto unexpected token [）');
+        assert.ok(row && typeof row === 'object' && Array.isArray(row.values),
+          '第 ' + ri + ' 行是 { values: [...] }（官方 RowData 形状）');
+        row.values.forEach(function (cell) {
+          assert.ok(cell && cell.cellValue && typeof cell.cellValue === 'object',
+            'values 元素是 { cellValue: {...} }（官方 CellData 形状）');
+        });
+      });
+    });
+  });
+  // 序列化后不应出现 "rows":[[ 这样的裸嵌套数组
+  const body = JSON.stringify({ requests: plan.chunks[0].requests });
+  assert.ok(body.indexOf('"rows":[[{') === -1, '序列化 body 不应出现 "rows":[[{ 裸数组');
+  assert.ok(body.indexOf('"rows":[{"values":[') !== -1, '序列化 body 应为 "rows":[{"values":[...]');
+});
+
 test('AC2 无公式字段：function 动作在腾讯被拒（不可规划公式）', function () {
   // 腾讯写值只支持 text/link/number，没有公式字段；承诺不静默把公式算成值或编造字段。
   const r = T.buildTencentPlan(TABLE, { title: 't', wantsFormula: true });
