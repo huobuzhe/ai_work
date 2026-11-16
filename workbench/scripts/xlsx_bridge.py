@@ -92,6 +92,47 @@ def apply(path, cells_json):
         ws.cell(row=ri, column=ci, value=c['after'])
     wb.save(path); print('OK')
 
+def probe(path):
+    """上传文件字节探测（纯 IO，判定逻辑在 lib/engine.js 的 checkUpload）。
+    输出 {filename, ext, isZip, openable, encrypted, hasMacro}。
+    - isZip：前 4 字节 PK\\x03\\x04（xlsx 本质是 zip）
+    - openable：openpyxl 能否打开（csv/tsv 视为文本、跳过）
+    - encrypted：openpyxl 抛「加密/密码」类异常，或非 zip 的 OLE2 复合文档（加密 xlsx 常见）
+    - hasMacro：zip 内含 xl/vbaProject.bin（.xlsm 带宏）。
+    """
+    import os, zipfile
+    name = os.path.basename(path)
+    ext = os.path.splitext(name)[1].lower()
+    with open(path, 'rb') as f:
+        head = f.read(8)
+    is_zip = head[:4] == b'PK\x03\x04'
+    is_ole = head[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1'
+    encrypted = False
+    openable = False
+    has_macro = False
+    if is_zip:
+        try:
+            with zipfile.ZipFile(path) as z:
+                has_macro = any('vbaProject.bin' in n for n in z.namelist())
+        except Exception:
+            pass
+        try:
+            from openpyxl import load_workbook
+            load_workbook(path, read_only=True)
+            openable = True
+        except Exception as e:
+            msg = str(e).lower()
+            encrypted = 'encrypt' in msg or 'password' in msg or 'credential' in msg
+    elif is_ole:
+        # OLE2 复合文档：加密的 xls/xlsx 或老 .xls；无法用 openpyxl 读 → 视为加密/不可读
+        encrypted = True
+    elif ext in ('.csv', '.tsv'):
+        openable = True  # 文本，交 read-csv 读
+    print(json.dumps({
+        'filename': name, 'ext': ext, 'isZip': is_zip,
+        'openable': openable, 'encrypted': encrypted, 'hasMacro': has_macro
+    }, ensure_ascii=False))
+
 if __name__ == '__main__':
     cmd = sys.argv[1]
     if cmd == 'init-main': init_main(sys.argv[2])
@@ -100,4 +141,5 @@ if __name__ == '__main__':
     elif cmd == 'read-values': read_values(sys.argv[2])
     elif cmd == 'read-csv': read_csv(sys.argv[2])
     elif cmd == 'apply': apply(sys.argv[2], sys.argv[3])
+    elif cmd == 'probe': probe(sys.argv[2])
     else: raise SystemExit('unknown command: ' + cmd)

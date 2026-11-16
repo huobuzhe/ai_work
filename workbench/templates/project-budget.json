@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "项目预算表",
+  "primaryKey": "项目号",
+  "columns": {
+    "项目号": "text",
+    "预算": "number",
+    "截止": "date",
+    "状态": "enum"
+  },
+  "description": "仓内预置模板：项目预算（主键可配置为非「姓名」列，#10）"
+}

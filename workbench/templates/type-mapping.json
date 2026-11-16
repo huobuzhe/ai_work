@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "description": "清单类型 → 平台字段类型映射表，进仓内（#10）。本地 local=openpyxl/Univer；feishu/tencent 列留给 Slice 2 adapter，本切片不实现。",
+  "TYPE_ENUM": ["text", "number", "date", "bool", "enum"],
+  "MAP": {
+    "text":   { "local": "str",   "feishu": "text",           "tencent": "text" },
+    "number": { "local": "int",   "feishu": "number",         "tencent": "number" },
+    "date":   { "local": "date",  "feishu": "date",           "tencent": "date" },
+    "bool":   { "local": "bool",  "feishu": "checkbox",       "tencent": "checkbox" },
+    "enum":   { "local": "str",   "feishu": "single_select",  "tencent": "select" }
+  }
+}

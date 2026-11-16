@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "name": "员工工时表",
+  "primaryKey": "姓名",
+  "columns": {
+    "姓名": "text",
+    "部门": "text",
+    "工时": "number",
+    "时薪": "number",
+    "备注": "text"
+  },
+  "description": "仓内预置模板：员工工时记录（#10，git 作线上来源）"
+}

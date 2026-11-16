@@ -16,6 +16,8 @@
     "client",
     "scripts",
     "test",
+    "registry",
+    "templates",
     "cordis.patch.yml",
     "README.md",
     "SMOKE.md"
@@ -27,6 +29,7 @@
     "test:smoke": "node --test test/panel-smoke.test.js",
     "test:e2e": "node --test test/e2e-xlsx.test.js",
     "test:formula": "node --test test/formula.test.js test/e2e-formula.test.js",
+    "test:templates": "node --test test/templates.test.js test/e2e-templates.test.js",
     "acceptance": "node scripts/acceptance-run.js",
     "acceptance:formula": "node scripts/acceptance-formula.js"
   },

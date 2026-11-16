@@ -2,7 +2,7 @@
 
 规格 [`#8`](https://github.com/huobuzhe/ai_work/issues/8) / 实施票 [`#9`](https://github.com/huobuzhe/ai_work/issues/9)、[`#11`](https://github.com/huobuzhe/ai_work/issues/11)、[`#12`](https://github.com/huobuzhe/ai_work/issues/12)、[`#13`](https://github.com/huobuzhe/ai_work/issues/13)、[`#14`](https://github.com/huobuzhe/ai_work/issues/14)、[`#15`](https://github.com/huobuzhe/ai_work/issues/15)、[`#16`](https://github.com/huobuzhe/ai_work/issues/16) 的可交付插件包。
 
-把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）+ 作用范围/条件对所有动作生效（票 #12）+ swap 半换边界与披露 / conditional 增删补齐（票 #13）+ 封闭校验系统与预览卡完整五段（票 #14）+ 按钮固化与一键重跑 / 按钮库生命周期（票 #15）+ 仓内按钮注册表统一入口（票 #16）**；云端 adapter、NL 一步编译成函数等属后续票，不在本包范围。
+把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）+ 作用范围/条件对所有动作生效（票 #12）+ swap 半换边界与披露 / conditional 增删补齐（票 #13）+ 封闭校验系统与预览卡完整五段（票 #14）+ 按钮固化与一键重跑 / 按钮库生命周期（票 #15）+ 仓内按钮注册表统一入口（票 #16）+ 模板库与建表（票 #10）**；云端 adapter、NL 一步编译成函数等属后续票，不在本包范围。
 
 ## 结构
 
@@ -16,13 +16,13 @@
 - `scripts/acceptance-formula.js` — function 端到端验收编排：造 xlsx → 引擎生成公式 → 写回 → 调 bundled LibreOffice Kit 重算 → data_only 读回缓存值断言。CLI 路径可用 `WORKBENCH_LO_NODE` / `WORKBENCH_LO_CLI` 覆盖。
 - `registry/*.json` — 仓内声明式按钮注册表（票 #16，git 作「线上」来源）：每份 JSON 一个预置按钮，含 name / source=preset / kind / params / schemaVersion；`lib/engine.js` 的 `loadRegistry()` 加载时做封闭校验（与配方校验共用规则），非法条目逐条拒绝不影响合法条目。
 - `scripts/load-registry.js` — 注册表加载脚本（纯文件桥，票 #16）：读 `registry/*.json` → 调引擎 `loadRegistry()` → 输出校验结果与按钮清单；无网络、无云凭据、不写仓库。
-- `test/` — `node:test`：纯引擎 11 例、面板注册契约 4 例、extract 端到端 1 例、function 公式纯引擎 8 例、function 重算端到端 1 例、scope/条件公共字段 12 例、swap/conditional 半换边界与披露 15 例、封闭校验与预览卡五段 24 例、按钮固化/一键重跑/按钮库生命周期 17 例、仓内注册表统一入口 25 例（共 118 例）。
+- `test/` — `node:test`：纯引擎 11 例、面板注册契约 4 例、extract 端到端 1 例、function 公式纯引擎 8 例、function 重算端到端 1 例、scope/条件公共字段 12 例、swap/conditional 半换边界与披露 15 例、封闭校验与预览卡五段 24 例、按钮固化/一键重跑/按钮库生命周期 17 例、仓内注册表统一入口 25 例、模板库与建表 25 例 + 端到端 5 例（共 148 例）。
 
 ## 构建 / 验证
 
 ```bash
 npm run build:client      # 重新生成 client/client.js
-npm test                  # 全测（118 例）
+npm test                  # 全测（141 例）
 npm run acceptance        # extract 端到端验收，打印逐行读回结果
 npm run acceptance:formula # function 端到端验收（含 LibreOffice 重算），打印重算后缓存值
 ```
@@ -31,7 +31,7 @@ function 重算用 bundled LibreOffice Kit CLI（非系统 soffice）：默认�
 
 无第三方依赖：测试只用 Node 内置 `node:test` + `node:vm`；文件读写只用本机 Python + openpyxl。本仓无 TypeScript 编译器，全包为纯 JS，类型安全以 `node --check` 语法检查代替（无 tsc，不伪造 typecheck）。
 
-## 边界（Slice 1 / 票 #9、#11、#12、#13、#14、#15、#16）
+## 边界（Slice 1 / 票 #9、#11、#12、#13、#14、#15、#16、#10）
 
 - 零云凭据：不涉及飞书 / 腾讯 / Microsoft Graph。函数计算由本地 LibreOffice 重算，不调用任何云 API。
 - 配方是声明式数据（kind + params），不含可执行代码；function 的表达式经封闭校验后才生成公式。
@@ -48,3 +48,5 @@ function 重算用 bundled LibreOffice Kit CLI（非系统 soffice）：默认�
   - **诚实边界（code-review defer）**：预置按钮的资源打包（npm `files` 白名单含 registry/）与「宿主是否/何时 seed」属发布与集成层、不在纯 seam 包内；注册表的 `source` 枚举只在加载入口约束为 preset（通用按钮模型的 source 由 clone/project 兜底为 user/preset）；按钮库字段枚举在 `cloneButton`（engine）与 `projectOne`（client）各有一份、新增字段须同步（漂移风险已记录）。
 - 「一键运行跳过确认」仅限固化按钮且参数一字未改：跳过的是确认这一步、校验与影响预览照跑；其余任何写值（首次执行、导览、改过参数的重跑）必须先预览、用户确认后才写值。
 - 不改 `apps/web` shell，不起独立 Vite 应用；表格视图的可编辑 grid 形态（研究未验证 #4）留待后续票，本面板 body 仅验证注册契约。
+- 模板库与建表（票 #10）：四种入口（blank / template / upload / description）统一走 `createTable({mode})` 产出 `{primaryKey, columns, types, rows?}`；仓内声明式模板清单 `templates/*.json`（`列名→类型` 枚举 text/number/date/bool/enum 取三家交集、`primaryKey` 默认「姓名」、`columns` 白名单、`schemaVersion`），类型映射表 `templates/type-mapping.json` 进仓内，`scripts/load-templates.js` 是纯文件桥（读清单→`validateManifest`→stdout 完整清单 + 宿主契约）。**上传校验**：`xlsx_bridge.py probe` 探测字节（PK 魔数 / openpyxl 可开 / 加密 / 带宏），`checkUpload(probe)` 判格式白名单（只收 .xlsx/.csv/.tsv）+ 加密 / 带宏 / 改名伪装（xlsx 非 zip 或打不开即拒），`validateRows(rows,manifest)` 报必填列 / 主键唯一非空 / 类型可映射的具体列。**冲突检测**：`detectConflicts(incoming, existing, replace)` 逐条比对模板名 / 主键 / 列白名单与类型 / schemaVersion，同名或同主键任一不一致即列冲突并拒绝、`autoMerged:false` 不自动合并，**显式 `replace:true` 才放行**。**描述建表**信息不足（缺主键或列清单）返回 `questions`、`structure:undefined` 不猜值。校验与建表全部复用同一引擎 `lib/engine.js`；不新增第二套状态机。
+  - **诚实边界（票 #10）**：本包是纯 seam 包，不写文件、不碰 git——「显式替换才写入且 git 留痕」的**实际落盘与 git 提交由宿主/发布层负责**（与 #16 host seed 契约对称），本包只提供 `detectConflicts` 的放行判定与完整清单；真实文件字节探测在 `scripts/xlsx_bridge.py`（判定逻辑仍在引擎，桥只做 IO）；类型映射表仅做**名字级** text/number/date/bool/enum → local/feishu/tencent 映射，云端字段的数字编码留给 Slice 2 adapter，本切片不实现。

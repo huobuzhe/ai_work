@@ -37,6 +37,189 @@ const KINDS = {
   }
 };
 
+// ============================================================================
+// 票 #10：模板库与建表（纯 seam，不读文件；字节探测由文件桥 xlsx_bridge.py probe 提供）
+// 规格 #8 line 110/111/121-123：
+//  - 清单类型枚举取三家交集 text/number/date/bool/enum；映射到平台字段类型的映射表进仓内。
+//  - 主键列可配置（默认「姓名」）；上传格式白名单 + 加密/带宏/伪装判定 + 必填列/主键/类型校验。
+//  - 冲突检测逐条比对、显式替换才放行、不自动合并；描述建表信息不足就问、不猜值。
+// ============================================================================
+const TYPE_ENUM = ['text', 'number', 'date', 'bool', 'enum'];
+// 清单类型 → 平台字段类型映射表（Slice 1 本地零凭据：local=openpyxl/Univer；云端列留给 Slice 2 adapter，不在此实现）。
+const TYPE_MAP = {
+  text:   { local: 'str',   feishu: 'text',   tencent: 'text' },
+  number: { local: 'int',   feishu: 'number', tencent: 'number' },
+  date:   { local: 'date',  feishu: 'date',   tencent: 'date' },
+  bool:   { local: 'bool',  feishu: 'checkbox', tencent: 'checkbox' },
+  enum:   { local: 'str',   feishu: 'single_select', tencent: 'select' }
+};
+const UPLOAD_WHITELIST = ['.xlsx', '.csv', '.tsv'];
+const DEFAULT_PRIMARY_KEY = '姓名';
+// 模块加载期一次性断言：清单类型枚举与平台映射表键集必须完全一致（避免「在 TYPE_ENUM 但无映射」的隐性失败态）。
+['local', 'feishu', 'tencent'].forEach(platform => {
+  TYPE_ENUM.forEach(t => {
+    if (!TYPE_MAP[t] || TYPE_MAP[t][platform] === undefined) {
+      throw new Error('TYPE_MAP 缺少平台映射：' + t + '.' + platform);
+    }
+  });
+});
+
+// 清单结构校验：字段白名单（未知顶层字段拒绝）、类型枚举、primaryKey 在 columns 内、schemaVersion 封闭。
+function validateManifest(m) {
+  const errors = [];
+  const fail = (field, reason) => errors.push({ field, reason });
+  if (!m || typeof m !== 'object') return { ok: false, errors: [{ field: 'manifest', reason: '清单不是对象' }] };
+  const allowed = ['schemaVersion', 'name', 'primaryKey', 'columns', 'description', 'requiredColumns'];
+  Object.keys(m).forEach(k => { if (allowed.indexOf(k) < 0) fail(k, '未知清单字段'); });
+  if (m.schemaVersion === undefined) fail('schemaVersion', '缺少 schemaVersion');
+  else if (m.schemaVersion !== SCHEMA_VERSION) fail('schemaVersion', 'schemaVersion 不匹配：' + m.schemaVersion + ' != ' + SCHEMA_VERSION);
+  if (!m.name || typeof m.name !== 'string') fail('name', '缺少模板名');
+  const pk = m.primaryKey === undefined ? DEFAULT_PRIMARY_KEY : m.primaryKey;
+  if (!m.columns || typeof m.columns !== 'object' || Array.isArray(m.columns)) {
+    fail('columns', 'columns 必须是「列名 → 类型」对象');
+    return { ok: false, errors };
+  }
+  const colNames = Object.keys(m.columns);
+  if (colNames.length === 0) fail('columns', 'columns 不能为空');
+  colNames.forEach(c => {
+    if (TYPE_ENUM.indexOf(m.columns[c]) < 0) fail(c, '类型不可映射：' + m.columns[c] + '（仅收 ' + TYPE_ENUM.join('/') + '）');
+  });
+  if (colNames.indexOf(pk) < 0) fail('primaryKey', '主键列「' + pk + '」不在 columns 中');
+  // 可选 requiredColumns 白名单：缺省 = 全部白名单列必填；给了则只用它（主键列恒必填）。
+  let required = colNames.slice();
+  if (m.requiredColumns !== undefined) {
+    if (!Array.isArray(m.requiredColumns)) fail('requiredColumns', 'requiredColumns 必须是列名数组');
+    else m.requiredColumns.forEach(c => { if (colNames.indexOf(c) < 0) fail(c, 'requiredColumns 含不在 columns 的列「' + c + '」'); });
+    if (Array.isArray(m.requiredColumns)) {
+      required = m.requiredColumns.slice();
+      if (required.indexOf(pk) < 0) required.push(pk); // 主键恒必填
+    }
+  }
+  if (errors.length) return { ok: false, errors };
+  return { ok: true, errors: [], structure: { primaryKey: pk, columns: colNames, types: Object.assign({}, m.columns), required } };
+}
+
+// 上传格式/伪装判定：probe = {filename, ext, isZip, openable, encrypted, hasMacro}（字节层由文件桥探测）。
+function checkUpload(probe) {
+  const errors = [];
+  const fail = reason => errors.push({ field: '格式', reason });
+  if (!probe || typeof probe !== 'object') return { ok: false, errors: [{ field: '格式', reason: '缺少探测信息' }] };
+  const ext = (probe.ext || '').toLowerCase();
+  if (UPLOAD_WHITELIST.indexOf(ext) < 0) {
+    fail('格式不支持：' + (ext || '未知') + '（仅收 ' + UPLOAD_WHITELIST.join('/') + '）');
+    return { ok: false, errors };
+  }
+  // 加密 / 带宏：直接短路返回，避免与「伪装」重复报因。
+  if (probe.encrypted) return { ok: false, errors: [{ field: '格式', reason: '加密工作簿无法读取' }] };
+  if (probe.hasMacro) return { ok: false, errors: [{ field: '格式', reason: '带宏工作簿被拒收' }] };
+  if (ext === '.xlsx') {
+    // xlsx 本质是 zip（PK 魔数）；伪装文件非 zip 或 openpyxl 打不开。
+    if (!probe.isZip || probe.openable === false) fail('文件魔数/内容与 .xlsx 不符（改名伪装或损坏）');
+  }
+  return errors.length ? { ok: false, errors } : { ok: true, errors: [] };
+}
+
+// 上传数据行按清单校验：必填列全到、主键唯一非空、类型可映射。
+function validateRows(rows, m) {
+  const errors = [];
+  const fail = (field, reason) => errors.push({ field, reason });
+  const vm = validateManifest(m);
+  if (!vm.ok) return { ok: false, errors: vm.errors };
+  const required = vm.structure.required || Object.keys(m.columns);
+  const pk = vm.structure.primaryKey;
+  const list = Array.isArray(rows) ? rows : [];
+  if (list.length === 0) fail('rows', '上传表无数据行');
+  const seen = Object.create(null);
+  list.forEach((r, i) => {
+    required.forEach(c => { if (r[c] === undefined || r[c] === '') fail(c, '第 ' + (i + 1) + ' 行缺少必填列「' + c + '」'); });
+    const key = r[pk];
+    if (key === undefined || key === '') fail(pk, '第 ' + (i + 1) + ' 行主键为空');
+    else if (seen[String(key)]) fail(pk, '主键「' + key + '」重复');
+    else seen[String(key)] = true;
+  });
+  // 类型映射完整性由模块加载期断言保证（见 TYPE_ENUM/TYPE_MAP 定义处），此处无需重复复核。
+  return errors.length ? { ok: false, errors } : { ok: true, errors: [] };
+}
+
+// 冲突检测：同名或同主键逐条比对（name/primaryKey/columns 白名单与类型/schemaVersion），显式替换才放行。
+function detectConflicts(incoming, existing, replace) {
+  const conflicts = [];
+  if (!incoming || typeof incoming !== 'object') {
+    return { allowed: false, conflicts: [{ field: 'incoming', reason: '缺少待写入清单' }], autoMerged: false, replace: !!replace };
+  }
+  const list = Array.isArray(existing) ? existing : [];
+  list.forEach(e => {
+    const sameName = e.name === incoming.name;
+    const samePk = (e.primaryKey || DEFAULT_PRIMARY_KEY) === (incoming.primaryKey || DEFAULT_PRIMARY_KEY);
+    if (!sameName && !samePk) return;
+    if (sameName) conflicts.push({ field: 'name', reason: '模板名冲突：「' + incoming.name + '」已存在' });
+    if (samePk) conflicts.push({ field: 'primaryKey', reason: '主键冲突：「' + (incoming.primaryKey || DEFAULT_PRIMARY_KEY) + '」已被使用' });
+    const ec = e.columns || {}, ic = incoming.columns || {};
+    const allCols = Object.keys(Object.assign({}, ec, ic));
+    allCols.forEach(c => {
+      if (ec[c] !== ic[c]) conflicts.push({ field: 'columns', reason: '列「' + c + '」类型/白名单不一致：' + ec[c] + ' vs ' + ic[c] });
+    });
+    if (e.schemaVersion !== incoming.schemaVersion) conflicts.push({ field: 'schemaVersion', reason: 'schemaVersion 不一致' });
+  });
+  const allowed = conflicts.length === 0 ? true : !!replace;
+  return { allowed, conflicts, autoMerged: false, replace: !!replace };
+}
+
+// 四种建表入口统一产出 {mode, structure:{primaryKey,columns,types,rows?}}；描述入口信息不足返回 questions、不猜值。
+function createTable(opts) {
+  opts = opts || {};
+  const mode = opts.mode;
+  if (mode === 'blank') {
+    return { ok: true, questions: [], structure: { mode: 'blank', primaryKey: DEFAULT_PRIMARY_KEY, columns: [DEFAULT_PRIMARY_KEY], types: { [DEFAULT_PRIMARY_KEY]: 'text' }, rows: [] } };
+  }
+  if (mode === 'template' || mode === 'upload') {
+    const vm = validateManifest(opts.manifest);
+    if (!vm.ok) return { ok: false, errors: vm.errors, questions: [] };
+    if (mode === 'upload') {
+      const vr = validateRows(opts.rows || [], opts.manifest);
+      if (!vr.ok) return { ok: false, errors: vr.errors, questions: [] };
+    }
+    return { ok: true, questions: [], structure: Object.assign({ mode }, vm.structure, { rows: (opts.rows || []).slice() }) };
+  }
+  if (mode === 'description') {
+    const text = typeof opts.description === 'string' ? opts.description : '';
+    // 解析「主键X（类型）、列：A（类型）、B（类型）」这类明确描述；只认显式给出的，缺项就问、不猜。
+    const pkM = text.match(/主键\s*([^\s（(,，]+)/);
+    const colsPart = text.match(/列[：:]\s*(.+)$/);
+    if (!pkM || !colsPart) {
+      const questions = [];
+      if (!pkM) questions.push('请指定主键列（例如「主键 工号」）；默认可用「姓名」吗？');
+      if (!colsPart) questions.push('请说明这张表要有哪些列及类型（例如「姓名（文本）、工时（数字）」）');
+      return { ok: false, questions, structure: undefined };
+    }
+    const pk = pkM[1];
+    const columns = {}, order = [], missingType = [];
+    colsPart[1].split(/[,，、]/).forEach(seg => {
+      const s = seg.trim();
+      if (!s) return;
+      if (/^主键/.test(s)) return; // 「主键X」是主键声明段，不是列定义，跳过
+      const m2 = s.match(/([^\s（(]+)\s*[（(]\s*(文本|数字|日期|布尔|枚举|text|number|date|bool|enum)\s*[）)]/);
+      if (!m2) { missingType.push(s); return; } // 有列名但没读到类型 → 不静默丢，收集成待问项
+      const name = m2[1].trim();
+      const raw = m2[2];
+      const map = { 文本: 'text', 数字: 'number', 日期: 'date', 布尔: 'bool', 枚举: 'enum', text: 'text', number: 'number', date: 'date', bool: 'bool', enum: 'enum' };
+      columns[name] = map[raw]; order.push(name);
+    });
+    if (order.length === 0 && missingType.length === 0) return { ok: false, questions: ['没能从描述里读出列及类型，请按「列名（类型）」列出'], structure: undefined };
+    if (missingType.length > 0) {
+      // 用户列出了列但缺类型：信息不足，问清类型，不猜、也不静默省略这些列。
+      const questions = missingType.map(seg => '列「' + seg + '」缺少类型，请补充（文本/数字/日期/布尔/枚举）');
+      return { ok: false, questions, structure: undefined };
+    }
+    if (order.indexOf(pk) < 0) return { ok: false, questions: ['主键列「' + pk + '」未在列清单中出现，请补充或改正'], structure: undefined };
+    const m = { schemaVersion: SCHEMA_VERSION, name: opts.name || '描述建表', primaryKey: pk, columns };
+    const vm = validateManifest(m);
+    if (!vm.ok) return { ok: false, errors: vm.errors, questions: [] };
+    return { ok: true, questions: [], structure: Object.assign({ mode: 'description' }, vm.structure, { rows: [] }) };
+  }
+  return { ok: false, errors: [{ field: 'mode', reason: '未知建表入口：' + mode }], questions: [] };
+}
+
 function shorten(s) {
   const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   return t.length > 18 ? t.slice(0, 18) + '…' : t;
@@ -697,5 +880,7 @@ function exportButtons(state) {
 module.exports = {
   SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, columnLetter, toFormula, extractOutputColumn, extractExpression,
   initial, understand, buildDraft, validate, preview, applyCells, reduce, exportButtons, nextButtonId,
-  loadRegistry, hydrateRegistry
+  loadRegistry, hydrateRegistry,
+  TYPE_ENUM, TYPE_MAP, UPLOAD_WHITELIST, DEFAULT_PRIMARY_KEY,
+  validateManifest, checkUpload, validateRows, detectConflicts, createTable
 };
