@@ -1,0 +1,8 @@
+# 端到端验收产生的临时 xlsx / csv / json 都在系统临时目录（mkdtemp），不进本包。
+# 这里只防止误把本地 Excel 探针文件或虚拟环境提交进来。
+*.xlsx
+*.xls
+*.csv
+__pycache__/
+*.pyc
+node_modules/

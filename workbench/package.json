@@ -1,0 +1,47 @@
+{
+  "name": "dsh-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "表格工作台：把建表与日常繁琐表格操作收进按钮与输入框（第一刀=本地 Excel 零凭据闭环）。规格 #8 / 票 #9。",
+  "type": "commonjs",
+  "main": "lib/engine.js",
+  "exports": {
+    ".": "./lib/engine.js",
+    "./engine": "./lib/engine.js",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "scripts",
+    "test",
+    "cordis.patch.yml",
+    "README.md",
+    "SMOKE.md"
+  ],
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs",
+    "test": "node --test test/*.test.js",
+    "test:engine": "node --test test/engine.test.js",
+    "test:smoke": "node --test test/panel-smoke.test.js",
+    "test:e2e": "node --test test/e2e-xlsx.test.js",
+    "acceptance": "node scripts/acceptance-run.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "UNLICENSED",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  }
+}

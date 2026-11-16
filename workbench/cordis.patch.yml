@@ -1,0 +1,5 @@
+# dsh bundle patch：把工作台插件插入 profile 的 layer stack。
+# 形状照抄本机一手范例 dsh-pocket / dsh-prompt-enhancer 的 cordis.patch.yml。
+- insert:
+    - id: dsh-workbench
+      name: dsh-workbench
