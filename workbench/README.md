@@ -4,6 +4,16 @@
 
 把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）+ 作用范围/条件对所有动作生效（票 #12）+ swap 半换边界与披露 / conditional 增删补齐（票 #13）+ 封闭校验系统与预览卡完整五段（票 #14）+ 按钮固化与一键重跑 / 按钮库生命周期（票 #15）+ 仓内按钮注册表统一入口（票 #16）+ 模板库与建表（票 #10）+ adapter 抽象层与能力位契约（票 #21，Slice 2 S1）+ 飞书 adapter 实装（票 #23，Slice 2 S3：建表/加字段/写记录/读回请求计划 + stub 回放）**；并已交付 Slice 2 其余各票：腾讯 adapter 实装（S4 #24）+ 能力位端到端验尸（S5 #25）+ 按钮级权限分享明确 defer（S6 #26），Slice 2 六票（#21–#26）全部闭环。NL 一步编译成函数、AND/OR 语法、细粒度权限/分享实装等属后续 effort，不在本包范围。
 
+## Slice 2 决策记录（架构主线，票 #21–#26 统合）
+
+> 本节把散在下面各票段落里的 Slice 2 架构决策收拢成一条主线，便于后续读者一次读懂；逐票细节见「边界」节对应段落。
+
+- **凭据契约（#22）**：飞书、腾讯两套凭据**各自独立、绝不共用凭据层**——飞书 `feishu-tenant-token`（FEISHU_APP_ID/SECRET/TENANT_ACCESS_TOKEN，约 2h），腾讯 `tencent-oauth-openid`（TENCENT_ACCESS_TOKEN/CLIENT_ID/OPEN_ID，约 30 天），字段名/ envKey 无交集。`validateCredentials(adapterId, provided)` 纯函数只回「缺哪个字段名」、**绝不回显凭据值**；真实凭据值零进仓库/配方/日志/issue（测试只用 stub）。错误映射取官方文档 + 票 #5 一手结论、非本票重测。local 为零凭据 adapter、无契约。
+- **能力位单一真相源（#25）**：公式能力位 `formulaCapabilities = {canWriteFormula, canRecalc, canReadComputed, functionSet}` 的**唯一真相源是 `engine.ADAPTERS[id].formulaCapabilities`**；`lib/capability-matrix.js` 的每格 `verdict` 从它**派生**（矩阵只是「验尸视图」，只补 runnable/evidence/failingStep），不独立声明第二份。有 `assertNoUnbackedTrue()` 加载自检 + 落盘矩阵 drift-guard 测试钉死。能力位 false 的动作在该 adapter 上**直接禁用并明确提示**（`preview()` 早返 disabled），**绝不静默降级、不写死值、不偷偷把公式算成值**。
+- **两 adapter 能力位口径（#21/#23/#24）**：local 四格 true（真跑写公式→LibreOffice 重算→读回闭环）；飞书、腾讯四格 **false**（飞书文档层 false；腾讯一手负面已验证 V3 CellValue 无公式字段/无重算/无读计算值）。**只有 function（公式产物）依赖能力位**，结构化动作（extract/swap/conditional）只读写单元格值、任何 adapter 都可用。两个云端 adapter 的类型码也从 `engine.TYPE_MAP` 单一来源派生（不另立第二套映射）；未验证的数字码/写入形态逐列收进 `unverifiedTypes[]`，`--live` 在无 `--allow-unverified-types` 时拒绝真跑（不把未验证 magic number 悄悄塞进真实请求）。
+- **S6 权限/分享 = 明确 defer（#26）**：第一版不做账号体系/分享链接/按钮级 ACL，配方随仓内 git 权限走、按钮仅当前本机使用者可见（贴规格 #8 Out of Scope「细粒度权限 / 分享（Slice 2 之后）」）。defer 理由：本包是纯 seam 包 + client 面板，无后端账号服务/多租户用户模型，按钮模型与投影字段里从未有 owner/acl/share 字段；强造假权限面违背「绝不静默降级/不装样子」。不越权由 `test/permission-defer.test.js` 三例守卫（含 nesting 深挖）。触发指针：引入账号体系/多用户共享/云端多人协作新 effort 时再开票，届时以真实用户身份模型为前提、配凭据冒烟。
+- **诚实边界（贯穿 Slice 2）**：云端 adapter/capability 本会话只跑通 `--stub` 与文档层证据，**未持真实凭据跑 `--live` 或云端最小用例**；#25 AC1「每个 adapter 各跑最小用例」字面**只对 local 真跑**、云端是文档层结论（已在各段诚实标注，不夸大为「都跑过」）。
+
 ## 结构
 
 - `lib/engine.js` — 纯「动作配方引擎」（主 seam）。输入声明式表格数据 + 一句话，输出封闭校验 / 影响预览 / 写值动作。不碰 UI、浏览器、xlsx 文件或插件注册。CommonJS。
