@@ -420,11 +420,15 @@ function nextButtonId(buttons) {
 }
 // 按钮是声明式配方 + 运行态标记；Host 权威源持久化时只需存这些字段（票 #15 / 用户故事 32）。
 // 这里做防御性拷贝，导出/水合都不共享内部引用、不含任何可执行代码。
+// 票 #16：新增来源标记 source（preset=仓内注册表预置 / user=使用者固化）与按钮级 schemaVersion；
+// 旧按钮没有 source 时默认 user、没有 schemaVersion 时默认 SCHEMA_VERSION，向后兼容。
 function cloneButton(b) {
   return {
     id: b.id, name: b.name, kind: b.kind,
     params: Object.assign({}, b.params || {}),
     medium: b.medium, steps: (b.steps || []).slice(),
+    source: b.source === 'preset' ? 'preset' : 'user',
+    schemaVersion: b.schemaVersion === undefined ? SCHEMA_VERSION : b.schemaVersion,
     lastAffectedRows: b.lastAffectedRows === undefined ? 0 : b.lastAffectedRows,
     emptyRun: !!b.emptyRun
   };
@@ -438,9 +442,81 @@ function initial(data) {
     rows: (data.rows || []).map(function (r) { return Object.assign({}, r); }),
     sources: data.sources || {},
     stage: 'IDLE', input: '', draft: null, preview: null,
-    buttons: (data.buttons || []).map(cloneButton),  // 票 #15：Host 权威源水合
+    buttons: (data.buttons || []).map(cloneButton),  // 票 #15：Host 权威源水合（使用者固化）
+    registryButtons: (data.registryButtons || []).map(cloneButton),  // 票 #16：仓内注册表预置（git 来源）
     log: [], note: '先写一句话并「理解」，或按一个快捷按钮。', noteTone: 'info'
   };
+}
+
+// ---- 票 #16：仓内声明式按钮注册表（预置按钮，git 作「线上」来源）----
+// 纯函数：输入已解析的注册表条目数组 + 可选 state，逐条封闭校验后产出按钮。
+// 校验与配方校验系统共用规则（直接调 validate），额外加注册表条目自身的封闭字段检查。
+// 非法条目逐条拒绝、不影响其它合法条目；不读文件（文件 I/O 是 scripts/load-registry.js 的职责）。
+// 顶层字段白名单只收条目真正声明的 5 个字段；medium/steps 是校验通过后由 buildDraft
+// 派生的产物，不接受调用方提供（否则会被悄悄丢弃、形成假声明，见 #16 code-review M4/LOW）。
+const REGISTRY_TOP_KEYS = ['schemaVersion', 'name', 'source', 'kind', 'params'];
+function loadRegistry(entries, state) {
+  const accepted = [];
+  const rejected = [];
+  // 用无原型字典，避免 constructor / toString / __proto__ 等继承属性被误判为重复
+  //（#16 code-review Standards LOW）。
+  const seenNames = Object.create(null);
+  (entries || []).forEach(function (entry, idx) {
+    const label = (entry && entry.name) || ('#' + (idx + 1));
+    if (!entry || typeof entry !== 'object') {
+      rejected.push({ name: label, reason: '条目不是对象' });
+      return;
+    }
+    // 1) 顶层字段封闭白名单：未知字段（尤其可执行代码）一律拒绝
+    const unknown = Object.keys(entry).filter(function (k) { return REGISTRY_TOP_KEYS.indexOf(k) === -1; });
+    if (unknown.length) {
+      rejected.push({ name: label, reason: '未知字段：' + unknown.join('、') });
+      return;
+    }
+    // 2) 来源必须是 preset（注册表是预置来源；使用者固化按钮不进注册表）
+    if (entry.source !== 'preset') {
+      rejected.push({ name: label, reason: '注册表条目的 source 必须是 preset' });
+      return;
+    }
+    // 3) 按钮名非空、不重复
+    const name = String(entry.name || '').trim();
+    if (!name) {
+      rejected.push({ name: label, reason: '缺少按钮名 name' });
+      return;
+    }
+    if (seenNames[name]) {
+      rejected.push({ name: label, reason: '按钮名重复：' + name });
+      return;
+    }
+    // 4) 配方本体校验：与配方校验系统共用同一套 validate 规则（未合并默认值，
+    //    这样缺必填参数能当场抓出；buildDraft 的默认值合并只在通过校验后用于派生 steps）。
+    const rawDraft = {
+      schemaVersion: entry.schemaVersion,
+      kind: entry.kind,
+      params: entry.params || {}
+    };
+    const check = validate(rawDraft, state);
+    if (!check.ok) {
+      rejected.push({ name: label, reason: check.errors.join('；') });
+      return;
+    }
+    seenNames[name] = true;
+    // 5) 通过校验后，用 buildDraft 派生完整声明式配方（默认值 + steps + medium），不含可执行代码。
+    const full = buildDraft(entry.kind, null, entry.params);
+    accepted.push(cloneButton({
+      id: 'p' + (accepted.length + 1),
+      name: name, kind: entry.kind, source: 'preset',
+      schemaVersion: entry.schemaVersion,
+      params: full.params, medium: full.medium, steps: full.steps,
+      lastAffectedRows: 0, emptyRun: false
+    }));
+  });
+  return { ok: rejected.length === 0, accepted: accepted, rejected: rejected, total: (entries || []).length };
+}
+
+// 把注册表加载结果水合进 state 的 registryButtons（预置来源），不与使用者固化按钮混在一起。
+function hydrateRegistry(state, buttons) {
+  return set(state, { registryButtons: (buttons || []).map(cloneButton) });
 }
 function push(state, text, tone) {
   return [{ text: text, tone: tone || 'info' }].concat(state.log).slice(0, 8);
@@ -561,8 +637,11 @@ function reduce(state, action) {
       });
     }
     case 'RUN_BUTTON': {
+      // 票 #16：统一入口——预置（registryButtons, p*）与固化（buttons, b*）两类按钮都能一键运行。
+      // 先在固化按钮里找（__last__ 仍是最近固化那个），找不到再查预置按钮。
+      const allButtons = (state.buttons || []).concat(state.registryButtons || []);
       const b = action.id === '__last__' ? state.buttons[state.buttons.length - 1]
-        : state.buttons.filter(function (x) { return x.id === action.id; })[0];
+        : allButtons.filter(function (x) { return x.id === action.id; })[0];
       if (!b) return guard(state, '按钮库里还没有这个按钮。');
       const overrides = action.params || {};
       // 规格 #8 用户故事 7/8：参数一处未改才真「一键」直接执行；
@@ -583,14 +662,17 @@ function reduce(state, action) {
       }
       const applied = applyCells(state, pv.cells);
       // 票 #15 / 用户故事 18/32：重跑更新运行态标记（上次影响行数 / 空跑），不写回仓库。
-      const buttons = state.buttons.map(function (x) {
+      // 票 #16：预置按钮也在对应来源数组里更新标记（p* 在 registryButtons、b* 在 buttons）。
+      const stamp = function (x) {
         return x.id === b.id ? Object.assign({}, x, {
           lastAffectedRows: pv.affectedRows, emptyRun: pv.affectedRows === 0
         }) : x;
-      });
+      };
+      const buttons = state.buttons.map(stamp);
+      const registryButtons = (state.registryButtons || []).map(stamp);
       const emptyNote = pv.affectedRows === 0 ? '（空跑 / 影响 0 行）' : '';
       return set(state, { columns: applied.columns, rows: applied.rows, draft: draft, preview: pv,
-        stage: 'EXECUTED', buttons: buttons,
+        stage: 'EXECUTED', buttons: buttons, registryButtons: registryButtons,
         note: '一键运行「' + b.name + '」：参数未改，直接执行 ' + pv.cells.length + ' 格' + emptyNote + '。', noteTone: 'ok',
         log: push(state, '一键运行「' + b.name + '」（参数未改）→ ' + pv.cells.length + ' 格变化', 'ok') });
     }
@@ -614,5 +696,6 @@ function exportButtons(state) {
 
 module.exports = {
   SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, columnLetter, toFormula, extractOutputColumn, extractExpression,
-  initial, understand, buildDraft, validate, preview, applyCells, reduce, exportButtons, nextButtonId
+  initial, understand, buildDraft, validate, preview, applyCells, reduce, exportButtons, nextButtonId,
+  loadRegistry, hydrateRegistry
 };

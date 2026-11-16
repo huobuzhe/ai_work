@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "从外勤表补邮箱",
+  "source": "preset",
+  "kind": "extract",
+  "params": {
+    "来源文件": "外勤登记表.csv",
+    "匹配列": "姓名",
+    "取哪一列": "邮箱",
+    "写到": "邮箱",
+    "scope": "all",
+    "条件": ""
+  }
+}

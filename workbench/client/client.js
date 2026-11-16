@@ -120,27 +120,34 @@ function labelOfKind(kind) {
 }
 
 /**
- * 按钮库投影（纯函数，无 DOM / 无 React）——票 #15。
- * 把 Host 权威状态里的 state.buttons 映射成可序列化的按钮库视图模型，
- * 供 client-plugin 面板的「按钮区」统一呈现（AC4）。
+ * 按钮库投影（纯函数，无 DOM / 无 React）——票 #15，票 #16 扩展为双来源。
+ * 把两类来源统一映射成可序列化的按钮库视图模型，供面板「按钮区」一处呈现、来源可区分：
+ *   - registryButtons：仓内声明式注册表加载的预置按钮（source='preset'，git 作线上来源）
+ *   - buttons：使用者在面板固化的按钮（source='user'，Host 权威源）
+ * 预置在前、固化在后，保持各自 id 空间（p* / b*）不冲突；来源通过 source 字段区分。
  * 按钮是声明式配方 + 运行态标记：lastAffectedRows / emptyRun 如实带出（用户故事 18/32），
- * 不含任何可执行代码；不做云端原生按钮投影（AC5，后续 effort）。
+ * 不含任何可执行代码；不做云端原生按钮投影（票 #15 AC5，后续 effort）。
  */
 function projectButtonLibrary(state) {
-  const buttons = (state && state.buttons || []).map(function (b) {
-    return {
-      id: b.id,
-      name: b.name,
-      kind: b.kind,
-      label: labelOfKind(b.kind),
-      params: Object.assign({}, b.params || {}),
-      medium: b.medium,
-      steps: (b.steps || []).slice(),
-      lastAffectedRows: b.lastAffectedRows === undefined ? 0 : b.lastAffectedRows,
-      emptyRun: !!b.emptyRun
-    };
-  });
+  const preset = (state && state.registryButtons || []).map(function (b) { return projectOne(b); });
+  const user = (state && state.buttons || []).map(function (b) { return projectOne(b); });
+  const buttons = preset.concat(user);
   return { total: buttons.length, buttons: buttons };
+}
+function projectOne(b) {
+  return {
+    id: b.id,
+    name: b.name,
+    kind: b.kind,
+    label: labelOfKind(b.kind),
+    source: b.source === 'preset' ? 'preset' : 'user',
+    schemaVersion: b.schemaVersion,
+    params: Object.assign({}, b.params || {}),
+    medium: b.medium,
+    steps: (b.steps || []).slice(),
+    lastAffectedRows: b.lastAffectedRows === undefined ? 0 : b.lastAffectedRows,
+    emptyRun: !!b.emptyRun
+  };
 }
 
 function registerWorkbenchPanel(ctx) {

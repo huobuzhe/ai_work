@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "name": "对调部门与备注",
+  "source": "preset",
+  "kind": "swap",
+  "params": {
+    "字段A": "部门",
+    "字段B": "备注",
+    "scope": "all",
+    "条件": ""
+  }
+}
