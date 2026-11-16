@@ -145,6 +145,104 @@ function capabilityBlockersOf(draft, state) {
 }
 
 // ============================================================================
+// 票 #22（Slice 2 / S2）：凭据契约（只定接口与校验，绝不接触真实凭据值）
+// 规格 #8 Slice 2：两套云鉴权凭据各自独立、绝不共用凭据层。
+//  - 每个云端 adapter 声明：所需字段名 + 注入方式（env / 本机凭据文件）+ 失效/刷新行为 + 错误映射。
+//  - 加载时校验：缺字段即明确报错并指出缺哪个字段，不静默继续。
+//  - 真实凭据值零进仓库 / 配方 / 日志 / issue；校验结果只返回 {ok, missing, error}，绝不回显任何凭据值。
+// 字段名对齐 /wizard 产出的 credentials.env（FEISHU_* / TENCENT_*，见 docs/research/ 与票 #5 冒烟链路）。
+// ============================================================================
+const CREDENTIAL_CONTRACTS = {
+  feishu: {
+    adapterId: 'feishu',
+    sharedLayer: 'feishu-tenant-token', // 与 tencent 不同层：两套凭据绝不共用
+    // 建表/加字段/写记录/读回需要：应用凭据换 tenant_access_token（或 user_access_token）。
+    fields: [
+      { name: 'FEISHU_APP_ID', label: '自建应用 App ID', injection: 'env', envKey: 'FEISHU_APP_ID', required: true },
+      { name: 'FEISHU_APP_SECRET', label: '自建应用 App Secret', injection: 'env', envKey: 'FEISHU_APP_SECRET', required: true, secret: true },
+      { name: 'FEISHU_TENANT_ACCESS_TOKEN', label: 'tenant_access_token', injection: 'env', envKey: 'FEISHU_TENANT_ACCESS_TOKEN', required: true, secret: true }
+    ],
+    injectionModes: ['env', 'file'],
+    // 失效/刷新：tenant_access_token expire 约 2 小时（最大约 7200s）；用 app_id+app_secret 重换。
+    expiry: {
+      field: 'FEISHU_TENANT_ACCESS_TOKEN',
+      ttlSeconds: 7200,
+      refresh: '用 FEISHU_APP_ID + FEISHU_APP_SECRET 重新调用 tenant_access_token_internal 换新 token（不缓存密钥到仓库）'
+    },
+    // 错误映射：HTTP / code → 可读原因。
+    // 一手出处：HTTP 401/403 权限语义见 spreadsheet-platform-capabilities.md:33-34；99991663（tenant_access_token 无效）
+    // 见 feishu-tenant-token-ip-whitelist.md:48（Go SDK 常量）。无一手出处的错误码不写（见下方 unsourced 备注）。
+    errorMap: {
+      '401': '应用凭据无效或 tenant_access_token 缺失（inferred：官方页以 403/400 记权限问题，未逐字列 401 语义）',
+      '403': '应用非该文档的所有者/协作者，或缺少对应 API scope（文档级权限 + API scope 两层）',
+      '99991663': 'tenant_access_token 无效或已过期'
+    }
+  },
+  tencent: {
+    adapterId: 'tencent',
+    sharedLayer: 'tencent-oauth-openid', // 与 feishu 不同层：两套凭据绝不共用
+    // 建表/写值/读回需要：OAuth2 换 access_token + Client-Id + Open-Id 三头鉴权。
+    // CLIENT_SECRET 与 REFRESH_TOKEN 仅在换取/刷新 token 时使用（官方要求只放后台服务，不随每次 API 调用注入，
+    // 故不列入运行时三头必填字段；此处显式声明为「token 刷新专用」、与 feishu 的 app_secret 语义对称——见下方 tokenRefresh 段）。
+    fields: [
+      { name: 'TENCENT_ACCESS_TOKEN', label: 'OAuth2 access_token', injection: 'env', envKey: 'TENCENT_ACCESS_TOKEN', required: true, secret: true },
+      { name: 'TENCENT_CLIENT_ID', label: '应用 Client ID', injection: 'env', envKey: 'TENCENT_CLIENT_ID', required: true },
+      { name: 'TENCENT_OPEN_ID', label: 'OAuth2 user_id（Open-Id）', injection: 'env', envKey: 'TENCENT_OPEN_ID', required: true }
+    ],
+    // token 换取/刷新专用字段（不参与每次 API 调用的三头，但刷新 token 时必需；官方要求只留后台服务）。
+    tokenRefresh: {
+      fields: ['TENCENT_CLIENT_SECRET', 'TENCENT_REFRESH_TOKEN'],
+      note: 'client_secret + refresh_token 仅在 OAuth2 token 接口换/刷新 access_token 时使用，须置于后台服务、绝不随 CALL 注入。'
+    },
+    injectionModes: ['env', 'file'],
+    // 失效/刷新：access_token expires_in 约 2592000s（30 天）；用 refresh_token 刷新。
+    expiry: {
+      field: 'TENCENT_ACCESS_TOKEN',
+      ttlSeconds: 2592000,
+      refresh: '用 TENCENT_REFRESH_TOKEN（配合 TENCENT_CLIENT_SECRET）走 OAuth2 token 接口刷新（grant_type=refresh_token），不缓存密钥到仓库'
+    },
+    // 错误映射：**这是 V2 OpenAPI 的错误码**（create.html / values/update.html 一手逐字），
+    // 不是 V3 batchUpdate 的错误码表（V3 用 HTTP 级 400x，见下方 v3ErrorMap）。
+    // 一手出处：docs/research/tencent-create-file-request-shape.md:308、docs/research/tencent-v3-batchupdate-request-shape.md:359。
+    errorMap: {
+      '10313': 'Access-Token 为空',
+      '10303': 'Open-Id 错误',
+      '10302': 'Client-Id 错误',
+      '37019': 'Token 校验失败或过期'
+    },
+    // V3 batchUpdate 的通用错误码（code.html 逐字，10 行），S3/S4 走 V3 时用这张，勿把上表 V2 码套到 V3。
+    v3ErrorMap: {
+      '400001': '请求参数错误', '400002': '服务端请求超时', '400003': '访问的资源不存在',
+      '400004': '创建的资源已存在', '400005': '不允许访问该资源', '400006': '资源操作未授权（确认鉴权三元组合法有效）',
+      '400007': '请求数超过限制', '400008': '访问了超过范围的资源', '400009': '服务处于不可用状态', '400010': '服务内部错误'
+    }
+  }
+};
+
+// 纯函数：校验某 adapter 的凭据是否齐备。
+// 返回 { ok:boolean, missing:string[], error?:string }——只回字段名，绝不回显任何凭据值。
+// env 或 opts 均可提供值（一次性读取本机环境变量 / 本机凭据文件后的键值对象）。
+function validateCredentials(adapterId, provided) {
+  const contract = CREDENTIAL_CONTRACTS[adapterId];
+  if (!contract) {
+    return { ok: false, missing: [], error: '未知的平台 adapter「' + adapterId + '」，无凭据契约' };
+  }
+  const src = provided || {};
+  const missing = [];
+  contract.fields.forEach(function (f) {
+    if (!f.required) return;
+    const v = src[f.envKey];
+    if (v === undefined || v === null || String(v).length === 0) {
+      missing.push(f.envKey);
+    }
+  });
+  if (missing.length > 0) {
+    return { ok: false, missing: missing, error: '缺少凭据字段：' + missing.join(', ') + '（不静默继续）' };
+  }
+  return { ok: true, missing: [] };
+}
+
+// ============================================================================
 // 票 #10：模板库与建表（纯 seam，不读文件；字节探测由文件桥 xlsx_bridge.py probe 提供）
 // 规格 #8 line 110/111/121-123：
 //  - 清单类型枚举取三家交集 text/number/date/bool/enum；映射到平台字段类型的映射表进仓内。
@@ -1109,5 +1207,6 @@ module.exports = {
   validateManifest, checkUpload, validateRows, detectConflicts, createTable,
   COMMON_PARAMS, deriveIssues,
   ADAPTERS, ADAPTER_INTERFACE, KIND_CAPABILITY_DEPS, DEFAULT_ADAPTER,
-  adapterOf, capabilityBlockers: capabilityBlockersOf
+  adapterOf, capabilityBlockers: capabilityBlockersOf,
+  CREDENTIAL_CONTRACTS, validateCredentials
 };
