@@ -1,0 +1,36 @@
+#!/bin/sh
+# Pre-commit guardrail: run the workbench test + acceptance suite before every commit.
+# Installed via: git config core.hooksPath .githooks
+# Bypass (emergencies only): git commit --no-verify
+#
+# Runs only when the staged changes touch workbench/ (docs-only commits skip the suite).
+
+set -e
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+# Skip when nothing under workbench/ is staged.
+if ! git diff --cached --name-only | grep -q '^workbench/'; then
+  echo "[pre-commit] no workbench/ changes staged — skipping suite."
+  exit 0
+fi
+
+echo "[pre-commit] workbench/ changes staged — running test + acceptance suite..."
+cd "$repo_root/workbench"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[pre-commit] ERROR: node not found on PATH. Install Node >=22 or commit with --no-verify." >&2
+  exit 1
+fi
+
+echo "[pre-commit] npm test"
+npm test
+
+echo "[pre-commit] npm run acceptance"
+npm run acceptance
+
+echo "[pre-commit] npm run acceptance:formula"
+npm run acceptance:formula
+
+echo "[pre-commit] all checks passed."
