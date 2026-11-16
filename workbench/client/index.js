@@ -39,9 +39,10 @@ function projectPreviewCard(state) {
   });
 
   // 预览卡固定五段的 view-model 骨架（票 #14）。整卡就是 5 步管线第 ② 步，不是第 6 步。
-  // 诚实边界：五段的「数据」全部来自引擎实际计算、非死数据；但第②③段的就地修正控件 UI、
-  // 带类型参数声明、第④段的命中行截断/算不出来标红的可视化由宿主按本视图模型渲染，
-  // 不在本纯 seam 包内（与票 #12 Spec F3 的「本包只交 view model」一致）。
+  // 诚实边界：五段的「数据」全部来自引擎实际计算、非死数据；但第②段的就地修正控件 UI、
+  // 第④段的命中行截断/算不出来标红的可视化由宿主按本视图模型渲染，不在本纯 seam 包内
+  //（与票 #12 Spec F3 的「本包只交 view model」一致）。第③段的带类型参数声明已由本包投影
+  //（票 #20：scopeParams.paramSpec 原样带出 typed 声明，控件仍由宿主渲染，本包不内嵌 UI）。
   const sections = {
     // ① 自然语言解释：被理解成什么 kind / medium / 参数 / 步骤
     explain: {
@@ -66,11 +67,16 @@ function projectPreviewCard(state) {
       errors: (pv.errors || []).slice()
     },
     // ③ 作用范围与命名参数：scope 全部/符合条件 + 条件 + 带类型参数，可改并联动重算
+    // 票 #20（T3 Contract）：参数展示改读引擎产出的 typed 声明（pv.paramSpec：key/类型/必填/默认值/约束），
+    // 宿主据此渲染每参数控件；本包只交 view-model、不内嵌 UI 控件（仍是纯函数）。
     scopeParams: {
       scope: scope,
       condition: condition,
       scopeLabel: scope === 'match' ? '符合条件' : '全部',
-      params: Object.assign({}, dp)
+      params: Object.assign({}, dp),
+      paramSpec: (pv.paramSpec || []).map(function (d) {
+        return { key: d.key, 类型: d.类型, 必填: d.必填, 默认值: d.默认值, 约束: d.约束 };
+      })
     },
     // ④ 影响预览：将改格子 + 影响 N 行 / 共 M 行 + swap 披露 + 算不出来标红
     impact: {

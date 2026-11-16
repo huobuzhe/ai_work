@@ -103,14 +103,15 @@ test('AC3 合法配方：validate ok 且 errors 为空', function () {
   });
 });
 
-// ---- AC5：旧默认值 map 仍保留、作为默认值来源 ----
+// ---- #20：旧默认值 map 已删除（T3 Contract），默认值改为从 paramSpec 派生 ----
 
-test('AC5 旧 params map 仍存在，且是 buildDraft 默认值来源', function () {
+test('#20 旧 params map 已删除，buildDraft 默认值来自 paramSpec', function () {
   ['extract', 'swap', 'conditional', 'function'].forEach(function (k) {
-    assert.ok(E.KINDS[k].params && typeof E.KINDS[k].params === 'object', k + ' 旧 params map 应保留');
+    assert.equal(E.KINDS[k].params, undefined, k + ' 旧 params map 应已删除');
   });
   const d = E.buildDraft('swap', null, {});
-  assert.equal(d.params.字段A, E.KINDS.swap.params.字段A, 'buildDraft 应取旧 map 默认值');
+  const spec = E.KINDS.swap.paramSpec.filter(function (s) { return s.key === '字段A'; })[0];
+  assert.equal(d.params.字段A, spec.默认值, 'buildDraft 应取 paramSpec 默认值');
 });
 
 // ---- 补充：钉住 conditional 动作枚举域 = 执行引擎实际接受的四值（防枚举域漂移） ----

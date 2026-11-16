@@ -17,8 +17,8 @@ const KINDS = {
   extract: {
     label: '① 提取字段', short: '提取字段',
     medium: '结构化动作：按主键左连接 + 写列',
-    params: { 来源文件: '外勤登记表.csv', 匹配列: '姓名', 取哪一列: '邮箱', 写到: '邮箱', scope: 'all', 条件: '' },
-    // 票 #18（T1 Expand）：带类型参数声明层。自 #19（T2）起由 validate 主流程按 paramSpec 派生；旧 params map 仅作默认值来源（#20 才删）。
+    // 票 #20（T3 Contract）：旧 params 默认值 map 已删除，默认参数统一由 paramSpec 的「默认值」派生（见 defaultsFor）。
+    // 票 #18（T1 Expand）：带类型参数声明层。自 #19（T2）起由 validate 主流程按 paramSpec 派生。
     paramSpec: [
       { key: '来源文件', 类型: '文件', 必填: true, 默认值: '外勤登记表.csv', 约束: {} },
       { key: '匹配列', 类型: '列名', 必填: true, 默认值: '姓名', 约束: { mustExist: true } },
@@ -29,7 +29,7 @@ const KINDS = {
   swap: {
     label: '② 调换两段字段', short: '调换两段字段',
     medium: '结构化动作：两列整列互换',
-    params: { 字段A: '部门', 字段B: '备注', scope: 'all', 条件: '' },
+    // 票 #20：默认参数由 paramSpec 派生。
     paramSpec: [
       { key: '字段A', 类型: '列名', 必填: true, 默认值: '部门', 约束: { mustExist: true } },
       { key: '字段B', 类型: '列名', 必填: true, 默认值: '备注', 约束: { mustExist: true } }
@@ -38,8 +38,9 @@ const KINDS = {
   conditional: {
     label: '③ 带条件增删', short: '带条件增删',
     medium: '结构化动作：条件筛选 + 写值 / 清空',
-    // 带条件增删的本质是「条件」，默认 match 才名副其实；scope 仍是公共字段，可改回 all。
-    params: { 条件: '工时 > 150', 动作: '增加', 目标列: '备注', 值: '加班', scope: 'match' },
+    // 带条件增删的本质是「条件」，默认 match 才名副其实（scope 是公共字段、默认值在 COMMON_PARAMS）。
+    // 票 #20：默认参数由 paramSpec + COMMON_PARAMS 派生；conditional 的 scope 默认在 COMMON_PARAMS 是 all，
+    // 故下方 paramSpec 之外用 defaultsFor 覆盖——见 defaultsFor 里对 conditional scope 的处理。
     paramSpec: [
       { key: '动作', 类型: '枚举', 必填: true, 默认值: '增加', 约束: { enum: ['增加', '删去', '删除', '清空'] } },
       { key: '目标列', 类型: '列名', 必填: true, 默认值: '备注', 约束: { newColumn: true } },
@@ -49,7 +50,7 @@ const KINDS = {
   function: {
     label: '④ 自定义函数计算', short: '自定义函数计算',
     medium: '公式字符串：应发 = 工时 × 时薪',
-    params: { 表达式: '工时 * 时薪', 输出列: '应发', scope: 'all', 条件: '' },
+    // 票 #20：默认参数由 paramSpec 派生。
     paramSpec: [
       { key: '表达式', 类型: '表达式', 必填: true, 默认值: '工时 * 时薪', 约束: { translatable: true } },
       { key: '输出列', 类型: '列名', 必填: true, 默认值: '应发', 约束: { newColumn: true } }
@@ -401,17 +402,38 @@ function explanationFor(kind, p, sentence) {
   return head + '；产物介质是' + KINDS[kind].medium + '。下面列出它会影响的单元格，确认前表格不会动。';
 }
 
+// 票 #20（T3 Contract）：typed 声明的默认值派生——四类动作的初始参数由 paramSpec 的「默认值」派生，
+// 公共字段（scope / 条件）来自 COMMON_PARAMS。旧 KINDS.*.params 默认值 map 已删除，此函数是唯一默认值来源。
+// conditional 是唯一例外：它本质是「条件」动作、scope 默认 match（#12/#17 决策：精确保留 #9 的按条件过滤行为），
+// 且默认带一个示例条件——这两处覆盖 COMMON_PARAMS 的 all/''，与删除前旧 map 的默认值逐字一致，属行为保真。
+const DEFAULT_OVERRIDES = {
+  conditional: { scope: 'match', 条件: '工时 > 150' }
+};
+function typedParamSpec(kind) {
+  const spec = KINDS[kind];
+  if (!spec) return [];
+  return spec.paramSpec.concat(COMMON_PARAMS);
+}
+function defaultsFor(kind) {
+  const out = {};
+  typedParamSpec(kind).forEach(function (d) { out[d.key] = d.默认值; });
+  const ov = DEFAULT_OVERRIDES[kind];
+  if (ov) Object.keys(ov).forEach(function (k) { out[k] = ov[k]; });
+  return out;
+}
+
 function buildDraft(kind, sentence, overrides) {
   const spec = KINDS[kind];
   if (!spec) return { kind: kind, schemaVersion: SCHEMA_VERSION, params: Object.assign({}, overrides || {}) };
-  const params = Object.assign({}, spec.params, overrides || {});
+  const defaults = defaultsFor(kind);
+  const params = Object.assign({}, defaults, overrides || {});
   // function kind：从句子里抽输出列名与表达式（命名参数），没有显式覆盖才采用。
   if (kind === 'function' && sentence) {
-    if (params['输出列'] === spec.params['输出列']) {
+    if (params['输出列'] === defaults['输出列']) {
       const out = extractOutputColumn(sentence);
       if (out) params['输出列'] = out;
     }
-    if (params['表达式'] === spec.params['表达式']) {
+    if (params['表达式'] === defaults['表达式']) {
       const ex = extractExpression(sentence);
       if (ex) params['表达式'] = ex;
     }
@@ -476,7 +498,7 @@ function validate(draft, state) {
   //   deriveIssues 已含：未知字段拒绝、必填、类型（text/列名/数值/表达式/文件/枚举）、枚举约束、数值约束……
   //   旧的逐 kind「值存在性」硬编码退位，只保留无法由单值类型表达的跨参数/跨表检查（见下方）。
   if (draft.kind && KINDS[draft.kind]) {
-    const spec = KINDS[draft.kind].paramSpec.concat(COMMON_PARAMS);
+    const spec = typedParamSpec(draft.kind);
     const derived = deriveIssues(spec, p, state);
     derived.forEach(function (it) { issues.push(it); errors.push(it.reason); });
   }
@@ -593,9 +615,12 @@ function beforeOf(state, row, col) {
 function preview(state, draft) {
   const totalRows = state.rows.length;
   const v = validate(draft, state);
+  // 票 #20（T3 Contract）：预览带出 typed paramSpec（含类型/必填/默认值/约束），供预览卡第③段展示由宿主渲染控件。
+  //   纯数据、不含 UI；非法与合法两条返回路径都带，宿主随时可显示参数元数据。
+  const paramSpec = (draft && draft.kind && KINDS[draft.kind]) ? typedParamSpec(draft.kind) : [];
   if (!v.ok) {
     return { cells: [], summary: '校验未通过，不能预览：' + v.errors.join('；'), affectedRows: 0, totalRows,
-      invalid: true, errors: v.errors, issues: v.issues, disclosure: null, swapBanner: '' };
+      invalid: true, errors: v.errors, issues: v.issues, disclosure: null, swapBanner: '', paramSpec: paramSpec };
   }
   let disclosure = null;   // 票 #13：swap 半换披露（swappedRows/unchangedRows/mixedColumns/partial）
   let summaryExtra = '';   // 票 #13：swap 半换 banner，接进 summary
@@ -667,7 +692,7 @@ function preview(state, draft) {
   // 票 #13：disclosure + swapBanner 随预览返回，供面板渲染「命中？列 + 混合来源 banner」。
   return { cells, summary, affectedRows, totalRows, invalid: false, errors: [], issues: [],
     scope: p.scope || 'all', condition: p.条件 || '',
-    disclosure: disclosure, swapBanner: summaryExtra };
+    disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec };
 }
 
 // 纯函数：把预览里的格子落到一份新表格上

@@ -24,11 +24,11 @@ test('四类动作都有 paramSpec，每条含 key/类型/必填/默认值', fun
   });
 });
 
-test('paramSpec 默认值与旧 params map 一致（防两套来源漂移）', function () {
+test('paramSpec 默认值经 buildDraft 派生即生效（旧 params map 已删，#20）', function () {
   PRIVATE_KINDS.forEach(function (kind) {
-    E.KINDS[kind].paramSpec.forEach(function (d) {
-      const oldVal = E.KINDS[kind].params[d.key];
-      assert.equal(d.默认值, oldVal, kind + '「' + d.key + '」paramSpec 默认值 ' + d.默认值 + ' 应与旧 params map 的 ' + oldVal + ' 一致');
+    const d = E.buildDraft(kind, null, {});
+    E.KINDS[kind].paramSpec.forEach(function (spec) {
+      assert.equal(d.params[spec.key], spec.默认值, kind + '「' + spec.key + '」buildDraft 默认参数应等于 paramSpec 默认值 ' + spec.默认值);
     });
   });
 });
