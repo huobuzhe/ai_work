@@ -5,12 +5,15 @@
  * 用法：
  *   node scripts/capability-probe.js                 # 只打印矩阵（不真跑），输出 JSON
  *   node scripts/capability-probe.js --run-local     # 额外真跑本地 Excel 四格（写公式→重算→读回→比对）
+ *   node scripts/capability-probe.js --run-cloud     # 额外持凭据真跑飞书/腾讯链路，记「持凭据实测佐证」（不翻 true）
  *   node scripts/capability-probe.js --write-matrix  # 把矩阵渲染成 Markdown 落盘到 ./capability-matrix.md
  *
  * 口径（严格遵循票 #25 AC 与共识 ⑲）：
  *   - 本地 Excel：本会话真跑「写 =C2*D2（工时×时薪）→ LibreOffice 重算 → 读回缓存值 → 与期望比较」，四格全过才记 true。
  *   - 飞书 / 腾讯：文档层 false（腾讯三格一手负面已验证），本会话不持凭据真跑，一律 false + 证据 + 失败步骤。
- *   - 绝不打印凭据；本脚本对云平台零网络调用。
+ *   - --run-cloud（票 #27）：调 feishu/tencent 的 --live 链路真跑（需本机环境变量凭据，绝不入库），
+ *     把结果登记为四格的「持凭据实测佐证」，**绝不把公式位翻成 true**（云端链路纯数值写值、结构不支持公式）。
+ *   - 绝不打印凭据；不带 --run-cloud 时本脚本对云平台零网络调用。
  */
 const { execFileSync } = require('node:child_process');
 const { mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } = require('node:fs');
@@ -145,19 +148,81 @@ function buildReport(opts) {
   return report;
 }
 
-module.exports = { runLocalProbe, buildReport };
+module.exports = { runLocalProbe, runCloudProbes, buildReport };
+
+// —— 票 #27：持凭据真跑云端链路并把结果登记为矩阵「持凭据实测佐证」（不翻 true）——
+// 需要本机环境变量凭据（FEISHU_APP_ID/SECRET、TENCENT_ACCESS_TOKEN/CLIENT_ID/OPEN_ID）；
+// 缺凭据则**如实返回缺字段**、不伪造、不联网。绝不打印凭据值。
+async function runCloudProbes(opts) {
+  opts = opts || {};
+  const results = {};
+  const sampleTable = {
+    primaryKey: '姓名', columns: ['姓名', '工时', '时薪'],
+    types: { 姓名: 'text', 工时: 'number', 时薪: 'number' },
+    rows: [{ 姓名: '阿岚', 工时: 8, 时薪: 100 }, { 姓名: '柏舟', 工时: 10, 时薪: 80 }]
+  };
+  const tablePath = opts.tablePath || null;
+  const table = tablePath ? JSON.parse(readFileSync(tablePath, 'utf8')) : sampleTable;
+  const allowUnverified = !!opts.allowUnverified;
+
+  // 缺凭据/拒跑（结构上从未真跑）→ 不登记证据，避免把「没凭据」误标成「持凭据真跑失败」写入落盘产物。
+  function isNotRun(r) {
+    return !r || r.refused === true || (typeof r.error === 'string' && /缺本机凭据环境变量/.test(r.error));
+  }
+
+  // 飞书：调 scripts/feishu-adapter.js 的 runLive
+  try {
+    const F = require('./feishu-adapter');
+    if (typeof F.runLive !== 'function') throw new Error('feishu-adapter 未导出 runLive');
+    const r = await F.runLive(table, 'workbench-capability-probe', allowUnverified);
+    if (isNotRun(r)) {
+      results.feishu = { live: r, recorded: { recorded: false, reason: '未真跑（缺凭据或被拒跑），不登记持凭据实测佐证' } };
+    } else {
+      const rec = M.recordLiveEvidence('feishu', r, { ranAt: new Date().toISOString(), tableRows: (table.rows || []).length });
+      results.feishu = { live: r, recorded: rec };
+    }
+  } catch (e) {
+    results.feishu = { error: 'feishu 真跑异常：' + (e && e.message) };
+  }
+
+  // 腾讯：调 scripts/tencent-adapter.js 的 runLive
+  try {
+    const T = require('./tencent-adapter');
+    if (typeof T.runLive !== 'function') throw new Error('tencent-adapter 未导出 runLive');
+    const r = await T.runLive(table, 'workbench-capability-probe', allowUnverified);
+    if (isNotRun(r)) {
+      results.tencent = { live: r, recorded: { recorded: false, reason: '未真跑（缺凭据或被拒跑），不登记持凭据实测佐证' } };
+    } else {
+      const rec = M.recordLiveEvidence('tencent', r, { ranAt: new Date().toISOString(), tableRows: (table.rows || []).length });
+      results.tencent = { live: r, recorded: rec };
+    }
+  } catch (e) {
+    results.tencent = { error: 'tencent 真跑异常：' + (e && e.message) };
+  }
+  return results;
+}
 
 if (require.main === module) {
   const args = process.argv.slice(2);
   const runLocal = args.indexOf('--run-local') !== -1;
+  const runCloud = args.indexOf('--run-cloud') !== -1;
   const writeMatrix = args.indexOf('--write-matrix') !== -1;
-  const report = buildReport({ runLocal: runLocal });
-  if (writeMatrix) {
-    const out = resolve(__dirname, '..', 'capability-matrix.md');
-    // 把（可能已按真跑降级的）formulaCapabilities 传给 renderMarkdown，落盘产物如实反映失败结果。
-    writeFileSync(out, M.renderMarkdown({ capabilities: report.formulaCapabilities }), 'utf8');
-    report.wroteMatrix = out;
-  }
-  console.log(JSON.stringify(report, null, 2));
-  if (report.localRunMismatch && report.localRunMismatch.length) process.exitCode = 1;
+  const allowUnverified = args.indexOf('--allow-unverified-types') !== -1;
+  const ti = args.indexOf('--table');
+  const tablePath = ti !== -1 ? args[ti + 1] : null;
+  (async function () {
+    const report = buildReport({ runLocal: runLocal });
+    if (runCloud) {
+      report.cloudRun = await runCloudProbes({ tablePath: tablePath, allowUnverified: allowUnverified });
+      // 云端真跑只加厚证据、不改 verdict：把更新后的矩阵重新取一次（含 evidenceLive）
+      report.matrix = M.getMatrix();
+    }
+    if (writeMatrix) {
+      const out = resolve(__dirname, '..', 'capability-matrix.md');
+      writeFileSync(out, M.renderMarkdown({ capabilities: report.formulaCapabilities }), 'utf8');
+      report.wroteMatrix = out;
+    }
+    console.log(JSON.stringify(report, null, 2));
+    if (report.localRunMismatch && report.localRunMismatch.length) process.exitCode = 1;
+  })().catch(function (e) { console.error('capability-probe 运行失败：', e && e.message); process.exitCode = 1; });
 }

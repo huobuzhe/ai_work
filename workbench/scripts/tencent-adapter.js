@@ -164,4 +164,8 @@ async function main() {
   if (!r.ok) process.exitCode = 1;
 }
 
-main().catch(function (e) { console.error('tencent-adapter 运行失败：', e && e.message); process.exitCode = 1; });
+module.exports = { runLive, materialize, main };
+
+if (require.main === module) {
+  main().catch(function (e) { console.error('tencent-adapter 运行失败：', e && e.message); process.exitCode = 1; });
+}
