@@ -18,12 +18,12 @@ const KINDS = {
     label: '① 提取字段', short: '提取字段',
     medium: '结构化动作：按主键左连接 + 写列',
     params: { 来源文件: '外勤登记表.csv', 匹配列: '姓名', 取哪一列: '邮箱', 写到: '邮箱', scope: 'all', 条件: '' },
-    // 票 #18（T1 Expand）：带类型参数声明层。与旧 params map 并存，本期只声明、不接入 validate 主流程。
+    // 票 #18（T1 Expand）：带类型参数声明层。自 #19（T2）起由 validate 主流程按 paramSpec 派生；旧 params map 仅作默认值来源（#20 才删）。
     paramSpec: [
       { key: '来源文件', 类型: '文件', 必填: true, 默认值: '外勤登记表.csv', 约束: {} },
-      { key: '匹配列', 类型: '列名', 必填: true, 默认值: '姓名', 约束: {} },
+      { key: '匹配列', 类型: '列名', 必填: true, 默认值: '姓名', 约束: { mustExist: true } },
       { key: '取哪一列', 类型: 'text', 必填: true, 默认值: '邮箱', 约束: {} },
-      { key: '写到', 类型: '列名', 必填: true, 默认值: '邮箱', 约束: {} }
+      { key: '写到', 类型: '列名', 必填: true, 默认值: '邮箱', 约束: { newColumn: true } }
     ]
   },
   swap: {
@@ -31,8 +31,8 @@ const KINDS = {
     medium: '结构化动作：两列整列互换',
     params: { 字段A: '部门', 字段B: '备注', scope: 'all', 条件: '' },
     paramSpec: [
-      { key: '字段A', 类型: '列名', 必填: true, 默认值: '部门', 约束: {} },
-      { key: '字段B', 类型: '列名', 必填: true, 默认值: '备注', 约束: {} }
+      { key: '字段A', 类型: '列名', 必填: true, 默认值: '部门', 约束: { mustExist: true } },
+      { key: '字段B', 类型: '列名', 必填: true, 默认值: '备注', 约束: { mustExist: true } }
     ]
   },
   conditional: {
@@ -41,8 +41,8 @@ const KINDS = {
     // 带条件增删的本质是「条件」，默认 match 才名副其实；scope 仍是公共字段，可改回 all。
     params: { 条件: '工时 > 150', 动作: '增加', 目标列: '备注', 值: '加班', scope: 'match' },
     paramSpec: [
-      { key: '动作', 类型: '枚举', 必填: true, 默认值: '增加', 约束: { enum: ['增加', '删除'] } },
-      { key: '目标列', 类型: '列名', 必填: true, 默认值: '备注', 约束: {} },
+      { key: '动作', 类型: '枚举', 必填: true, 默认值: '增加', 约束: { enum: ['增加', '删去', '删除', '清空'] } },
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '备注', 约束: { newColumn: true } },
       { key: '值', 类型: 'text', 必填: false, 默认值: '加班', 约束: {} }
     ]
   },
@@ -51,8 +51,8 @@ const KINDS = {
     medium: '公式字符串：应发 = 工时 × 时薪',
     params: { 表达式: '工时 * 时薪', 输出列: '应发', scope: 'all', 条件: '' },
     paramSpec: [
-      { key: '表达式', 类型: '表达式', 必填: true, 默认值: '工时 * 时薪', 约束: {} },
-      { key: '输出列', 类型: '列名', 必填: true, 默认值: '应发', 约束: {} }
+      { key: '表达式', 类型: '表达式', 必填: true, 默认值: '工时 * 时薪', 约束: { translatable: true } },
+      { key: '输出列', 类型: '列名', 必填: true, 默认值: '应发', 约束: { newColumn: true } }
     ]
   }
 };
@@ -472,41 +472,26 @@ function validate(draft, state) {
     fail('schemaVersion', 'schemaVersion 不匹配：' + draft.schemaVersion + ' != ' + SCHEMA_VERSION);
   if (!draft.kind || !KINDS[draft.kind]) fail('kind', '未知的功能种类：' + draft.kind);
   const p = draft.params || {};
-  // 封闭参数白名单：不允许从一句话凭空造参数。公共字段 scope/条件已含在各类 spec.params 中。
+  // 票 #19（T2 Migrate）：参数封闭校验改由 paramSpec 派生驱动（私有参数 + 公共字段 scope/条件）。
+  //   deriveIssues 已含：未知字段拒绝、必填、类型（text/列名/数值/表达式/文件/枚举）、枚举约束、数值约束……
+  //   旧的逐 kind「值存在性」硬编码退位，只保留无法由单值类型表达的跨参数/跨表检查（见下方）。
   if (draft.kind && KINDS[draft.kind]) {
-    const allowed = Object.keys(KINDS[draft.kind].params);
-    Object.keys(p).forEach(function (key) {
-      if (allowed.indexOf(key) === -1) fail(key, '未知字段：' + key);
-    });
+    const spec = KINDS[draft.kind].paramSpec.concat(COMMON_PARAMS);
+    const derived = deriveIssues(spec, p, state);
+    derived.forEach(function (it) { issues.push(it); errors.push(it.reason); });
   }
+  // 跨参数/跨表检查（单值类型系统表达不了，保留在此）：
   if (draft.kind === 'extract') {
-    if (!p.来源文件) fail('来源文件', '缺少参数：来源文件');
-    if (!p.匹配列) fail('匹配列', '缺少参数：匹配列');
-    if (!p.取哪一列) fail('取哪一列', '缺少参数：取哪一列');
-    if (!p.写到) fail('写到', '缺少参数：写到');
-    if (state && state.sources && !state.sources[p.来源文件]) fail('来源文件', '来源文件不在声明式数据源里：' + p.来源文件);
+    // 来源文件须在声明式数据源里（依赖 state.sources，非单值类型可表达）。
+    if (p.来源文件 && state && state.sources && !state.sources[p.来源文件])
+      fail('来源文件', '来源文件不在声明式数据源里：' + p.来源文件);
   }
   if (draft.kind === 'swap') {
-    // 票 #13：半换边界必须确定且可测——同列自换无意义、未知列不可换，封闭校验阶段就拒绝。
-    // 显式决策（Standards #2）：「调换两段字段」的语义是两列互换，两列都必须已存在才有意义；
-    // 换入尚不存在的列等于凭空造列、不是「调换」，故此处比 extract 的「写列可新建」更严是有意为之。
+    // 票 #13：半换边界必须确定且可测——同列自换无意义（列存在性已由 paramSpec mustExist 负责）。
     const a = p.字段A, b = p.字段B;
-    if (!a) fail('字段A', '缺少参数：字段A');
-    if (!b) fail('字段B', '缺少参数：字段B');
     if (a && b && a === b) fail('字段B', '字段A 与 字段B 不能相同（同列自换没有确定意义）');
-    if (state && state.columns) {
-      if (a && state.columns.indexOf(a) === -1) fail('字段A', '字段A 不是当前列：' + a);
-      if (b && state.columns.indexOf(b) === -1) fail('字段B', '字段B 不是当前列：' + b);
-    }
   }
-  if (draft.kind === 'function') {
-    if (!p.表达式) fail('表达式', '缺少参数：表达式');
-    else if (state && toFormula(p.表达式, state, 0) === null)
-      fail('表达式', '表达式非法或引用了不存在的列：' + p.表达式);
-    if (!p.输出列) fail('输出列', '缺少参数：输出列');
-  }
-  if (p.scope !== undefined && p.scope !== 'all' && p.scope !== 'match')
-    fail('scope', 'scope 只能是 all 或 match');
+  // 条件合法性（scope=match 时；依赖 state，非单值类型可表达）。
   if (p.scope === 'match') {
     const cond = parseCondition(p.条件, state);
     if (!cond) {
@@ -518,10 +503,10 @@ function validate(draft, state) {
   return { ok: errors.length === 0, errors: errors, issues: issues };
 }
 
-// 票 #18（T1 Expand）：带类型参数派生器——给定 paramSpec 与 params，按类型机械派生 issue{field,reason}。
-// 纯函数、无副作用；本期不接入 validate 主流程（T2 才切），先保证派生器本身正确。
-//  类型语义：text（须字符串）/ 列名（存在 or 明确新建列；无 state.columns 时只查形状）/ 数值（数字且在约束内）
-//           / 表达式（非空字符串，可翻译性留给 T2）/ 文件（非空字符串）/ 枚举（取值在约束 enum 内）
+// 票 #18（T1 Expand）引入、#19（T2 Migrate）接入主流程：带类型参数派生器——给定 paramSpec 与 params，按类型机械派生 issue{field,reason}。
+// 纯函数、无副作用；自 #19 起由 validate() 作为参数封闭校验主路径调用（旧的逐 kind「值存在性」硬编码已退位）。
+//  类型语义：text（须字符串）/ 列名（约束 newColumn→可新建、mustExist/无标志→须存在；无 state.columns 时只查形状）/ 数值（数字且在约束内）
+//           / 表达式（须字符串，约束 translatable 时用 toFormula 查可翻译）/ 文件（非空字符串）/ 枚举（取值在约束 enum 内）
 //  另：params 中 paramSpec 未声明的 key 视为未知字段拒绝。
 function deriveIssues(paramSpec, params, state) {
   const issues = [];
@@ -562,14 +547,30 @@ function deriveIssues(paramSpec, params, state) {
         break;
       }
       case '列名': {
-        // 存在 or 明确「将新建列」；无 state.columns 时只做形状检查（T2 再补「明确新建」标志）。
+        // 票 #19（T2）：存在 or 明确「将新建列」；无 state.columns 时只做形状检查。
+        //   约束.mustExist=true  → 列必须已存在（如 swap 两列、extract 匹配列）
+        //   约束.newColumn=true  → 允许新建列（如 extract 写到、function 输出列、conditional 目标列）
+        //   两者都无时按「必须存在」保守处理（与旧行为一致）。
+        const c = d.约束 || {};
         if (state && Array.isArray(state.columns) && state.columns.indexOf(v) === -1) {
-          issues.push({ field: d.key, reason: '列不存在且未声明新建列：' + v });
+          if (c.newColumn) break; // 允许新建列
+          issues.push({ field: d.key, reason: d.key + ' 不是当前列（不存在的列）：' + v });
+        }
+        break;
+      }
+      case '表达式': {
+        // 票 #19（T2）：表达式型需可翻译（与既有 function 校验对齐）；约束.translatable=true 时查 toFormula。
+        if (typeof v !== 'string') {
+          issues.push({ field: d.key, reason: '表达式 类型不符：' + d.key + ' 需为字符串' });
+          break;
+        }
+        const c = d.约束 || {};
+        if (c.translatable && state && toFormula(v, state, 0) === null) {
+          issues.push({ field: d.key, reason: '表达式非法或引用了不存在的列：' + v });
         }
         break;
       }
       case 'text':
-      case '表达式':
       case '文件':
       default: {
         if (typeof v !== 'string') {
