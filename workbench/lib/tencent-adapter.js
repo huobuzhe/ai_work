@@ -127,6 +127,66 @@ function classifySheetResponse(status, json) {
 }
 
 /**
+ * V3 batchUpdate 写值回包校验（纯函数、可单测）：成功时
+ * responses[].updateRangeResponse.updatedCells 应 > 0（表示确实写入了单元格）。
+ * 网关可能把业务错误包成 HTTP 200，故不能只看状态码。
+ * 官方外层结构自相矛盾（参数表 code/message/data.responses vs 示例顶层 responses），
+ * 故 responses 既可能在顶层、也可能在 data.responses 下，两处都认。
+ * @return {ok:true, updatedCells} | {ok:false, reason}
+ */
+function classifyWriteResponse(status, json) {
+  if (status !== 200) return { ok: false, reason: '写值非 HTTP 200（' + status + '）' };
+  const responses = (json && json.responses) || (json && json.data && json.data.responses) || null;
+  if (!responses || !responses.length) {
+    return { ok: false, reason: '写值回包缺少 responses[]，无法确认写入生效' };
+  }
+  let updated = 0;
+  for (let i = 0; i < responses.length; i++) {
+    const r = responses[i] || {};
+    if (r.error || (r.updateRangeResponse && r.updateRangeResponse.error)) {
+      return { ok: false, reason: '写值回包含业务错误：' + JSON.stringify(r.error || r.updateRangeResponse.error) };
+    }
+    const urr = r.updateRangeResponse || r;
+    if (typeof urr.updatedCells === 'number') updated += urr.updatedCells;
+  }
+  if (updated <= 0) return { ok: false, reason: '写值回包 updatedCells=0，数据未真正写入' };
+  return { ok: true, updatedCells: updated };
+}
+
+/**
+ * 读回内容校验（纯函数、可单测）：从 gridData.rows[].values[].cellValue 抽出实际值。
+ * 官方空单元格是 {cellValue:{text:""}} 而非 null；全 null/空说明格未被写/表对不上（异常信号）。
+ * @return {ok:true, rows:[[cell,...]], nonEmpty} | {ok:false, reason, rows}
+ */
+function classifyReadResponse(status, json) {
+  if (status !== 200) return { ok: false, reason: '读回非 HTTP 200（' + status + '）' };
+  const gd = (json && json.gridData) || (json && json.data && json.data.gridData) || null;
+  if (!gd || !Array.isArray(gd.rows)) {
+    return { ok: false, reason: '读回回包缺少 gridData.rows[]' };
+  }
+  const rows = gd.rows.map(function (row) {
+    const vals = (row && row.values) || [];
+    return vals.map(function (cell) {
+      const cv = cell && cell.cellValue;
+      if (cv === null || cv === undefined) return null;
+      if (typeof cv === 'object') {
+        if (cv.text !== undefined) return cv.text;
+        if (cv.number !== undefined) return cv.number;
+        if (cv.link !== undefined) return cv.link;
+        if (cv.time !== undefined) return cv.time;
+        if (cv.select !== undefined) return cv.select;
+        if (cv.location !== undefined) return cv.location;
+        return '';
+      }
+      return cv;
+    });
+  });
+  let nonEmpty = 0;
+  rows.forEach(function (r) { r.forEach(function (v) { if (v !== null && v !== '') nonEmpty++; }); });
+  return { ok: true, rows: rows, nonEmpty: nonEmpty };
+}
+
+/**
  * 纯函数：把主表结构 + 选项落成腾讯四段请求计划。
  * @param table {columns:[name], types:{name→localType}, rows:[{...}]}
  * @param opts  {title?:string, chunkSize?:number, wantsFormula?:boolean}
@@ -350,6 +410,8 @@ module.exports = {
   isV3Success,
   extractFileId,
   classifySheetResponse,
+  classifyWriteResponse,
+  classifyReadResponse,
   buildTencentPlan,
   runTencentPlanWithStub,
   buildTencentUrl,

@@ -98,8 +98,9 @@ async function runLive(table, title, allowUnverifiedTypes) {
       for (const ch of plan.chunks) {
         const req = materialize({ step: '写值', method: 'POST', url: step.url, contentType: 'application/json', body: { requests: ch.requests }, auth: step.auth }, ctx);
         const r = await httpRequest(req.method, req.url, req.headers, req.bodyString);
-        if (!T.isV3Success(r.status, r.json)) {
-          return { ok: false, failed: { step: '写值', httpStatus: r.status, json: r.json, raw: r.raw } };
+        const wchk = T.classifyWriteResponse(r.status, r.json);
+        if (!wchk.ok) {
+          return { ok: false, failed: { step: '写值', httpStatus: r.status, reason: wchk.reason, json: r.json, raw: r.raw } };
         }
       }
       continue;
@@ -123,16 +124,23 @@ async function runLive(table, title, allowUnverifiedTypes) {
       }
       ctx.sheetId = chk.sheetId;
     } else if (step.step === '写值') {
-      if (!T.isV3Success(r.status, r.json)) {
-        return { ok: false, failed: { step: '写值', httpStatus: r.status, json: r.json, raw: r.raw } };
+      const wchk = T.classifyWriteResponse(r.status, r.json);
+      if (!wchk.ok) {
+        return { ok: false, failed: { step: '写值', httpStatus: r.status, reason: wchk.reason, json: r.json, raw: r.raw } };
       }
     } else if (step.step === '读回') {
-      // 官方读接口回包结构不确定（V3 参数表 code/message/gridData vs 示例 V2 式 ret/msg/data）
-      // → 只认 HTTP 200、打印完整回包供肉眼核对，不猜键名。
-      if (r.status !== 200) {
-        return { ok: false, failed: { step: '读回', httpStatus: r.status, json: r.json, raw: r.raw } };
+      // 读回不只判状态码：还要校验 gridData.rows[].values[].cellValue 真有值，否则如实报「数据未落盘」。
+      const rchk = T.classifyReadResponse(r.status, r.json);
+      if (!rchk.ok) {
+        return { ok: false, failed: { step: '读回', httpStatus: r.status, reason: rchk.reason, json: r.json, raw: r.raw } };
       }
-      return { ok: true, fileId: ctx.fileId, sheetId: ctx.sheetId, readBackRaw: r.json || r.raw };
+      if (rchk.nonEmpty === 0) {
+        return {
+          ok: false,
+          failed: { step: '读回', reason: '链路通但读回全空（非空单元格 0 个）：读回值全为 null/空，数据很可能未真正落盘', readBackRows: rchk.rows, raw: r.raw }
+        };
+      }
+      return { ok: true, fileId: ctx.fileId, sheetId: ctx.sheetId, readBackRows: rchk.rows, nonEmptyCells: rchk.nonEmpty, readBackRaw: r.json || r.raw };
     }
   }
   return { ok: false, error: '计划未走到读回' };

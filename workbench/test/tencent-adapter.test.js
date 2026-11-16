@@ -142,6 +142,51 @@ test('AC2 成功判据统一走 isSuccess：腾讯 ret==0 / 飞书 code==0 不�
   assert.equal(T.isV3Success(400, { code: 400001 }), false, '非 200 判失败');
 });
 
+// ---- 回归：写值/读回不能只看 HTTP 200，要校验内容（票 #27 实测暴露「写 200 但读回全 null」） ----
+test('回归 classifyWriteResponse：updatedCells>0 才算成功，0/缺失/业务错判失败', function () {
+  // 成功：responses[].updateRangeResponse.updatedCells>0
+  assert.equal(T.classifyWriteResponse(200, { responses: [{ updateRangeResponse: { updatedCells: 6 } }] }).ok, true);
+  assert.equal(T.classifyWriteResponse(200, { responses: [{ updateRangeResponse: { updatedCells: 6 } }] }).updatedCells, 6);
+  // 兼容 data.responses 包裹
+  assert.equal(T.classifyWriteResponse(200, { data: { responses: [{ updateRangeResponse: { updatedCells: 2 } }] } }).ok, true);
+  // updatedCells=0 → 数据没落 → 失败
+  const zero = T.classifyWriteResponse(200, { responses: [{ updateRangeResponse: { updatedCells: 0 } }] });
+  assert.equal(zero.ok, false);
+  assert.ok(/updatedCells=0/.test(zero.reason));
+  // 缺 responses[] → 失败
+  assert.equal(T.classifyWriteResponse(200, {}).ok, false);
+  // 业务错包在 200 内 → 失败
+  assert.equal(T.classifyWriteResponse(200, { responses: [{ error: { code: 400001 } }] }).ok, false);
+  // 非 200 → 失败
+  assert.equal(T.classifyWriteResponse(403, { responses: [{ updateRangeResponse: { updatedCells: 2 } }] }).ok, false);
+});
+
+test('回归 classifyReadResponse：gridData 全 null/空 判「数据未落盘」，有值取到', function () {
+  // 全 null（用户实测形态）→ ok:true 但 nonEmpty=0
+  const allNull = T.classifyReadResponse(200, { gridData: { rows: [
+    { values: [{ cellValue: null }, { cellValue: null }, { cellValue: null }] },
+    { values: [{ cellValue: null }, { cellValue: null }, { cellValue: null }] }
+  ] } });
+  assert.equal(allNull.ok, true);
+  assert.equal(allNull.nonEmpty, 0, '全 null → nonEmpty 0，脚本据此判「链路通但数据未落盘」');
+  // 有值：{text}/{number} 对象 → 抽出标量
+  const hasVals = T.classifyReadResponse(200, { gridData: { rows: [
+    { values: [{ cellValue: { text: '姓名' } }, { cellValue: { text: '工时' } }] },
+    { values: [{ cellValue: { text: '阿岚' } }, { cellValue: { number: 8 } }] }
+  ] } });
+  assert.equal(hasVals.ok, true);
+  assert.equal(hasVals.nonEmpty, 4);
+  assert.deepEqual(hasVals.rows, [['姓名', '工时'], ['阿岚', 8]]);
+  // 官方空单元格形态 {text:""} 不算非空
+  const emptyStr = T.classifyReadResponse(200, { gridData: { rows: [{ values: [{ cellValue: { text: '' } }] }] } });
+  assert.equal(emptyStr.nonEmpty, 0, '官方空单元格 {text:""} 不计入非空');
+  // 兼容 data.gridData 包裹
+  assert.equal(T.classifyReadResponse(200, { data: { gridData: { rows: [{ values: [{ cellValue: { text: 'x' } }] }] } } }).nonEmpty, 1);
+  // 非 200 / 缺 gridData → 失败
+  assert.equal(T.classifyReadResponse(500, {}).ok, false);
+  assert.equal(T.classifyReadResponse(200, {}).ok, false);
+});
+
 // ---- 回归：V3 查sheet 回包无 ret 字段，不得用 isV2Success 误判为失败（票 #27 实测暴露） ----
 test('回归 classifySheetResponse：V3 查sheet 直出 properties（无 ret）也判成功', function () {
   // 真实回包形态：{properties:[{sheetId,...}]} —— 无 ret 字段
