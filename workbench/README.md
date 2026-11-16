@@ -2,7 +2,7 @@
 
 规格 [`#8`](https://github.com/huobuzhe/ai_work/issues/8) / 实施票 [`#9`](https://github.com/huobuzhe/ai_work/issues/9)、[`#11`](https://github.com/huobuzhe/ai_work/issues/11)、[`#12`](https://github.com/huobuzhe/ai_work/issues/12)、[`#13`](https://github.com/huobuzhe/ai_work/issues/13)、[`#14`](https://github.com/huobuzhe/ai_work/issues/14)、[`#15`](https://github.com/huobuzhe/ai_work/issues/15)、[`#16`](https://github.com/huobuzhe/ai_work/issues/16) 的可交付插件包。
 
-把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）+ 作用范围/条件对所有动作生效（票 #12）+ swap 半换边界与披露 / conditional 增删补齐（票 #13）+ 封闭校验系统与预览卡完整五段（票 #14）+ 按钮固化与一键重跑 / 按钮库生命周期（票 #15）+ 仓内按钮注册表统一入口（票 #16）+ 模板库与建表（票 #10）+ adapter 抽象层与能力位契约（票 #21，Slice 2 S1）+ 飞书 adapter 实装（票 #23，Slice 2 S3：建表/加字段/写记录/读回请求计划 + stub 回放）**；腾讯 adapter 实装（S4 #24）、能力位端到端验尸（S5 #25）、按钮级权限分享（S6 #26）、NL 一步编译成函数等属后续票，不在本包范围。
+把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）+ 作用范围/条件对所有动作生效（票 #12）+ swap 半换边界与披露 / conditional 增删补齐（票 #13）+ 封闭校验系统与预览卡完整五段（票 #14）+ 按钮固化与一键重跑 / 按钮库生命周期（票 #15）+ 仓内按钮注册表统一入口（票 #16）+ 模板库与建表（票 #10）+ adapter 抽象层与能力位契约（票 #21，Slice 2 S1）+ 飞书 adapter 实装（票 #23，Slice 2 S3：建表/加字段/写记录/读回请求计划 + stub 回放）**；并已交付 Slice 2 其余各票：腾讯 adapter 实装（S4 #24）+ 能力位端到端验尸（S5 #25）+ 按钮级权限分享明确 defer（S6 #26），Slice 2 六票（#21–#26）全部闭环。NL 一步编译成函数、AND/OR 语法、细粒度权限/分享实装等属后续 effort，不在本包范围。
 
 ## 结构
 

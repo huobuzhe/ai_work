@@ -8,7 +8,7 @@
  *   node scripts/capability-probe.js --write-matrix  # 把矩阵渲染成 Markdown 落盘到 ./capability-matrix.md
  *
  * 口径（严格遵循票 #25 AC 与共识 ⑲）：
- *   - 本地 Excel：本会话真跑「写 =A2*B2 → LibreOffice 重算 → 读回缓存值 → 与期望比较」，四格全过才记 true。
+ *   - 本地 Excel：本会话真跑「写 =C2*D2（工时×时薪）→ LibreOffice 重算 → 读回缓存值 → 与期望比较」，四格全过才记 true。
  *   - 飞书 / 腾讯：文档层 false（腾讯三格一手负面已验证），本会话不持凭据真跑，一律 false + 证据 + 失败步骤。
  *   - 绝不打印凭据；本脚本对云平台零网络调用。
  */
