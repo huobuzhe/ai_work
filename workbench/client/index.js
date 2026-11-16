@@ -37,8 +37,12 @@ function projectPreviewCard(state) {
     scope: scope,
     condition: condition,
     scopeLabel: scope === 'match' ? '符合条件' : '全部',
+    // 票 #13：swap 半换披露——结构化 disclosure + 现成 banner，供宿主渲染「命中？列 + 混合来源」。
+    disclosure: pv.disclosure || null,
+    swapBanner: pv.swapBanner || '',
     cells: pv.cells.map(function (c) {
-      return { row: c.row, col: c.col, before: c.before, after: c.after, invalid: c.invalid, source: c.source };
+      return { row: c.row, col: c.col, before: c.before, after: c.after,
+        invalid: c.invalid, source: c.source };
     })
   };
 }

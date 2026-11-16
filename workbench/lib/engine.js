@@ -229,6 +229,19 @@ function validate(draft, state) {
     if (!p.写到) errors.push('缺少参数：写到');
     if (state && state.sources && !state.sources[p.来源文件]) errors.push('来源文件不在声明式数据源里：' + p.来源文件);
   }
+  if (draft.kind === 'swap') {
+    // 票 #13：半换边界必须确定且可测——同列自换无意义、未知列不可换，封闭校验阶段就拒绝。
+    // 显式决策（Standards #2）：「调换两段字段」的语义是两列互换，两列都必须已存在才有意义；
+    // 换入尚不存在的列等于凭空造列、不是「调换」，故此处比 extract 的「写列可新建」更严是有意为之。
+    const a = p.字段A, b = p.字段B;
+    if (!a) errors.push('缺少参数：字段A');
+    if (!b) errors.push('缺少参数：字段B');
+    if (a && b && a === b) errors.push('字段A 与 字段B 不能相同（同列自换没有确定意义）');
+    if (state && state.columns) {
+      if (a && state.columns.indexOf(a) === -1) errors.push('字段A 不是当前列：' + a);
+      if (b && state.columns.indexOf(b) === -1) errors.push('字段B 不是当前列：' + b);
+    }
+  }
   if (draft.kind === 'function') {
     if (!p.表达式) errors.push('缺少参数：表达式');
     else if (state && toFormula(p.表达式, state, 0) === null)
@@ -257,10 +270,14 @@ function preview(state, draft) {
   const totalRows = state.rows.length;
   const v = validate(draft, state);
   if (!v.ok) {
-    return { cells: [], summary: '校验未通过，不能预览：' + v.errors.join('；'), affectedRows: 0, totalRows, invalid: true, errors: v.errors };
+    return { cells: [], summary: '校验未通过，不能预览：' + v.errors.join('；'), affectedRows: 0, totalRows, invalid: true, errors: v.errors, disclosure: null, swapBanner: '' };
   }
+  let disclosure = null;   // 票 #13：swap 半换披露（swappedRows/unchangedRows/mixedColumns/partial）
+  let summaryExtra = '';   // 票 #13：swap 半换 banner，接进 summary
   const p = draft.params, cells = [];
   const pk = state.primaryKey || '姓名';
+  // 票 #13：add 带 source（改动来源）。cells 只含「将改的格子」，未命中行不产格子，
+  // 命中/未命中的区分由结构化 disclosure.swappedRows/unchangedRows 承载（不再设恒真的 hit 字段）。
   const add = function (row, col, before, after, invalid, source) {
     cells.push({ row: String(row[pk]), col, before, after, invalid: !!invalid, source: source || draft.kind });
   };
@@ -275,11 +292,29 @@ function preview(state, draft) {
       add(r, p.写到, beforeOf(state, r, p.写到), hit && hit[p.取哪一列] !== undefined ? String(hit[p.取哪一列]) : '', false, 'extract');
     });
   } else if (draft.kind === 'swap') {
+    // 票 #13：半换——命中行两格对调、未命中行不动；逐格披露命中与来源，不掩盖部分改动。
+    const swappedRows = [], unchangedRows = [];
     state.rows.forEach(function (r) {
-      if (!inScope(r)) return;
+      const name = String(r[pk]);
+      if (!inScope(r)) { unchangedRows.push(name); return; }
+      swappedRows.push(name);
       add(r, p.字段A, beforeOf(state, r, p.字段A), String(r[p.字段B] == null ? '' : r[p.字段B]), false, 'swap');
       add(r, p.字段B, beforeOf(state, r, p.字段B), String(r[p.字段A] == null ? '' : r[p.字段A]), false, 'swap');
     });
+    // 两列是否混合两种来源：只有「部分行交换、部分行不变」时才混合；整列互换或零命中都不混合。
+    const partial = swappedRows.length > 0 && unchangedRows.length > 0;
+    const mixedColumns = partial ? [p.字段A, p.字段B] : [];
+    disclosure = {
+      kind: 'swap', partial: partial,
+      swappedRows: swappedRows, unchangedRows: unchangedRows,
+      swappedCount: swappedRows.length, unchangedCount: unchangedRows.length,
+      mixedColumns: mixedColumns
+    };
+    if (partial) {
+      const banner = '调换半换：' + swappedRows.length + ' 行交换、' + unchangedRows.length +
+        ' 行不变；列「' + p.字段A + '」「' + p.字段B + '」将混合两种来源。';
+      summaryExtra = banner;
+    }
   } else if (draft.kind === 'conditional') {
     // 票 #12：条件增删也走公共 scope/inScope，不再用自己的私有条件过滤。
     // 动作（增加/删去）决定写什么，公共 scope/条件决定作用于哪些行。
@@ -299,12 +334,15 @@ function preview(state, draft) {
   const rowSet = {};
   cells.forEach(function (c) { rowSet[c.row] = true; });
   const affectedRows = Object.keys(rowSet).length;
-  const summary = affectedRows === 0
+  let summary = affectedRows === 0
     ? '影响 0 行 / 共 ' + totalRows + ' 行；没有任何单元格会变 —— 条件没命中任何记录。零命中允许确认。'
     : '影响 ' + affectedRows + ' 行 / 共 ' + totalRows + ' 行；共 ' + cells.length + ' 个单元格会变。确认前表格不会动。';
+  if (summaryExtra) summary += summaryExtra;
   // 票 #12：预览如实反映当前作用范围，供预览卡渲染「作用范围」控件。
+  // 票 #13：disclosure + swapBanner 随预览返回，供面板渲染「命中？列 + 混合来源 banner」。
   return { cells, summary, affectedRows, totalRows, invalid: false, errors: [],
-    scope: p.scope || 'all', condition: p.条件 || '' };
+    scope: p.scope || 'all', condition: p.条件 || '',
+    disclosure: disclosure, swapBanner: summaryExtra };
 }
 
 // 纯函数：把预览里的格子落到一份新表格上
