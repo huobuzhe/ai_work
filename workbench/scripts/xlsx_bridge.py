@@ -5,6 +5,7 @@
   init-main <path>    生成主表（5 员工，无邮箱列）
   init-source <path>  生成来源 CSV（姓名/邮箱）
   read-xlsx <path>    打印 JSON {columns, rows}
+  read-values <path>  打印 JSON {columns, rows}（data_only=True，读重算后的缓存值）
   read-csv  <path>    打印 JSON [{...}]
   apply     <path> <cells.json>  按主键把 cells 写回 xlsx（缺列则补列）
 """
@@ -42,9 +43,11 @@ def init_source(path):
             w.writerow(r)
     print('OK')
 
-def read_xlsx(path):
+def _dump(path, data_only):
+    """把一张 sheet 打印成 JSON {columns, rows}。
+    data_only=False 读公式字符串本身；True 读重算后的缓存值。"""
     from openpyxl import load_workbook
-    ws = load_workbook(path).active
+    ws = load_workbook(path, data_only=data_only).active
     grid = [[c.value for c in row] for row in ws.iter_rows()]
     if not grid:
         print(json.dumps({'columns': [], 'rows': []}, ensure_ascii=False)); return
@@ -54,6 +57,13 @@ def read_xlsx(path):
         if all(v is None for v in r): continue
         rows.append({columns[i]: ('' if i >= len(r) or r[i] is None else r[i]) for i in range(len(columns))})
     print(json.dumps({'columns': columns, 'rows': rows}, ensure_ascii=False))
+
+def read_xlsx(path):
+    _dump(path, data_only=False)
+
+def read_values(path):
+    """重算后读缓存值（data_only=True）：公式格返回计算值，无缓存返回 None。"""
+    _dump(path, data_only=True)
 
 def read_csv(path):
     with open(path, newline='', encoding='utf-8') as f:
@@ -87,6 +97,7 @@ if __name__ == '__main__':
     if cmd == 'init-main': init_main(sys.argv[2])
     elif cmd == 'init-source': init_source(sys.argv[2])
     elif cmd == 'read-xlsx': read_xlsx(sys.argv[2])
+    elif cmd == 'read-values': read_values(sys.argv[2])
     elif cmd == 'read-csv': read_csv(sys.argv[2])
     elif cmd == 'apply': apply(sys.argv[2], sys.argv[3])
     else: raise SystemExit('unknown command: ' + cmd)

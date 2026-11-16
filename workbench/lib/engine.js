@@ -75,17 +75,52 @@ function matches(row, cond) {
   return compareByOp(cond.op, String(raw == null ? '' : raw), cond.value);
 }
 
-function evalExpression(expr, row) {
-  const s = String(expr == null ? '' : expr).replace(/\s+/g, '');
+// ---- 公式字符串生成（票 #11：不实现求值器，只生成公式读回缓存）----
+// 规格 #8：function kind 的产物是「公式字符串 + 命名参数」，实际计算交给
+// 本地计算引擎（LibreOffice）重算后读回缓存值；引擎本身绝不做 JS 数值求值。
+function columnLetter(n) { // 0-based 列序 → A/B/C…（支持多字母列）
+  let s = '';
+  let i = n + 1;
+  while (i > 0) {
+    const rem = (i - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    i = Math.floor((i - 1) / 26);
+  }
+  return s;
+}
+function toFormula(expr, state, rowIndex) {
+  const s = String(expr == null ? '' : expr).replace(/\s+/g, '').replace(/×/g, '*').replace(/−/g, '-');
   const m = /^([^*+\-]+)([*+\-])([^*+\-]+)$/.exec(s);
   if (!m) return null;
-  const lv = row[m[1]] !== undefined ? Number(row[m[1]]) : (isNaN(Number(m[1])) ? null : Number(m[1]));
-  const rv = row[m[3]] !== undefined ? Number(row[m[3]]) : (isNaN(Number(m[3])) ? null : Number(m[3]));
-  if (lv === null || rv === null || isNaN(lv) || isNaN(rv)) return null;
-  if (m[2] === '*') return lv * rv;
-  if (m[2] === '+') return lv + rv;
-  if (m[2] === '-') return lv - rv;
-  return null;
+  const rowNum = (rowIndex || 0) + 2; // 第 1 行是表头，数据从第 2 行起
+  const cols = (state && state.columns) || [];
+  const operand = function (tok) {
+    if (/^\d+(\.\d+)?$/.test(tok)) return tok;                         // 数字字面量（分隔符已排除 '-'，负号不单独支持）
+    if (!/^[\u4e00-\u9fffA-Za-z_][\u4e00-\u9fffA-Za-z0-9_]*$/.test(tok)) return null; // 非法 token（含比较运算符）
+    const i = cols.indexOf(tok);
+    if (i === -1) return null;                                          // 未知列名
+    return columnLetter(i) + rowNum;
+  };
+  const l = operand(m[1]), r = operand(m[3]);
+  if (!l || !r) return null;
+  return '=' + l + m[2] + r;
+}
+// 从「…算成应发 / 写成 X / 得到 X」里抽输出列名（命名参数），抽不到返回 null。
+function extractOutputColumn(sentence) {
+  const m = /算成([^\s，,。；;]+)|写成([^\s，,。；;]+)|得到([^\s，,。；;]+)|输出([^\s，,。；;]+)/.exec(String(sentence || ''));
+  if (!m) return null;
+  return (m[1] || m[2] || m[3] || m[4] || '').trim() || null;
+}
+// 从「把 A 乘以 B 算成 X」里抽表达式本身（F2：不总是用默认表达式）。
+// 关键词匹配假编译器的一部分；抽不到就退回 KINDS 默认表达式。
+function extractExpression(sentence) {
+  const m = /(?:把|将|用)?\s*([^\s，,。；;]+?)\s*(乘以|加上|减去|乘|加|减|\*|×|\+|-)\s*([^\s，,。；;算成写得得到输出结为果]+)/.exec(String(sentence || '').trim());
+  if (!m) return null;
+  const a = m[1].replace(/^(?:把|将|用)/, '').trim();
+  const b = m[3].trim();
+  if (!a || !b) return null;
+  const opMap = { '乘以': '*', '乘': '*', '×': '*', '*': '*', '加上': '+', '加': '+', '+': '+', '减去': '-', '减': '-', '-': '-' };
+  return a + ' ' + (opMap[m[2]] || '*') + ' ' + b;
 }
 
 function stepsFor(kind, p) {
@@ -107,7 +142,9 @@ function stepsFor(kind, p) {
     p.动作 === '增加' ? '写入值「' + p.值 + '」' : '清空原值'
   ];
   if (kind === 'function') return [
-    '把这句话变成公式字符串 ' + p.表达式, '逐行求值', '结果写进新列「' + p.输出列 + '」'
+    '把这句话变成公式字符串 ' + p.表达式,
+    '按每行的列位置换成 A1 引用（列来自表头、行来自记录序）',
+    '公式写进新列「' + p.输出列 + '」，计算交给本地引擎重算后读回缓存值'
   ];
   return [];
 }
@@ -122,6 +159,17 @@ function buildDraft(kind, sentence, overrides) {
   const spec = KINDS[kind];
   if (!spec) return { kind: kind, schemaVersion: SCHEMA_VERSION, params: Object.assign({}, overrides || {}) };
   const params = Object.assign({}, spec.params, overrides || {});
+  // function kind：从句子里抽输出列名与表达式（命名参数），没有显式覆盖才采用。
+  if (kind === 'function' && sentence) {
+    if (params['输出列'] === spec.params['输出列']) {
+      const out = extractOutputColumn(sentence);
+      if (out) params['输出列'] = out;
+    }
+    if (params['表达式'] === spec.params['表达式']) {
+      const ex = extractExpression(sentence);
+      if (ex) params['表达式'] = ex;
+    }
+  }
   return {
     schemaVersion: SCHEMA_VERSION,
     kind: kind,
@@ -172,6 +220,12 @@ function validate(draft, state) {
     if (!p.取哪一列) errors.push('缺少参数：取哪一列');
     if (!p.写到) errors.push('缺少参数：写到');
     if (state && state.sources && !state.sources[p.来源文件]) errors.push('来源文件不在声明式数据源里：' + p.来源文件);
+  }
+  if (draft.kind === 'function') {
+    if (!p.表达式) errors.push('缺少参数：表达式');
+    else if (state && toFormula(p.表达式, state, 0) === null)
+      errors.push('表达式非法或引用了不存在的列：' + p.表达式);
+    if (!p.输出列) errors.push('缺少参数：输出列');
   }
   if (p.scope !== undefined && p.scope !== 'all' && p.scope !== 'match')
     errors.push('scope 只能是 all 或 match');
@@ -226,10 +280,11 @@ function preview(state, draft) {
       add(r, p.目标列, beforeOf(state, r, p.目标列), isDelete ? '' : String(p.值), false, 'conditional');
     });
   } else if (draft.kind === 'function') {
-    state.rows.forEach(function (r) {
+    state.rows.forEach(function (r, ri) {
       if (!inScope(r)) return;
-      const val = evalExpression(p.表达式, r);
-      add(r, p.输出列, beforeOf(state, r, p.输出列), val === null ? '' : String(val), val === null, 'function');
+      // 产物是公式字符串（不是 JS 算出的数值）；计算交给 LibreOffice 重算后读回缓存值。
+      const formula = toFormula(p.表达式, state, ri);
+      add(r, p.输出列, beforeOf(state, r, p.输出列), formula || '', !formula, 'function');
     });
   }
   const rowSet = {};
@@ -377,6 +432,6 @@ function reduce(state, action) {
 }
 
 module.exports = {
-  SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, evalExpression,
+  SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, columnLetter, toFormula, extractOutputColumn, extractExpression,
   initial, understand, buildDraft, validate, preview, applyCells, reduce
 };

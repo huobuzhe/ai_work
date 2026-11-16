@@ -1,8 +1,8 @@
 # dsh-workbench（表格工作台 · 第一刀）
 
-规格 [`#8`](https://github.com/huobuzhe/ai_work/issues/8) / 实施票 [`#9`](https://github.com/huobuzhe/ai_work/issues/9) 的可交付插件包。
+规格 [`#8`](https://github.com/huobuzhe/ai_work/issues/8) / 实施票 [`#9`](https://github.com/huobuzhe/ai_work/issues/9)、[`#11`](https://github.com/huobuzhe/ai_work/issues/11) 的可交付插件包。
 
-把建表与日常繁琐表格操作收进按钮与输入框。**本包只实现 Slice 1 的第一根 tracer bullet：本地 Excel 零凭据端到端最小闭环（提取字段 extract）**；swap / conditional / function、云端 adapter、NL 一步编译成函数等均属后续票，不在本包范围。
+把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）**；swap / conditional、云端 adapter、NL 一步编译成函数等属后续票，不在本包范围。
 
 ## 结构
 
@@ -10,23 +10,29 @@
 - `client/index.js` — client 面板源码：经 `sidebarRightTabs.register`（`keepMounted:true`、`priority:'extension'`）+ `slots.register`（`sidebar.right.pane.tab`）把常驻右栏面板挂进宿主。
 - `client/client.js` — 由 `scripts/build-client.mjs` 生成的浏览器 bundle（`window.__ModuleLoader__.load` 信封）。**勿手改**，改 `client/index.js` 后重跑 `npm run build:client`。
 - `cordis.patch.yml` — bundle patch（`dsh.bundle.patch`），把插件插入 profile layer stack。
-- `scripts/xlsx_bridge.py` — 本地 xlsx/csv 文件桥（仅读写文件，无业务逻辑）；需要 Python + openpyxl。
-- `scripts/acceptance-run.js` — 端到端验收编排：造 xlsx → 引擎 extract → 写回 → 读回断言。
-- `test/` — `node:test` 三套：纯引擎 10 例、面板注册契约 3 例、xlsx 端到端 1 例。
+- `lib/engine.js` 的 `toFormula()` — function kind 的产物生成：把表达式 + 表头列序 + 记录序翻成 A1 公式字符串（如 `=C2*D2`）。**引擎只生成公式、绝不做 JS 求值**（#9 code-review Spec#5 的修正）；实际计算交给 LibreOffice。
+- `scripts/xlsx_bridge.py` — 本地 xlsx/csv 文件桥（仅读写文件，无业务逻辑）；需要 Python + openpyxl。`read-xlsx` 读公式字符串，`read-values`（data_only=True）读重算后的缓存值。
+- `scripts/acceptance-run.js` — extract 端到端验收编排：造 xlsx → 引擎 extract → 写回 → 读回断言。
+- `scripts/acceptance-formula.js` — function 端到端验收编排：造 xlsx → 引擎生成公式 → 写回 → 调 bundled LibreOffice Kit 重算 → data_only 读回缓存值断言。CLI 路径可用 `WORKBENCH_LO_NODE` / `WORKBENCH_LO_CLI` 覆盖。
+- `test/` — `node:test`：纯引擎 11 例、面板注册契约 4 例、extract 端到端 1 例、function 公式纯引擎 8 例、function 重算端到端 1 例（共 25 例）。
 
 ## 构建 / 验证
 
 ```bash
-npm run build:client   # 重新生成 client/client.js
-npm test               # 全测（14 例）
-npm run acceptance     # 单独跑端到端验收，打印逐行读回结果
+npm run build:client      # 重新生成 client/client.js
+npm test                  # 全测（25 例）
+npm run acceptance        # extract 端到端验收，打印逐行读回结果
+npm run acceptance:formula # function 端到端验收（含 LibreOffice 重算），打印重算后缓存值
 ```
+
+function 重算用 bundled LibreOffice Kit CLI（非系统 soffice）：默认路径指向本机 bundled 安装，换环境时用 `WORKBENCH_LO_NODE` / `WORKBENCH_LO_CLI` 覆盖。
 
 无第三方依赖：测试只用 Node 内置 `node:test` + `node:vm`；文件读写只用本机 Python + openpyxl。本仓无 TypeScript 编译器，全包为纯 JS，类型安全以 `node --check` 语法检查代替（无 tsc，不伪造 typecheck）。
 
-## 边界（Slice 1 / 票 #9）
+## 边界（Slice 1 / 票 #9、#11）
 
-- 零云凭据：不涉及飞书 / 腾讯 / Microsoft Graph。
-- 配方是声明式数据（kind + params），不含可执行代码。
+- 零云凭据：不涉及飞书 / 腾讯 / Microsoft Graph。函数计算由本地 LibreOffice 重算，不调用任何云 API。
+- 配方是声明式数据（kind + params），不含可执行代码；function 的表达式经封闭校验后才生成公式。
+- 引擎不实现求值器：function 只产出公式字符串 + 命名参数，计算/缓存值由计算引擎（LibreOffice）负责、读回验证。不承诺把任意自然语言直接编译成命名函数（输入用关键词匹配假编译器）。
 - 不暴露「一键运行跳过确认」：必须先预览、用户确认后才写值。
 - 不改 `apps/web` shell，不起独立 Vite 应用；表格视图的可编辑 grid 形态（研究未验证 #4）留待后续票，本面板 body 仅验证注册契约。

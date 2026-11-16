@@ -26,7 +26,9 @@
     "test:engine": "node --test test/engine.test.js",
     "test:smoke": "node --test test/panel-smoke.test.js",
     "test:e2e": "node --test test/e2e-xlsx.test.js",
-    "acceptance": "node scripts/acceptance-run.js"
+    "test:formula": "node --test test/formula.test.js test/e2e-formula.test.js",
+    "acceptance": "node scripts/acceptance-run.js",
+    "acceptance:formula": "node scripts/acceptance-formula.js"
   },
   "engines": {
     "node": ">=22"
