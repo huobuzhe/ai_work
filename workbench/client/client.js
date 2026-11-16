@@ -24,33 +24,99 @@ const TAB_KIND = 'workbench';
  */
 function projectPreviewCard(state) {
   const pv = state && state.preview;
-  if (!pv || pv.invalid) return null;
+  // 票 #14：校验失败也要出卡（第②段列失败项 + 禁用确认），不能返回 null；
+  // 只有「根本还没预览」（IDLE、无 preview）才不出卡。
+  if (!pv) return null;
+  const draft = state.draft || {};
   // 票 #12：作用域是公共字段，预览卡要把 scope / 条件 暴露给宿主，
   // 让「作用范围：全部 / 符合条件 + 条件输入」在预览卡内可改（不新增第 6 步）。
   // 统一的 firstDefined：引擎产出的 preview 已带这两字段，回退仅为兼容 pre-#12 的旧 preview 对象。
-  const dp = (state.draft && state.draft.params) || {};
+  const dp = draft.params || {};
   const firstDefined = function (a, b, fallback) {
     return a !== undefined ? a : (b !== undefined ? b : fallback);
   };
   const scope = firstDefined(pv.scope, dp.scope, 'all');
   const condition = firstDefined(pv.condition, dp['条件'], '');
+  const issues = pv.issues || [];
+  const ok = !pv.invalid;
+  const cells = (pv.cells || []).map(function (c) {
+    return { row: c.row, col: c.col, before: c.before, after: c.after,
+      invalid: c.invalid, source: c.source };
+  });
+
+  // 预览卡固定五段的 view-model 骨架（票 #14）。整卡就是 5 步管线第 ② 步，不是第 6 步。
+  // 诚实边界：五段的「数据」全部来自引擎实际计算、非死数据；但第②③段的就地修正控件 UI、
+  // 带类型参数声明、第④段的命中行截断/算不出来标红的可视化由宿主按本视图模型渲染，
+  // 不在本纯 seam 包内（与票 #12 Spec F3 的「本包只交 view model」一致）。
+  const sections = {
+    // ① 自然语言解释：被理解成什么 kind / medium / 参数 / 步骤
+    explain: {
+      kind: draft.kind || '',
+      label: draft.kind ? labelOfKind(draft.kind) : '',
+      medium: draft.medium || '',
+      params: Object.assign({}, dp),
+      steps: (draft.steps || []).slice(),
+      explanation: draft.explanation || ''
+    },
+    // ② 封闭校验清单结果：通过 ✓ / 失败项 + 就地可编辑修正控件，失败即禁用确认。
+    // issues 直接来自引擎 validate（不另起第二套校验），宿主据此渲染每项修正控件。
+    validation: {
+      ok: ok,
+      // 每条失败项带 currentValue（优先顶层 draft 字段、其次 params），宿主据此渲染
+      // 「就地可编辑修正控件」时可直接预填出错现值（规格 line 112）。这里的 UI 由宿主渲染、本包只交视图模型。
+      issues: issues.map(function (it) {
+        const cv = draft[it.field] !== undefined ? draft[it.field]
+          : (dp[it.field] !== undefined ? dp[it.field] : null);
+        return { field: it.field, reason: it.reason, currentValue: cv };
+      }),
+      errors: (pv.errors || []).slice()
+    },
+    // ③ 作用范围与命名参数：scope 全部/符合条件 + 条件 + 带类型参数，可改并联动重算
+    scopeParams: {
+      scope: scope,
+      condition: condition,
+      scopeLabel: scope === 'match' ? '符合条件' : '全部',
+      params: Object.assign({}, dp)
+    },
+    // ④ 影响预览：将改格子 + 影响 N 行 / 共 M 行 + swap 披露 + 算不出来标红
+    impact: {
+      cells: cells,
+      summary: pv.summary,
+      affectedRows: pv.affectedRows,
+      totalRows: pv.totalRows,
+      disclosure: pv.disclosure || null,
+      swapBanner: pv.swapBanner || ''
+    },
+    // ⑤ 确认 / 取消：没有合法预览（校验未过或非 PREVIEWED）时禁用确认
+    confirm: {
+      canConfirm: ok && state.stage === 'PREVIEWED',
+      canCancel: true
+    }
+  };
+
+  // 扁平字段（#9/#12/#13 已消费，保留兼容，值全部取自同一份 sections 源）
   return {
     stage: state.stage,
-    explanation: state.draft && state.draft.explanation ? state.draft.explanation : '',
-    summary: pv.summary,
-    affectedRows: pv.affectedRows,
-    totalRows: pv.totalRows,
-    scope: scope,
-    condition: condition,
-    scopeLabel: scope === 'match' ? '符合条件' : '全部',
-    // 票 #13：swap 半换披露——结构化 disclosure + 现成 banner，供宿主渲染「命中？列 + 混合来源」。
-    disclosure: pv.disclosure || null,
-    swapBanner: pv.swapBanner || '',
-    cells: pv.cells.map(function (c) {
-      return { row: c.row, col: c.col, before: c.before, after: c.after,
-        invalid: c.invalid, source: c.source };
-    })
+    explanation: sections.explain.explanation,
+    summary: sections.impact.summary,
+    affectedRows: sections.impact.affectedRows,
+    totalRows: sections.impact.totalRows,
+    scope: sections.scopeParams.scope,
+    condition: sections.scopeParams.condition,
+    scopeLabel: sections.scopeParams.scopeLabel,
+    disclosure: sections.impact.disclosure,
+    swapBanner: sections.impact.swapBanner,
+    cells: sections.impact.cells,
+    invalid: !ok,
+    sections: sections
   };
+}
+
+// kind → 中文短名（预览卡第①段展示用）。为保持 client 不依赖引擎而手工镜像 KINDS.short；
+// 新增/改名 kind 时须同步此处（已如实记录为 low 漂移风险，非第二套校验逻辑）。
+function labelOfKind(kind) {
+  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算' };
+  return map[kind] || kind;
 }
 
 function registerWorkbenchPanel(ctx) {

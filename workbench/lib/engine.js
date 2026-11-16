@@ -50,15 +50,43 @@ const OP_MAP = {
   '<=': '≤', '≤': '≤',
   '>': '>', '<': '<'
 };
-function parseCondition(text) {
+// 条件值合法性：规格 #8 line 103 —— 第一版只支持「字段 op 值」单比较，
+// 值只允许数字 / 文本字面量；AND/OR（含中文）、列间比较、包含 / 为空、内嵌比较符一律非法。
+// 解析失败必须报错并禁止确认，绝不静默当成零命中（用户故事 17）。
+// 返回 null 表示合法，否则返回具体原因字符串。
+function conditionProblem(field, op, value, state) {
+  if (!value) return '条件值为空';
+  // 值里再出现比较运算符 = 复合条件 / 畸形输入（如「8 AND 部门 = 技术」「>>>」「8 > 5」）
+  if (/[><=≠≥≤]/.test(value) || /!(?!=)/.test(value))
+    return '条件值不得再含比较运算符（第一版只支持单比较）：' + value;
+  // AND / OR / 中文 或、且、并且：第一版不支持复合条件（[v2]，规格 line 22/130）
+  if (/\b(and|or)\b/i.test(value) || /或|且|并且/.test(value))
+    return '第一版不支持 AND / OR 复合条件：' + value;
+  // 包含 / 为空（[v2]）
+  if (/包含|为空|contains|is\s+empty/i.test(value))
+    return '第一版不支持「包含 / 为空」条件：' + value;
+  // 列间比较：值恰好是另一个列名——禁止（规格 line 103）
+  if (state && state.columns && state.columns.indexOf(value) !== -1)
+    return '不支持列间比较，条件值不能是列名：' + value;
+  // 字段必须是当前列
+  if (state && state.columns && state.columns.indexOf(field) === -1)
+    return '条件字段不是当前列：' + field;
+  return null;
+}
+// 从原始条件文本取具体出错原因（供 validate 报错点名，避免静默）
+function conditionProblemFromText(text, state) {
+  const m = /^\s*(\S+)\s*(>=|<=|!=|==|≠|≥|≤|>|<|=)\s*(.+?)\s*$/.exec(String(text == null ? '' : text));
+  if (!m) return '条件格式应为「字段 op 值」（如 工时 > 8）';
+  return conditionProblem(m[1], OP_MAP[m[2]], m[3].trim(), state);
+}
+function parseCondition(text, state) {
   if (text == null) return null;
   const m = /^\s*(\S+)\s*(>=|<=|!=|==|≠|≥|≤|>|<|=)\s*(.+?)\s*$/.exec(String(text));
   if (!m) return null;
   const value = m[3].trim();
-  if (!value) return null;
-  // 单比较闭包：值本身不得再以比较运算符开头（拒绝「>>>」「= >」等畸形输入）
-  if (/^[><=!≠≥≤]/.test(value)) return null;
-  return { field: m[1], op: OP_MAP[m[2]], value: value };
+  const op = OP_MAP[m[2]];
+  if (conditionProblem(m[1], op, value, state)) return null;
+  return { field: m[1], op: op, value: value };
 }
 // 单一比较分派（数值 / 字符串两种分支共用），避免两套六路比较级联重复。
 function compareByOp(op, a, b) {
@@ -214,49 +242,70 @@ function understand(sentence) {
   return { kind: kind, sentence: s };
 }
 
-// 封闭 schema 校验：在预览前跑完，不落盘部分结果
+// 封闭 schema 校验：在预览前跑完，不落盘部分结果（票 #14）
+// 规格 #8：校验是按参数类型系统机械派生的「封闭清单」——未知版本 / 未知字段 /
+// 缺失必填 / 非法 scope·condition 一律拒绝并报具体原因；每条失败同时产出结构化
+// issue（field + reason），供预览卡第②段渲染「就地可编辑修正控件」。
 function validate(draft, state) {
   const errors = [];
-  if (!draft || typeof draft !== 'object') return { ok: false, errors: ['配方草稿不存在'] };
-  if (draft.schemaVersion !== undefined && draft.schemaVersion !== SCHEMA_VERSION)
-    errors.push('schemaVersion 不匹配：' + draft.schemaVersion + ' != ' + SCHEMA_VERSION);
-  if (!draft.kind || !KINDS[draft.kind]) errors.push('未知的功能种类：' + draft.kind);
+  const issues = [];
+  const fail = function (field, msg) {
+    issues.push({ field: field, reason: msg });
+    errors.push(msg);
+  };
+  if (!draft || typeof draft !== 'object') {
+    fail('draft', '配方草稿不存在');
+    return { ok: false, errors: errors, issues: issues };
+  }
+  if (draft.schemaVersion === undefined) fail('schemaVersion', '缺少 schemaVersion');
+  else if (draft.schemaVersion !== SCHEMA_VERSION)
+    fail('schemaVersion', 'schemaVersion 不匹配：' + draft.schemaVersion + ' != ' + SCHEMA_VERSION);
+  if (!draft.kind || !KINDS[draft.kind]) fail('kind', '未知的功能种类：' + draft.kind);
   const p = draft.params || {};
+  // 封闭参数白名单：不允许从一句话凭空造参数。公共字段 scope/条件已含在各类 spec.params 中。
+  if (draft.kind && KINDS[draft.kind]) {
+    const allowed = Object.keys(KINDS[draft.kind].params);
+    Object.keys(p).forEach(function (key) {
+      if (allowed.indexOf(key) === -1) fail(key, '未知字段：' + key);
+    });
+  }
   if (draft.kind === 'extract') {
-    if (!p.来源文件) errors.push('缺少参数：来源文件');
-    if (!p.匹配列) errors.push('缺少参数：匹配列');
-    if (!p.取哪一列) errors.push('缺少参数：取哪一列');
-    if (!p.写到) errors.push('缺少参数：写到');
-    if (state && state.sources && !state.sources[p.来源文件]) errors.push('来源文件不在声明式数据源里：' + p.来源文件);
+    if (!p.来源文件) fail('来源文件', '缺少参数：来源文件');
+    if (!p.匹配列) fail('匹配列', '缺少参数：匹配列');
+    if (!p.取哪一列) fail('取哪一列', '缺少参数：取哪一列');
+    if (!p.写到) fail('写到', '缺少参数：写到');
+    if (state && state.sources && !state.sources[p.来源文件]) fail('来源文件', '来源文件不在声明式数据源里：' + p.来源文件);
   }
   if (draft.kind === 'swap') {
     // 票 #13：半换边界必须确定且可测——同列自换无意义、未知列不可换，封闭校验阶段就拒绝。
     // 显式决策（Standards #2）：「调换两段字段」的语义是两列互换，两列都必须已存在才有意义；
     // 换入尚不存在的列等于凭空造列、不是「调换」，故此处比 extract 的「写列可新建」更严是有意为之。
     const a = p.字段A, b = p.字段B;
-    if (!a) errors.push('缺少参数：字段A');
-    if (!b) errors.push('缺少参数：字段B');
-    if (a && b && a === b) errors.push('字段A 与 字段B 不能相同（同列自换没有确定意义）');
+    if (!a) fail('字段A', '缺少参数：字段A');
+    if (!b) fail('字段B', '缺少参数：字段B');
+    if (a && b && a === b) fail('字段B', '字段A 与 字段B 不能相同（同列自换没有确定意义）');
     if (state && state.columns) {
-      if (a && state.columns.indexOf(a) === -1) errors.push('字段A 不是当前列：' + a);
-      if (b && state.columns.indexOf(b) === -1) errors.push('字段B 不是当前列：' + b);
+      if (a && state.columns.indexOf(a) === -1) fail('字段A', '字段A 不是当前列：' + a);
+      if (b && state.columns.indexOf(b) === -1) fail('字段B', '字段B 不是当前列：' + b);
     }
   }
   if (draft.kind === 'function') {
-    if (!p.表达式) errors.push('缺少参数：表达式');
+    if (!p.表达式) fail('表达式', '缺少参数：表达式');
     else if (state && toFormula(p.表达式, state, 0) === null)
-      errors.push('表达式非法或引用了不存在的列：' + p.表达式);
-    if (!p.输出列) errors.push('缺少参数：输出列');
+      fail('表达式', '表达式非法或引用了不存在的列：' + p.表达式);
+    if (!p.输出列) fail('输出列', '缺少参数：输出列');
   }
   if (p.scope !== undefined && p.scope !== 'all' && p.scope !== 'match')
-    errors.push('scope 只能是 all 或 match');
+    fail('scope', 'scope 只能是 all 或 match');
   if (p.scope === 'match') {
-    const cond = parseCondition(p.条件);
-    if (!cond) errors.push('scope=match 时条件非法：' + p.条件);
-    else if (state && state.columns && state.columns.indexOf(cond.field) === -1)
-      errors.push('条件字段不是当前列：' + cond.field);
+    const cond = parseCondition(p.条件, state);
+    if (!cond) {
+      // 给出具体原因（用户故事 17：写错时单独报错并禁止确认，绝不静默当零命中）
+      const reason = conditionProblemFromText(p.条件, state);
+      fail('条件', 'scope=match 时条件非法：' + p.条件 + (reason ? '（' + reason + '）' : ''));
+    }
   }
-  return { ok: errors.length === 0, errors: errors };
+  return { ok: errors.length === 0, errors: errors, issues: issues };
 }
 
 function beforeOf(state, row, col) {
@@ -270,7 +319,8 @@ function preview(state, draft) {
   const totalRows = state.rows.length;
   const v = validate(draft, state);
   if (!v.ok) {
-    return { cells: [], summary: '校验未通过，不能预览：' + v.errors.join('；'), affectedRows: 0, totalRows, invalid: true, errors: v.errors, disclosure: null, swapBanner: '' };
+    return { cells: [], summary: '校验未通过，不能预览：' + v.errors.join('；'), affectedRows: 0, totalRows,
+      invalid: true, errors: v.errors, issues: v.issues, disclosure: null, swapBanner: '' };
   }
   let disclosure = null;   // 票 #13：swap 半换披露（swappedRows/unchangedRows/mixedColumns/partial）
   let summaryExtra = '';   // 票 #13：swap 半换 banner，接进 summary
@@ -281,7 +331,7 @@ function preview(state, draft) {
   const add = function (row, col, before, after, invalid, source) {
     cells.push({ row: String(row[pk]), col, before, after, invalid: !!invalid, source: source || draft.kind });
   };
-  const scopeCond = p.scope === 'match' ? parseCondition(p.条件) : null;
+  const scopeCond = p.scope === 'match' ? parseCondition(p.条件, state) : null;
   const inScope = function (r) { return !scopeCond || matches(r, scopeCond); };
 
   if (draft.kind === 'extract') {
@@ -340,7 +390,7 @@ function preview(state, draft) {
   if (summaryExtra) summary += summaryExtra;
   // 票 #12：预览如实反映当前作用范围，供预览卡渲染「作用范围」控件。
   // 票 #13：disclosure + swapBanner 随预览返回，供面板渲染「命中？列 + 混合来源 banner」。
-  return { cells, summary, affectedRows, totalRows, invalid: false, errors: [],
+  return { cells, summary, affectedRows, totalRows, invalid: false, errors: [], issues: [],
     scope: p.scope || 'all', condition: p.条件 || '',
     disclosure: disclosure, swapBanner: summaryExtra };
 }
@@ -419,6 +469,12 @@ function reduce(state, action) {
     case 'CONFIRM': {
       if (state.stage !== 'PREVIEWED' || !state.preview || state.preview.invalid)
         return guard(state, '拦住了：没有合法的「解释与影响预览」就不能执行。顺序是 理解 → 预览 → 确认 → 执行。');
+      // 票 #14（Standards review finding #1 加固）：执行前再跑一次封闭校验。
+      // 正常状态机里 PREVIEW 已校验过，这一步是纵深防御——防止宿主持久化/重水合/外部改动
+      // 让 state 在 PREVIEW 与 CONFIRM 之间漂移后，仍能执行一份已失效的配方。
+      const reconfirm = validate(state.draft, state);
+      if (!reconfirm.ok)
+        return guard(state, '拦住了：配方在执行前重新校验未通过（' + reconfirm.errors.join('；') + '）。');
       const applied = applyCells(state, state.preview.cells);
       return set(state, {
         columns: applied.columns, rows: applied.rows, stage: 'EXECUTED',
