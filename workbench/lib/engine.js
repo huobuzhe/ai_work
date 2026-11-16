@@ -17,25 +17,52 @@ const KINDS = {
   extract: {
     label: '① 提取字段', short: '提取字段',
     medium: '结构化动作：按主键左连接 + 写列',
-    params: { 来源文件: '外勤登记表.csv', 匹配列: '姓名', 取哪一列: '邮箱', 写到: '邮箱', scope: 'all', 条件: '' }
+    params: { 来源文件: '外勤登记表.csv', 匹配列: '姓名', 取哪一列: '邮箱', 写到: '邮箱', scope: 'all', 条件: '' },
+    // 票 #18（T1 Expand）：带类型参数声明层。与旧 params map 并存，本期只声明、不接入 validate 主流程。
+    paramSpec: [
+      { key: '来源文件', 类型: '文件', 必填: true, 默认值: '外勤登记表.csv', 约束: {} },
+      { key: '匹配列', 类型: '列名', 必填: true, 默认值: '姓名', 约束: {} },
+      { key: '取哪一列', 类型: 'text', 必填: true, 默认值: '邮箱', 约束: {} },
+      { key: '写到', 类型: '列名', 必填: true, 默认值: '邮箱', 约束: {} }
+    ]
   },
   swap: {
     label: '② 调换两段字段', short: '调换两段字段',
     medium: '结构化动作：两列整列互换',
-    params: { 字段A: '部门', 字段B: '备注', scope: 'all', 条件: '' }
+    params: { 字段A: '部门', 字段B: '备注', scope: 'all', 条件: '' },
+    paramSpec: [
+      { key: '字段A', 类型: '列名', 必填: true, 默认值: '部门', 约束: {} },
+      { key: '字段B', 类型: '列名', 必填: true, 默认值: '备注', 约束: {} }
+    ]
   },
   conditional: {
     label: '③ 带条件增删', short: '带条件增删',
     medium: '结构化动作：条件筛选 + 写值 / 清空',
     // 带条件增删的本质是「条件」，默认 match 才名副其实；scope 仍是公共字段，可改回 all。
-    params: { 条件: '工时 > 150', 动作: '增加', 目标列: '备注', 值: '加班', scope: 'match' }
+    params: { 条件: '工时 > 150', 动作: '增加', 目标列: '备注', 值: '加班', scope: 'match' },
+    paramSpec: [
+      { key: '动作', 类型: '枚举', 必填: true, 默认值: '增加', 约束: { enum: ['增加', '删除'] } },
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '备注', 约束: {} },
+      { key: '值', 类型: 'text', 必填: false, 默认值: '加班', 约束: {} }
+    ]
   },
   function: {
     label: '④ 自定义函数计算', short: '自定义函数计算',
     medium: '公式字符串：应发 = 工时 × 时薪',
-    params: { 表达式: '工时 * 时薪', 输出列: '应发', scope: 'all', 条件: '' }
+    params: { 表达式: '工时 * 时薪', 输出列: '应发', scope: 'all', 条件: '' },
+    paramSpec: [
+      { key: '表达式', 类型: '表达式', 必填: true, 默认值: '工时 * 时薪', 约束: {} },
+      { key: '输出列', 类型: '列名', 必填: true, 默认值: '应发', 约束: {} }
+    ]
   }
 };
+
+// 票 #18：公共字段（scope / 条件）——所有动作共有，不算私有参数，故不列入各动作 paramSpec。
+// 供 T2/T3 由公共声明派生校验；本期仅声明。
+const COMMON_PARAMS = [
+  { key: 'scope', 类型: '枚举', 必填: false, 默认值: 'all', 约束: { enum: ['all', 'match'] } },
+  { key: '条件', 类型: 'text', 必填: false, 默认值: '' }
+];
 
 // ============================================================================
 // 票 #10：模板库与建表（纯 seam，不读文件；字节探测由文件桥 xlsx_bridge.py probe 提供）
@@ -491,6 +518,70 @@ function validate(draft, state) {
   return { ok: errors.length === 0, errors: errors, issues: issues };
 }
 
+// 票 #18（T1 Expand）：带类型参数派生器——给定 paramSpec 与 params，按类型机械派生 issue{field,reason}。
+// 纯函数、无副作用；本期不接入 validate 主流程（T2 才切），先保证派生器本身正确。
+//  类型语义：text（须字符串）/ 列名（存在 or 明确新建列；无 state.columns 时只查形状）/ 数值（数字且在约束内）
+//           / 表达式（非空字符串，可翻译性留给 T2）/ 文件（非空字符串）/ 枚举（取值在约束 enum 内）
+//  另：params 中 paramSpec 未声明的 key 视为未知字段拒绝。
+function deriveIssues(paramSpec, params, state) {
+  const issues = [];
+  const p = params || {};
+  const spec = paramSpec || [];
+  const declared = {};
+  spec.forEach(function (d) { declared[d.key] = true; });
+
+  // 未知字段拒绝（封闭白名单）
+  Object.keys(p).forEach(function (key) {
+    if (!declared[key]) issues.push({ field: key, reason: '未知字段：' + key });
+  });
+
+  spec.forEach(function (d) {
+    const v = p[d.key];
+    const missing = (v === undefined || v === null || v === '');
+    if (missing) {
+      if (d.必填) issues.push({ field: d.key, reason: '缺少必填参数：' + d.key });
+      return;
+    }
+    switch (d.类型) {
+      case '数值': {
+        const n = typeof v === 'number' ? v : Number(v);
+        if (typeof v === 'boolean' || isNaN(n)) {
+          issues.push({ field: d.key, reason: '数值类型不符：' + d.key + ' = ' + v });
+          break;
+        }
+        const c = d.约束 || {};
+        if (c.min !== undefined && n < c.min) issues.push({ field: d.key, reason: '数值超出约束范围（应 >= ' + c.min + '）：' + d.key + ' = ' + n });
+        else if (c.max !== undefined && n > c.max) issues.push({ field: d.key, reason: '数值超出约束范围（应 <= ' + c.max + '）：' + d.key + ' = ' + n });
+        break;
+      }
+      case '枚举': {
+        const c = d.约束 || {};
+        if (Array.isArray(c.enum) && c.enum.indexOf(v) === -1) {
+          issues.push({ field: d.key, reason: '取值只能是 ' + c.enum.join('|') + '：' + d.key + ' = ' + v });
+        }
+        break;
+      }
+      case '列名': {
+        // 存在 or 明确「将新建列」；无 state.columns 时只做形状检查（T2 再补「明确新建」标志）。
+        if (state && Array.isArray(state.columns) && state.columns.indexOf(v) === -1) {
+          issues.push({ field: d.key, reason: '列不存在且未声明新建列：' + v });
+        }
+        break;
+      }
+      case 'text':
+      case '表达式':
+      case '文件':
+      default: {
+        if (typeof v !== 'string') {
+          issues.push({ field: d.key, reason: (d.类型 || 'text') + ' 类型不符：' + d.key + ' 需为字符串' });
+        }
+        break;
+      }
+    }
+  });
+  return issues;
+}
+
 function beforeOf(state, row, col) {
   if (state.columns.indexOf(col) === -1) return '（无此列）';
   const v = row[col];
@@ -882,5 +973,6 @@ module.exports = {
   initial, understand, buildDraft, validate, preview, applyCells, reduce, exportButtons, nextButtonId,
   loadRegistry, hydrateRegistry,
   TYPE_ENUM, TYPE_MAP, UPLOAD_WHITELIST, DEFAULT_PRIMARY_KEY,
-  validateManifest, checkUpload, validateRows, detectConflicts, createTable
+  validateManifest, checkUpload, validateRows, detectConflicts, createTable,
+  COMMON_PARAMS, deriveIssues
 };
