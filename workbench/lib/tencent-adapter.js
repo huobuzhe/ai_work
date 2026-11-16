@@ -403,6 +403,35 @@ function buildTencentUrl(url, ctx) {
     .replace('{range}', function () { return encodeURIComponent((ctx && ctx.range) || ''); });
 }
 
+/**
+ * 深度替换 JSON body 里的运行时占位符（{fileId}/{sheetId}/{range}）为真实值。
+ * 票 #27 实测 bug：materialize 只替换 URL、漏了 body，导致 body 里 sheetId 发出去是
+ * 字面量 '{sheetId}'，腾讯报 `missing data not found`(code -12)。此函数是纯函数、可单测。
+ * 只替换「整个字符串恰好等于占位符」的值，避免误伤正文里正常含 { } 的文本。
+ */
+function substituteBodyPlaceholders(body, ctx) {
+  const map = {
+    '{fileId}': (ctx && ctx.fileId) || '',
+    '{sheetId}': (ctx && ctx.sheetId) || '',
+    '{range}': (ctx && ctx.range) || ''
+  };
+  function walk(node) {
+    if (typeof node === 'string') {
+      return Object.prototype.hasOwnProperty.call(map, node) ? map[node] : node;
+    }
+    if (Array.isArray(node)) {
+      return node.map(walk);
+    }
+    if (node && typeof node === 'object') {
+      const out = {};
+      Object.keys(node).forEach(function (k) { out[k] = walk(node[k]); });
+      return out;
+    }
+    return node;
+  }
+  return walk(body);
+}
+
 module.exports = {
   TENCENT_CELL_BY_NAME,
   resolveTencentType,
@@ -416,5 +445,6 @@ module.exports = {
   buildTencentPlan,
   runTencentPlanWithStub,
   buildTencentUrl,
+  substituteBodyPlaceholders,
   columnLetter
 };

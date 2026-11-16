@@ -39,7 +39,7 @@ function httpRequest(method, url, headers, bodyString) {
       res.on('end', function () {
         let json = null;
         try { json = JSON.parse(buf); } catch (e) { /* 保留 raw */ }
-        resolve({ status: res.statusCode, json: json, raw: buf });
+        resolve({ status: res.statusCode, json: json, raw: buf, headers: res.headers });
       });
     });
     req.on('error', reject);
@@ -61,7 +61,10 @@ function materialize(step, ctx) {
   let bodyString;
   if (step.contentType === 'application/json' && step.body) {
     headers['Content-Type'] = 'application/json';
-    bodyString = JSON.stringify(step.body);
+    // 关键：body 里也有 {fileId}/{sheetId}/{range} 占位符，必须一并替换为真实值
+    // （票 #27 实测：只替换 URL、漏了 body → sheetId 发出字面量 '{sheetId}' → missing data not found）。
+    const realBody = T.substituteBodyPlaceholders(step.body, ctx);
+    bodyString = JSON.stringify(realBody);
   } else if (step.contentType === 'application/x-www-form-urlencoded') {
     headers['Content-Type'] = 'application/x-www-form-urlencoded';
     bodyString = step.bodyString;
@@ -100,7 +103,7 @@ async function runLive(table, title, allowUnverifiedTypes) {
         const r = await httpRequest(req.method, req.url, req.headers, req.bodyString);
         const wchk = T.classifyWriteResponse(r.status, r.json);
         if (!wchk.ok) {
-          return { ok: false, failed: { step: '写值', httpStatus: r.status, reason: wchk.reason, json: r.json, raw: r.raw } };
+          return { ok: false, failed: { step: '写值', httpStatus: r.status, reason: wchk.reason, sentBody: req.bodyString, traceId: r.headers && r.headers['x-trace-id'], json: r.json, raw: r.raw } };
         }
       }
       continue;
@@ -126,7 +129,7 @@ async function runLive(table, title, allowUnverifiedTypes) {
     } else if (step.step === '写值') {
       const wchk = T.classifyWriteResponse(r.status, r.json);
       if (!wchk.ok) {
-        return { ok: false, failed: { step: '写值', httpStatus: r.status, reason: wchk.reason, json: r.json, raw: r.raw } };
+        return { ok: false, failed: { step: '写值', httpStatus: r.status, reason: wchk.reason, sentBody: req.bodyString, traceId: r.headers && r.headers['x-trace-id'], json: r.json, raw: r.raw } };
       }
     } else if (step.step === '读回') {
       // 读回不只判状态码：还要校验 gridData.rows[].values[].cellValue 真有值，否则如实报「数据未落盘」。

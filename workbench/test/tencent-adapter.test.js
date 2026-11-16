@@ -94,6 +94,19 @@ test('AC2 写值 ≤5 requests：多个 updateRangeRequest 时按每请求 ≤5 
   assert.equal(covered, 13, '所有网格行都被某个 updateRangeRequest 覆盖（表头 + 12 数据行）');
 });
 
+test('回归：substituteBodyPlaceholders 把 body 里 {sheetId} 换成真实值，不发字面量（票 #27 实测 bug）', function () {
+  // 曾只替换 URL、漏了 body → 真发出去 sheetId 是字面量 '{sheetId}' → 腾讯 missing data not found。
+  const body = { requests: [{ updateRangeRequest: { sheetId: '{sheetId}', gridData: { startRow: 0, startColumn: 0, rows: [{ values: [{ cellValue: { text: 'a' } }] }] } } }] };
+  const out = T.substituteBodyPlaceholders(body, { sheetId: 'BB08J2', fileId: 'F1', range: 'A1:B2' });
+  assert.equal(out.requests[0].updateRangeRequest.sheetId, 'BB08J2', 'sheetId 占位符应替换为真实值');
+  assert.equal(JSON.stringify(out).indexOf('{sheetId}'), -1, '序列化后不得残留字面量 {sheetId}');
+  // 不误伤正文里正常含花括号的文本
+  const b2 = { x: '正常{不替换}文本', y: '{sheetId}' };
+  const o2 = T.substituteBodyPlaceholders(b2, { sheetId: 'S1' });
+  assert.equal(o2.x, '正常{不替换}文本', '非纯占位符字符串不被误替换');
+  assert.equal(o2.y, 'S1', '纯占位符字符串被替换');
+});
+
 test('AC2 写值请求体符合官方 proto：gridData.rows 是 [{values:[{cellValue}]}]，不是裸数组（票 #27 实测 bug 回归）', function () {
   // 腾讯 proto：GridData.rows = array(RowData)，RowData = { values: array(CellData) }。
   // 曾把 rows 写成裸的 cellData 数组 → 服务端 proto 转码报 `unexpected token [`(line 1:108)。
