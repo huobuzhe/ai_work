@@ -25,12 +25,24 @@ const TAB_KIND = 'workbench';
 function projectPreviewCard(state) {
   const pv = state && state.preview;
   if (!pv || pv.invalid) return null;
+  // 票 #12：作用域是公共字段，预览卡要把 scope / 条件 暴露给宿主，
+  // 让「作用范围：全部 / 符合条件 + 条件输入」在预览卡内可改（不新增第 6 步）。
+  // 统一的 firstDefined：引擎产出的 preview 已带这两字段，回退仅为兼容 pre-#12 的旧 preview 对象。
+  const dp = (state.draft && state.draft.params) || {};
+  const firstDefined = function (a, b, fallback) {
+    return a !== undefined ? a : (b !== undefined ? b : fallback);
+  };
+  const scope = firstDefined(pv.scope, dp.scope, 'all');
+  const condition = firstDefined(pv.condition, dp['条件'], '');
   return {
     stage: state.stage,
     explanation: state.draft && state.draft.explanation ? state.draft.explanation : '',
     summary: pv.summary,
     affectedRows: pv.affectedRows,
     totalRows: pv.totalRows,
+    scope: scope,
+    condition: condition,
+    scopeLabel: scope === 'match' ? '符合条件' : '全部',
     cells: pv.cells.map(function (c) {
       return { row: c.row, col: c.col, before: c.before, after: c.after, invalid: c.invalid, source: c.source };
     })

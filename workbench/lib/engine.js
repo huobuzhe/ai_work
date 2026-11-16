@@ -27,7 +27,8 @@ const KINDS = {
   conditional: {
     label: '③ 带条件增删', short: '带条件增删',
     medium: '结构化动作：条件筛选 + 写值 / 清空',
-    params: { 条件: '工时 > 150', 动作: '增加', 目标列: '备注', 值: '加班', scope: 'all' }
+    // 带条件增删的本质是「条件」，默认 match 才名副其实；scope 仍是公共字段，可改回 all。
+    params: { 条件: '工时 > 150', 动作: '增加', 目标列: '备注', 值: '加班', scope: 'match' }
   },
   function: {
     label: '④ 自定义函数计算', short: '自定义函数计算',
@@ -124,24 +125,31 @@ function extractExpression(sentence) {
 }
 
 function stepsFor(kind, p) {
+  // 票 #12：四类动作都先声明作用范围，steps 如实反映当前 scope（单一计算，各类复用）。
+  const isMatch = p.scope === 'match';
+  const scopeStep = '作用范围：' + (isMatch
+    ? '只作用于满足条件「' + p.条件 + '」的记录'
+    : '作用于全部记录');
   if (kind === 'extract') {
-    const scopeLine = p.scope === 'match'
-      ? '只作用于满足条件「' + p.条件 + '」的记录'
-      : '作用于全部记录';
     return [
+      scopeStep,
       '打开「' + p.来源文件 + '」',
-      '按「' + p.匹配列 + '」把两边的记录对齐（' + scopeLine + '）',
+      '按「' + p.匹配列 + '」把两边的记录对齐',
       '取「' + p.取哪一列 + '」这一列',
       '写进当前表的「' + p.写到 + '」列'
     ];
   }
-  if (kind === 'swap') return ['读出「' + p.字段A + '」整列', '读出「' + p.字段B + '」整列', '两段数据整体对调后写回'];
+  if (kind === 'swap') return [
+    scopeStep,
+    '读出「' + p.字段A + '」整列', '读出「' + p.字段B + '」整列', '两段数据整体对调后写回'
+  ];
   if (kind === 'conditional') return [
-    '逐行判断 ' + p.条件,
-    '命中的记录：对「' + p.目标列 + '」执行「' + p.动作 + '」',
+    scopeStep,
+    '在范围内的记录上：对「' + p.目标列 + '」执行「' + p.动作 + '」',
     p.动作 === '增加' ? '写入值「' + p.值 + '」' : '清空原值'
   ];
   if (kind === 'function') return [
+    scopeStep,
     '把这句话变成公式字符串 ' + p.表达式,
     '按每行的列位置换成 A1 引用（列来自表头、行来自记录序）',
     '公式写进新列「' + p.输出列 + '」，计算交给本地引擎重算后读回缓存值'
@@ -273,10 +281,11 @@ function preview(state, draft) {
       add(r, p.字段B, beforeOf(state, r, p.字段B), String(r[p.字段A] == null ? '' : r[p.字段A]), false, 'swap');
     });
   } else if (draft.kind === 'conditional') {
-    const cond = parseCondition(p.条件);
-    if (cond) state.rows.forEach(function (r) {
-      if (!matches(r, cond)) return;
-      const isDelete = p.动作 === '删去' || p.动作 === '删除' || p.动作 === '清空';
+    // 票 #12：条件增删也走公共 scope/inScope，不再用自己的私有条件过滤。
+    // 动作（增加/删去）决定写什么，公共 scope/条件决定作用于哪些行。
+    const isDelete = p.动作 === '删去' || p.动作 === '删除' || p.动作 === '清空';
+    state.rows.forEach(function (r) {
+      if (!inScope(r)) return;
       add(r, p.目标列, beforeOf(state, r, p.目标列), isDelete ? '' : String(p.值), false, 'conditional');
     });
   } else if (draft.kind === 'function') {
@@ -293,7 +302,9 @@ function preview(state, draft) {
   const summary = affectedRows === 0
     ? '影响 0 行 / 共 ' + totalRows + ' 行；没有任何单元格会变 —— 条件没命中任何记录。零命中允许确认。'
     : '影响 ' + affectedRows + ' 行 / 共 ' + totalRows + ' 行；共 ' + cells.length + ' 个单元格会变。确认前表格不会动。';
-  return { cells, summary, affectedRows, totalRows, invalid: false, errors: [] };
+  // 票 #12：预览如实反映当前作用范围，供预览卡渲染「作用范围」控件。
+  return { cells, summary, affectedRows, totalRows, invalid: false, errors: [],
+    scope: p.scope || 'all', condition: p.条件 || '' };
 }
 
 // 纯函数：把预览里的格子落到一份新表格上
