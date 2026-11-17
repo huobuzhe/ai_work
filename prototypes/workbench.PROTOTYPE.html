@@ -1,0 +1,770 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>表格工作台 · 可点草模（PROTOTYPE / 一次性）</title>
+<!--
+  PROTOTYPE — THROWAWAY. 不要当实现，不要合进产品代码。
+  回答的问题见页面顶部「这台草模要回答什么」。
+  归属：地图 [#2 建表格 + 处理表格繁琐任务工作台：找路地图](https://github.com/huobuzhe/ai_work/issues/2)
+        frontier 票 [#4 表格工作台原型](https://github.com/huobuzhe/ai_work/issues/4)
+  运行：双击本文件即可，无服务器、无构建、无网络、无凭据。
+  存放：本仓库没有应用 / 路由 / 组件库，无法把变体挂到既有页面上；
+        docs/ 放的是笔记，故新建 prototypes/ 目录，并在文件名里写死 PROTOTYPE。
+-->
+<style>
+  :root{
+    --accent:#4f46e5; --accent-soft:#eef2ff; --ink:#1f2430; --muted:#6b7280;
+    --line:#e5e7eb; --bg:#f7f8fa; --card:#ffffff; --warn:#b45309; --warn-bg:#fffbeb;
+    --ok:#047857; --ok-bg:#ecfdf5; --hit:#fef3c7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 20px 80px}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:-.3px}
+  h2{font-size:17px;margin:0 0 14px}
+  h3{font-size:14px;margin:18px 0 8px;color:var(--muted);font-weight:600;letter-spacing:.02em}
+  p{margin:0 0 10px}
+  a{color:var(--accent)}
+  .kicker{display:inline-block;background:var(--accent-soft);color:var(--accent);
+    font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;letter-spacing:.06em}
+  .intro{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);
+    border-radius:10px;padding:20px 22px;margin:18px 0 22px}
+  .intro .q{font-size:15px;margin:12px 0 10px}
+  .assume{font-size:13px;color:var(--muted);background:#fafafa;border:1px dashed var(--line);
+    border-radius:8px;padding:12px 14px;margin-top:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:20px 22px;margin:0 0 20px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:860px){.grid2{grid-template-columns:1fr}}
+  .note{border-radius:8px;padding:11px 14px;font-size:14px;margin:0 0 16px;border:1px solid transparent}
+  .note.info{background:var(--accent-soft);border-color:#c7d2fe;color:#3730a3}
+  .note.warn{background:var(--warn-bg);border-color:#fde68a;color:var(--warn)}
+  .note.ok{background:var(--ok-bg);border-color:#a7f3d0;color:var(--ok)}
+  .stagebar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}
+  .stagebar span{font-size:12px;padding:6px 11px;border-radius:6px;border:1px solid var(--line);
+    color:var(--muted);background:#fff}
+  .stagebar span.done{background:var(--accent);border-color:var(--accent);color:#fff}
+  .stagebar span.cur{border-color:var(--accent);color:var(--accent);font-weight:700;background:var(--accent-soft)}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:7px 10px;text-align:left;vertical-align:top}
+  th{background:#f9fafb;font-weight:600;color:var(--muted);white-space:nowrap}
+  td.hit{background:var(--hit);font-weight:600}
+  .muted{color:var(--muted);font-size:13px}
+  .kv{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:14px;margin:0 0 12px}
+  .kv b{color:var(--muted);font-weight:600}
+  ol.steps{margin:6px 0 0;padding-left:22px;font-size:14px}
+  ol.steps li{margin:2px 0}
+  .btn{display:inline-block;border:1px solid var(--line);background:#fff;color:var(--ink);
+    border-radius:7px;padding:8px 13px;font-size:13.5px;font-family:inherit;cursor:pointer;margin:0 6px 8px 0}
+  .btn:hover{background:#f3f4f6}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .btn.primary:hover{background:#4338ca}
+  .btn.small{padding:5px 10px;font-size:12.5px}
+  .btnrow{display:flex;flex-wrap:wrap;gap:0}
+  input[type=text]{border:1px solid var(--line);border-radius:6px;padding:8px 10px;
+    font:inherit;font-size:13.5px;width:100%;background:#fff;color:var(--ink)}
+  textarea{border:1px solid var(--line);border-radius:6px;padding:10px;font:inherit;
+    font-size:14px;width:100%;resize:vertical;background:#fff;color:var(--ink)}
+  label.f{display:block;font-size:12.5px;color:var(--muted);margin:0 0 8px}
+  label.f span{display:block;margin-bottom:3px}
+  .params{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px 12px;margin:8px 0 12px}
+  .btnlib{border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:0 0 10px;background:#fcfcfd}
+  .btnlib .head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .log{list-style:none;padding:0;margin:0;font-size:13px}
+  .log li{padding:6px 0;border-bottom:1px dashed var(--line)}
+  .log li:last-child{border-bottom:0}
+  .log .warn{color:var(--warn)}
+  .log .ok{color:var(--ok)}
+  .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 16px}
+  .tabs .btn{margin:0}
+  .tabs .btn.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .wstep{display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line)}
+  .wstep:last-child{border-bottom:0}
+  .wstep .n{flex:0 0 26px;height:26px;line-height:26px;text-align:center;border-radius:50%;
+    background:#f3f4f6;color:var(--muted);font-size:12px;font-weight:700}
+  .wstep.done .n{background:var(--accent);color:#fff}
+  .wstep.cur .n{background:var(--warn-bg);color:var(--warn);border:1px solid #fcd34d}
+  .wstep .body{flex:1}
+  .wstep .btn{margin:4px 0 0}
+  footer{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px;margin-top:8px}
+  code{background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div><span class="kicker">PROTOTYPE · 一次性草模 · 不要当实现</span></div>
+  <h1>表格工作台 · 可点草模</h1>
+  <p class="muted">地图 #2 的 frontier 票 #4 · 按 /prototype 产出 · 双击本文件即可运行</p>
+
+  <div class="intro">
+    <h2 style="margin-bottom:8px">这台草模要回答什么</h2>
+    <p class="q"><b>把一句话变成一个可复用按钮，中间到底该经过几步？</b>
+      状态模型是 <b>理解 → 解释与影响预览 → 用户确认 → 执行 → 命名参数化固化 → 下次一键复用</b>；
+      「动作配方」被暂定成 <b>功能种类 + 命名参数 + 产物介质 + 步骤</b> 四件事。</p>
+    <p class="muted">请边点边问：哪一步是多余的？哪一步缺失了？顺序对不对？特别留意三处「拦住了」和最后那次「一键运行」——
+      它们就是让「动作配方」「解释与影响预览」「固化为按钮」这几个词变得可争论的地方。答案要记回票 #4 的反馈。</p>
+    <div class="assume">
+      <b>分支假设（写在最前面，便于推翻）：</b> /prototype 有 UI 与 LOGIC 两支。本仓库目前没有应用、没有路由约定、没有组件库，
+      UI 支要求的「把变体挂到既有页面 / 按项目路由新建 throwaway route」都落不了地；而票 #4 要的反馈是「哪些步骤多余 / 缺失 / 顺序不对」，
+      属于状态机而非版式。因此这里做 <b>LOGIC 支</b>：一个自包含 HTML、一个可搬走的纯 <code>reduce(state, action)</code> 模块、
+      自由试按按钮 + 四个导览场景。若你其实想比较三种工作台版式，说一声，我再用 UI 支另做一版 <code>?variant=</code> 的。
+    </div>
+  </div>
+
+  <div id="state"></div>
+  <div id="freeplay"></div>
+  <div id="walk"></div>
+
+  <footer>
+    <p><b>什么是真的、什么是假的：</b>表格与「对应文件」是内存里的假数据；「理解」只是关键词匹配，<b>不是 LLM</b>；
+      公式只认 <code>字段 op 字段/数字</code>；没有读写任何 xlsx、没有连飞书 / 腾讯文档、没有网络请求、没有持久化。
+      按研究笔记的结论，真实版本要自己补「自然语言解释 → 结构化配方编译与保存」这一环，这里故意留成假的。</p>
+    <p><b>相关一手笔记：</b>
+      <a href="../docs/research/spreadsheet-platform-capabilities.md">spreadsheet-platform-capabilities.md</a> ·
+      <a href="../docs/research/official-skill-mcp-button-reuse.md">official-skill-mcp-button-reuse.md</a>　|
+      <a href="https://github.com/huobuzhe/ai_work/issues/4">票 #4</a> ·
+      <a href="https://github.com/huobuzhe/ai_work/issues/2">地图 #2</a></p>
+    <p><b>产物落点：</b>throwaway 分支 <code>prototype/spreadsheet-workbench</code>（不进 master、不 push）；
+      master 工作树里这份只是未跟踪副本，方便你直接双击。原型本体与上面的分支名/提交号会作为 context pointer 写回票 #4。</p>
+  </footer>
+</div>
+
+<script>
+/* =====================================================================
+   可搬走的纯模块：只有数据，没有 DOM / document / 按钮处理器。
+   形状：reduce(state, action) -> state。回答完问题后可整段 lift 进真实代码。
+   ===================================================================== */
+const Workbench = (function () {
+  'use strict';
+
+  const COLUMNS = ['姓名', '部门', '工时', '时薪', '备注'];
+  const INITIAL_ROWS = [
+    { 姓名: '阿岚', 部门: '技术', 工时: 160, 时薪: 80, 备注: '' },
+    { 姓名: '柏舟', 部门: '技术', 工时: 176, 时薪: 80, 备注: '' },
+    { 姓名: '岑溪', 部门: '运营', 工时: 96,  时薪: 60, 备注: '' },
+    { 姓名: '丁野', 部门: '运营', 工时: 144, 时薪: 60, 备注: '' },
+    { 姓名: '尔芙', 部门: '人事', 工时: 88,  时薪: 70, 备注: '' }
+  ];
+
+  // 「对应文件」：原型里假装的外部数据源，用来演示「提取表格中对应字段的数据」
+  const SOURCE = {
+    name: '外勤登记表.csv',
+    rows: [
+      { 姓名: '阿岚', 邮箱: 'alan@example.com' },
+      { 姓名: '柏舟', 邮箱: 'baizhou@example.com' },
+      { 姓名: '岑溪', 邮箱: 'cenxi@example.com' },
+      { 姓名: '丁野', 邮箱: 'dingye@example.com' },
+      { 姓名: '尔芙', 邮箱: 'erfu@example.com' }
+    ]
+  };
+
+  const KINDS = {
+    extract: {
+      label: '① 提取字段', short: '提取字段',
+      medium: '结构化动作：按姓名左连接 + 写列',
+      params: { 来源文件: '外勤登记表.csv', 匹配列: '姓名', 取哪一列: '邮箱', 写到: '邮箱' }
+    },
+    swap: {
+      label: '② 调换两段字段', short: '调换两段字段',
+      medium: '结构化动作：两列整列互换',
+      params: { 字段A: '部门', 字段B: '备注' }
+    },
+    conditional: {
+      label: '③ 带条件增删', short: '带条件增删',
+      medium: '结构化动作：条件筛选 + 写值 / 清空',
+      params: { 条件: '工时 > 150', 动作: '增加', 目标列: '备注', 值: '加班' }
+    },
+    function: {
+      label: '④ 自定义函数计算', short: '自定义函数计算',
+      medium: '公式字符串：应发 = 工时 × 时薪',
+      params: { 表达式: '工时 * 时薪', 输出列: '应发' }
+    }
+  };
+
+  function shorten(s) {
+    const t = String(s).replace(/\s+/g, ' ').trim();
+    return t.length > 18 ? t.slice(0, 18) + '…' : t;
+  }
+
+  function stepsFor(kind, p) {
+    if (kind === 'extract') return [
+      '打开「' + p.来源文件 + '」',
+      '按「' + p.匹配列 + '」把两边的行对齐',
+      '取「' + p.取哪一列 + '」这一列',
+      '写进当前表的「' + p.写到 + '」列'
+    ];
+    if (kind === 'swap') return [
+      '读出「' + p.字段A + '」整列', '读出「' + p.字段B + '」整列', '两段数据整体对调后写回'
+    ];
+    if (kind === 'conditional') return [
+      '逐行判断 ' + p.条件,
+      '命中的行：对「' + p.目标列 + '」执行「' + p.动作 + '」',
+      p.动作 === '增加' ? '写入值「' + p.值 + '」' : '清空原值'
+    ];
+    if (kind === 'function') return [
+      '把这句话变成公式字符串 ' + p.表达式, '逐行求值', '结果写进新列「' + p.输出列 + '」'
+    ];
+    return [];
+  }
+
+  function explanationFor(kind, p, sentence) {
+    const head = sentence
+      ? '把「' + shorten(sentence) + '」理解成「' + KINDS[kind].short + '」'
+      : '快捷按钮「' + KINDS[kind].short + '」';
+    return head + '；产物介质是' + KINDS[kind].medium + '。下面列出它会影响的单元格，确认前表格不会动。';
+  }
+
+  function buildDraft(kind, sentence, overrides) {
+    const spec = KINDS[kind];
+    const params = Object.assign({}, spec.params, overrides || {});
+    return {
+      kind: kind,
+      name: sentence ? shorten(sentence) : spec.short + '（快捷）',
+      sentence: sentence || '',
+      params: params,
+      medium: spec.medium,
+      steps: stepsFor(kind, params),
+      explanation: explanationFor(kind, params, sentence)
+    };
+  }
+
+  function rebuildDraft(draft, params) {
+    const merged = Object.assign({}, draft.params, params || {});
+    return {
+      kind: draft.kind, name: draft.name, sentence: draft.sentence,
+      params: merged, medium: KINDS[draft.kind].medium,
+      steps: stepsFor(draft.kind, merged),
+      explanation: explanationFor(draft.kind, merged, draft.sentence)
+    };
+  }
+
+  // 假编译器：只做关键词匹配。真实版本要自己补的一环，见研究笔记。
+  function understand(sentence) {
+    const s = (sentence || '').trim();
+    if (!s) return { error: '输入框是空的，先写一句话' };
+    let kind = null;
+    if (/提取|邮箱|外勤|对应文件|补.*列|拉过来/.test(s)) kind = 'extract';
+    else if (/调换|交换|互换|对调/.test(s)) kind = 'swap';
+    else if (/条件|大于|小于|超过|删掉|清空|标记|标注|加班/.test(s)) kind = 'conditional';
+    else if (/计算|乘|函数|公式|算成|求和|[*+]/.test(s)) kind = 'function';
+    if (!kind) return { error: '没匹配到任何一种功能（原型里只是关键词匹配，不是真 LLM）' };
+    return { kind: kind, sentence: s };
+  }
+
+  function parseCondition(text) {
+    const m = /^\s*(\S+)\s*(>=|<=|>|<|==|=)\s*(.+?)\s*$/.exec(String(text));
+    if (!m) return null;
+    return { field: m[1], op: m[2], value: m[3] };
+  }
+
+  function matches(row, cond) {
+    const raw = row[cond.field];
+    const a = Number(raw), b = Number(cond.value);
+    if (!isNaN(a) && !isNaN(b)) {
+      if (cond.op === '>') return a > b;
+      if (cond.op === '<') return a < b;
+      if (cond.op === '>=') return a >= b;
+      if (cond.op === '<=') return a <= b;
+      return a === b;
+    }
+    const x = String(raw == null ? '' : raw), y = cond.value;
+    if (cond.op === '>') return x > y;
+    if (cond.op === '<') return x < y;
+    if (cond.op === '>=') return x >= y;
+    if (cond.op === '<=') return x <= y;
+    return x === y;
+  }
+
+  function evalExpression(expr, row) {
+    const s = String(expr).replace(/\s+/g, '');
+    const m = /^([^*+\-]+)([*+\-])([^*+\-]+)$/.exec(s);
+    if (!m) return null;
+    const lv = row[m[1]] !== undefined ? Number(row[m[1]]) : (isNaN(Number(m[1])) ? null : Number(m[1]));
+    const rv = row[m[3]] !== undefined ? Number(row[m[3]]) : (isNaN(Number(m[3])) ? null : Number(m[3]));
+    if (lv === null || rv === null || isNaN(lv) || isNaN(rv)) return null;
+    if (m[2] === '*') return lv * rv;
+    if (m[2] === '+') return lv + rv;
+    if (m[2] === '-') return lv - rv;
+    return null;
+  }
+
+  function beforeOf(state, row, col) {
+    if (state.columns.indexOf(col) === -1) return '（无此列）';
+    const v = row[col];
+    return (v === '' || v === undefined || v === null) ? '（空）' : String(v);
+  }
+
+  // 纯函数：算出「会改哪些格子」，不改动任何东西
+  function preview(state, draft) {
+    const p = draft.params, cells = [];
+    const add = function (row, col, before, after, invalid) {
+      cells.push({ row: String(row['姓名']), col: col, before: before, after: after, invalid: !!invalid });
+    };
+    if (draft.kind === 'extract') {
+      state.rows.forEach(function (r) {
+        const hit = SOURCE.rows.filter(function (x) { return x[p.匹配列] === r[p.匹配列]; })[0];
+        add(r, p.写到, beforeOf(state, r, p.写到), hit ? String(hit[p.取哪一列]) : '');
+      });
+    } else if (draft.kind === 'swap') {
+      state.rows.forEach(function (r) {
+        add(r, p.字段A, beforeOf(state, r, p.字段A), String(r[p.字段B] == null ? '' : r[p.字段B]));
+        add(r, p.字段B, beforeOf(state, r, p.字段B), String(r[p.字段A] == null ? '' : r[p.字段A]));
+      });
+    } else if (draft.kind === 'conditional') {
+      const cond = parseCondition(p.条件);
+      if (cond) state.rows.forEach(function (r) {
+        if (!matches(r, cond)) return;
+        const isDelete = p.动作 === '删去' || p.动作 === '删除' || p.动作 === '清空';
+        add(r, p.目标列, beforeOf(state, r, p.目标列), isDelete ? '' : String(p.值));
+      });
+    } else if (draft.kind === 'function') {
+      state.rows.forEach(function (r) {
+        const v = evalExpression(p.表达式, r);
+        add(r, p.输出列, beforeOf(state, r, p.输出列), v === null ? '' : String(v), v === null);
+      });
+    }
+    const rowSet = {};
+    cells.forEach(function (c) { rowSet[c.row] = true; });
+    return {
+      cells: cells,
+      summary: cells.length === 0
+        ? '没有任何单元格会变 —— 条件没命中任何行。要不要允许「空操作」也固化成按钮？'
+        : '共 ' + cells.length + ' 个单元格会变，涉及 ' + Object.keys(rowSet).length + ' 行。确认前表格不会动。'
+    };
+  }
+
+  // 纯函数：把预览里的格子落到一份新表格上
+  function applyCells(state, cells) {
+    const columns = state.columns.slice();
+    cells.forEach(function (c) { if (columns.indexOf(c.col) === -1) columns.push(c.col); });
+    const rows = state.rows.map(function (r) { return Object.assign({}, r); });
+    cells.forEach(function (c) {
+      const target = rows.filter(function (r) { return String(r['姓名']) === c.row; })[0];
+      if (target) target[c.col] = c.after;
+    });
+    return { columns: columns, rows: rows };
+  }
+
+  function initial() {
+    return {
+      columns: COLUMNS.slice(),
+      rows: INITIAL_ROWS.map(function (r) { return Object.assign({}, r); }),
+      stage: 'IDLE', input: '', draft: null, preview: null, buttons: [],
+      log: [{ text: '原型已重置：5 行员工数据 + 1 个「对应文件」外勤登记表.csv。', tone: 'info' }],
+      note: '先按下面的快捷按钮，或在输入框写一句话。', noteTone: 'info',
+      walk: { id: 'w1', step: 0 }
+    };
+  }
+
+  function push(state, text, tone) {
+    return [{ text: text, tone: tone || 'info' }].concat(state.log).slice(0, 8);
+  }
+  function set(state, patch) { return Object.assign({}, state, patch); }
+  function guard(state, msg) {
+    return set(state, { note: msg, noteTone: 'warn', log: push(state, msg, 'warn') });
+  }
+
+  function reduce(state, action) {
+    switch (action.type) {
+      case 'RESET': return initial();
+
+      case 'SET_INPUT':
+        return set(state, {
+          input: action.text,
+          note: '输入框里写下了「' + shorten(action.text) + '」；还没理解，表格没动。',
+          noteTone: 'info',
+          log: push(state, '输入：' + shorten(action.text))
+        });
+
+      case 'CHECK':
+        return set(state, {
+          note: '核对完成：表格仍是 5 行原始数据，取消没有留下副作用。', noteTone: 'info',
+          log: push(state, '核对：表格未改动')
+        });
+
+      case 'UNDERSTAND': {
+        const text = action.text !== undefined ? action.text : state.input;
+        const got = understand(text);
+        if (got.error) return guard(state, got.error);
+        return set(state, {
+          input: got.sentence, draft: buildDraft(got.kind, got.sentence), preview: null,
+          stage: 'UNDERSTOOD',
+          note: '已理解成「' + KINDS[got.kind].short + '」。注意：这一步是关键词匹配，不是真 LLM。',
+          noteTone: 'info',
+          log: push(state, '理解：' + shorten(got.sentence) + ' → ' + KINDS[got.kind].short)
+        });
+      }
+
+      case 'QUICK': {
+        const draft = buildDraft(action.kind, null, action.params);
+        const pv = preview(state, draft);
+        return set(state, {
+          draft: draft, preview: pv, stage: 'PREVIEWED',
+          note: '快捷按钮跳过了「理解」，直接给出解释与影响预览 —— 这一步该不该省？', noteTone: 'info',
+          log: push(state, '快捷按钮「' + KINDS[action.kind].short + '」→ 影响预览 ' + pv.cells.length + ' 格')
+        });
+      }
+
+      case 'PREVIEW': {
+        if (!state.draft) return guard(state, '拦住了：还没有配方草稿。先写一句话并「理解」，或按一个快捷按钮。');
+        const draft = rebuildDraft(state.draft, action.params);
+        const pv = preview(state, draft);
+        return set(state, {
+          draft: draft, preview: pv, stage: 'PREVIEWED',
+          note: '解释与影响预览已就绪：' + pv.summary, noteTone: 'info',
+          log: push(state, '影响预览：' + pv.cells.length + ' 个单元格会变')
+        });
+      }
+
+      case 'CONFIRM': {
+        if (state.stage !== 'PREVIEWED' || !state.preview)
+          return guard(state, '拦住了：没有「解释与影响预览」就不能执行。顺序是 理解 → 预览 → 确认 → 执行。');
+        const applied = applyCells(state, state.preview.cells);
+        return set(state, {
+          columns: applied.columns, rows: applied.rows, stage: 'EXECUTED',
+          note: '用户已确认，执行完成：改了 ' + state.preview.cells.length + ' 个单元格。', noteTone: 'ok',
+          log: push(state, '确认 → 执行：' + state.preview.cells.length + ' 个单元格变化', 'ok')
+        });
+      }
+
+      case 'CANCEL':
+        return set(state, {
+          stage: 'IDLE', draft: null, preview: null,
+          note: '已取消，表格没有变化。', noteTone: 'info',
+          log: push(state, '取消：表格未改动')
+        });
+
+      case 'SOLIDIFY': {
+        if (state.stage !== 'EXECUTED' || !state.draft)
+          return guard(state, '拦住了：还没执行过，不能把草稿固化成按钮。');
+        const name = (action.name || '').trim() || state.draft.name;
+        const b = {
+          id: 'b' + (state.buttons.length + 1), name: name, kind: state.draft.kind,
+          params: Object.assign({}, state.draft.params, action.params || {}),
+          medium: state.draft.medium, steps: state.draft.steps.slice()
+        };
+        return set(state, {
+          buttons: state.buttons.concat([b]), stage: 'SOLIDIFIED',
+          note: '已命名参数化为按钮「' + name + '」。下次点「一键运行」会跳过理解 / 预览 / 确认 —— 这样安全吗？',
+          noteTone: 'info',
+          log: push(state, '固化为按钮：' + name, 'ok')
+        });
+      }
+
+      case 'RUN_BUTTON': {
+        const b = action.id === '__last__'
+          ? state.buttons[state.buttons.length - 1]
+          : state.buttons.filter(function (x) { return x.id === action.id; })[0];
+        if (!b) return guard(state, '按钮库里还没有这个按钮。');
+        const draft = buildDraft(b.kind, null, Object.assign({}, b.params, action.params || {}));
+        const pv = preview(state, draft);
+        const applied = applyCells(state, pv.cells);
+        return set(state, {
+          columns: applied.columns, rows: applied.rows, draft: draft, preview: pv, stage: 'EXECUTED',
+          note: '一键运行「' + b.name + '」：直接执行 ' + pv.cells.length + ' 格，跳过了解释与确认。',
+          noteTone: 'warn',
+          log: push(state, '一键运行「' + b.name + '」→ ' + pv.cells.length + ' 格变化', 'ok')
+        });
+      }
+
+      case 'START_WALK': {
+        const fresh = initial();
+        return set(fresh, {
+          walk: { id: action.id, step: 0 },
+          note: '导览已重置到初始状态。按顺序点下面的步骤按钮。',
+          log: push(fresh, '开始导览：' + action.id)
+        });
+      }
+
+      case 'WALK_STEP': {
+        const next = reduce(state, action.action);
+        return set(next, {
+          walk: { id: state.walk ? state.walk.id : action.walkId, step: (action.step || 0) + 1 }
+        });
+      }
+
+      default: return state;
+    }
+  }
+
+  return { initial: initial, reduce: reduce, KINDS: KINDS, shorten: shorten, preview: preview };
+})();
+</script>
+
+<script>
+/* =====================================================================
+   页面壳：只调上面的模块，不把 DOM 塞回去。每次动作后整页重渲染状态。
+   ===================================================================== */
+(function () {
+  'use strict';
+
+  const W = Workbench;
+  let state = W.initial();
+  const ui = { sentence: '', solidName: '' };
+
+  const WALKS = [
+    {
+      id: 'w1', name: '① 快乐路径',
+      why: '完整走一遍 理解 → 解释与影响预览 → 用户确认 → 执行 → 命名参数化固化 → 下次一键复用。看哪一步让你觉得多余。',
+      steps: [
+        { label: '写一句「从外勤登记表把邮箱提出来」', action: { type: 'SET_INPUT', text: '从外勤登记表把邮箱提出来' } },
+        { label: '理解这句话', action: { type: 'UNDERSTAND' } },
+        { label: '看解释与影响预览', action: { type: 'PREVIEW' } },
+        { label: '用户确认 → 执行', action: { type: 'CONFIRM' } },
+        { label: '命名参数化，固化为按钮「补邮箱」', action: { type: 'SOLIDIFY', name: '补邮箱' } },
+        { label: '下次一键运行这个按钮', action: { type: 'RUN_BUTTON', id: '__last__' } }
+      ]
+    },
+    {
+      id: 'w2', name: '② 解释错了，确认前取消',
+      why: '快捷按钮直接给出预览；使用者发现解释不对就取消。要验证的是：取消到底有没有留下副作用。',
+      steps: [
+        { label: '按快捷按钮「调换两段字段」', action: { type: 'QUICK', kind: 'swap' } },
+        { label: '发现不对，点「取消」', action: { type: 'CANCEL' } },
+        { label: '核对表格：还是原来 5 行吗？', action: { type: 'CHECK' } }
+      ]
+    },
+    {
+      id: 'w3', name: '③ 不合法的顺序',
+      why: '故意跳过步骤，看状态机拦不拦；然后再按正规顺序走一遍。这些「拦住了」到底是保护，还是多余？',
+      steps: [
+        { label: '写一句「把工时乘以时薪算成应发」', action: { type: 'SET_INPUT', text: '把工时乘以时薪算成应发' } },
+        { label: '直接点「确认执行」（跳过理解与预览）', action: { type: 'CONFIRM' } },
+        { label: '直接点「固化为按钮」（还没执行）', action: { type: 'SOLIDIFY', name: '算应发' } },
+        { label: '回到正规顺序：先理解', action: { type: 'UNDERSTAND' } },
+        { label: '再看解释与影响预览', action: { type: 'PREVIEW' } },
+        { label: '最后确认 → 执行', action: { type: 'CONFIRM' } }
+      ]
+    },
+    {
+      id: 'w4', name: '④ 条件一个都没命中',
+      why: '条件写得没人满足时，预览是 0 格。这种「空操作」该不该也允许固化成一个按钮？',
+      steps: [
+        { label: '按「带条件增删」，把条件改成 工时 > 999', action: { type: 'QUICK', kind: 'conditional', params: { 条件: '工时 > 999' } } },
+        { label: '看 0 格预览后仍然确认执行', action: { type: 'CONFIRM' } },
+        { label: '仍然固化为按钮「标加班（空跑）」', action: { type: 'SOLIDIFY', name: '标加班（空跑）' } },
+        { label: '核对：按钮库里多了个永远不改数据的按钮', action: { type: 'CHECK' } }
+      ]
+    }
+  ];
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function disp(v) { return (v === '' || v === undefined || v === null) ? '（空）' : String(v); }
+
+  const STAGE_LABEL = {
+    IDLE: '待开始', UNDERSTOOD: '已理解', PREVIEWED: '等待用户确认',
+    EXECUTED: '已执行', SOLIDIFIED: '已固化为按钮'
+  };
+  const STAGES = ['① 理解', '② 解释与影响预览', '③ 用户确认', '④ 执行', '⑤ 命名参数化固化'];
+  const DONE = { IDLE: 0, UNDERSTOOD: 1, PREVIEWED: 2, EXECUTED: 4, SOLIDIFIED: 5 };
+
+  function stageBar(s) {
+    const done = DONE[s.stage];
+    return '<div class="stagebar">' + STAGES.map(function (label, i) {
+      const cls = i < done ? 'done' : (i === done ? 'cur' : '');
+      return '<span class="' + cls + '">' + esc(label) + '</span>';
+    }).join('') + '<span style="border:0;background:transparent;color:var(--accent);font-weight:700">'
+      + esc(STAGE_LABEL[s.stage]) + '</span></div>';
+  }
+
+  function tableHTML(s) {
+    const hit = {};
+    if (s.preview) s.preview.cells.forEach(function (c) { hit[c.row + '|' + c.col] = true; });
+    let h = '<table><thead><tr>' + s.columns.map(function (c) {
+      return '<th>' + esc(c) + '</th>';
+    }).join('') + '</tr></thead><tbody>';
+    s.rows.forEach(function (r) {
+      h += '<tr>' + s.columns.map(function (c) {
+        const cls = hit[String(r['姓名']) + '|' + c] ? ' class="hit"' : '';
+        return '<td' + cls + '>' + esc(disp(r[c])) + '</td>';
+      }).join('') + '</tr>';
+    });
+    return h + '</tbody></table>';
+  }
+
+  function paramInputs(params, attr) {
+    return '<div class="params">' + Object.keys(params).map(function (k) {
+      return '<label class="f"><span>' + esc(k) + '</span><input type="text" '
+        + attr + '="' + esc(k) + '" value="' + esc(params[k]) + '"></label>';
+    }).join('') + '</div>';
+  }
+
+  function draftHTML(s) {
+    if (!s.draft) return '<p class="muted">当前没有配方草稿。</p>';
+    const d = s.draft;
+    return '<div class="kv">'
+      + '<b>功能种类</b><span>' + esc(W.KINDS[d.kind].short) + '</span>'
+      + '<b>产物介质</b><span>' + esc(d.medium) + '</span>'
+      + '<b>解释</b><span>' + esc(d.explanation) + '</span>'
+      + '</div>'
+      + '<h3>命名参数（可以直接改，再点「重新看影响预览」）</h3>'
+      + paramInputs(d.params, 'data-param')
+      + '<h3>步骤</h3><ol class="steps">' + d.steps.map(function (x) {
+        return '<li>' + esc(x) + '</li>';
+      }).join('') + '</ol>'
+      + '<h3>把它固化成按钮时叫什么名字</h3>'
+      + '<label class="f"><span>按钮名称</span><input type="text" id="solidName" value="'
+      + esc(ui.solidName || d.name) + '"></label>';
+  }
+
+  function previewHTML(s) {
+    if (!s.preview) return '<p class="muted">还没有影响预览。</p>';
+    const p = s.preview;
+    let h = '<p><b>' + esc(p.summary) + '</b></p>';
+    if (!p.cells.length) return h + '<p class="muted">（没有格子会变）</p>';
+    h += '<table><thead><tr><th>哪一行</th><th>哪一列</th><th>改前</th><th>改后</th></tr></thead><tbody>';
+    p.cells.slice(0, 20).forEach(function (c) {
+      h += '<tr><td>' + esc(c.row) + '</td><td>' + esc(c.col) + '</td><td>' + esc(disp(c.before))
+        + '</td><td>' + (c.invalid ? '<span style="color:var(--warn)">（算不出来）</span>' : esc(disp(c.after))) + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    if (p.cells.length > 20) h += '<p class="muted">只列前 20 格，共 ' + p.cells.length + ' 格。</p>';
+    return h;
+  }
+
+  function buttonsHTML(s) {
+    if (!s.buttons.length) return '<p class="muted">按钮库还是空的。走一遍「理解 → 预览 → 确认 → 执行 → 固化」就会出现第一个。</p>';
+    return s.buttons.map(function (b) {
+      return '<div class="btnlib"><div class="head"><div><b>' + esc(b.name) + '</b> '
+        + '<span class="muted">' + esc(W.KINDS[b.kind].short) + ' · ' + esc(b.medium) + '</span></div>'
+        + '<button class="btn small primary" data-action="run" data-id="' + esc(b.id) + '">一键运行</button></div>'
+        + '<div class="params">' + Object.keys(b.params).map(function (k) {
+          return '<label class="f"><span>' + esc(k) + '</span><input type="text" data-run-param="'
+            + esc(b.id + '|' + k) + '" value="' + esc(b.params[k]) + '"></label>';
+        }).join('') + '</div>'
+        + '<p class="muted" style="margin:0">改上面的参数再「一键运行」，看结果会不会不同。</p></div>';
+    }).join('');
+  }
+
+  function logHTML(s) {
+    return '<ul class="log">' + s.log.map(function (l) {
+      return '<li class="' + esc(l.tone) + '">' + esc(l.text) + '</li>';
+    }).join('') + '</ul>';
+  }
+
+  function renderState(s) {
+    return '<div class="card">'
+      + '<h2>当前状态 <span class="muted" style="font-weight:400">（每次点击后整份重画）</span></h2>'
+      + stageBar(s)
+      + '<div class="note ' + esc(s.noteTone) + '"><b>刚刚发生了什么：</b>' + esc(s.note) + '</div>'
+      + '<div class="grid2">'
+      + '<div><h3>表格视图（黄色 = 预览里会改的格子）</h3>' + tableHTML(s) + '</div>'
+      + '<div><h3>当前配方草稿</h3>' + draftHTML(s) + '</div>'
+      + '</div>'
+      + '<h3>解释与影响预览</h3>' + previewHTML(s)
+      + '<h3>按钮库（已固化的动作配方）</h3>' + buttonsHTML(s)
+      + '<h3>操作记录</h3>' + logHTML(s)
+      + '</div>';
+  }
+
+  function renderFreeplay(s) {
+    const quick = Object.keys(W.KINDS).map(function (k) {
+      return '<button class="btn" data-action="quick" data-kind="' + k + '">' + esc(W.KINDS[k].label) + '</button>';
+    }).join('');
+    return '<div class="card">'
+      + '<h2>自由试按（按钮永远可按，按错了会被状态机拦住）</h2>'
+      + '<h3>四个快捷按钮</h3><div class="btnrow">' + quick + '</div>'
+      + '<h3>输入框：把一句人话变成功能</h3>'
+      + '<textarea id="sentence" rows="2" placeholder="例如：从外勤登记表把邮箱提出来 / 调换部门和备注 / 给工时超过150的人标加班 / 把工时乘以时薪算成应发">'
+      + esc(ui.sentence) + '</textarea>'
+      + '<div class="btnrow" style="margin-top:10px">'
+      + '<button class="btn primary" data-action="understand">理解这句话</button>'
+      + '<button class="btn" data-action="preview">看解释与影响预览</button>'
+      + '<button class="btn" data-action="confirm">用户确认 → 执行</button>'
+      + '<button class="btn" data-action="solidify">命名参数化 → 固化为按钮</button>'
+      + '<button class="btn" data-action="cancel">取消</button>'
+      + '<button class="btn" data-action="reset">重置整份状态</button>'
+      + '</div>'
+      + '<p class="muted" style="margin:6px 0 0">「理解」是关键词匹配，不是 LLM；这一步正是研究笔记里说「官方都没给、要自己补」的那一环，这里故意留成假的。</p>'
+      + '</div>';
+  }
+
+  function renderWalk(s) {
+    const cur = s.walk ? s.walk.id : 'w1';
+    const walk = WALKS.filter(function (w) { return w.id === cur; })[0];
+    const tabs = WALKS.map(function (w) {
+      return '<button class="btn small ' + (w.id === cur ? 'on' : '') + '" data-action="walk" data-walk="'
+        + esc(w.id) + '">' + esc(w.name) + '</button>';
+    }).join('');
+    const step = s.walk ? s.walk.step : 0;
+    const steps = walk.steps.map(function (st, i) {
+      const cls = i < step ? 'done' : (i === step ? 'cur' : '');
+      return '<div class="wstep ' + cls + '"><div class="n">' + (i < step ? '✓' : (i + 1)) + '</div>'
+        + '<div class="body">' + esc(st.label)
+        + '<br><button class="btn small" data-action="step" data-walk="' + esc(walk.id)
+        + '" data-step="' + i + '">' + (i === step ? '▶ 按这一步' : '按这一步（重做）') + '</button></div></div>';
+    }).join('');
+    return '<div class="card">'
+      + '<h2>导览：四个不太好想清楚的场景</h2>'
+      + '<p class="muted">点任一导览标题会重置到初始状态，保证每次跑出来一样。每一步都是真按钮，按了就真的改状态。</p>'
+      + '<div class="tabs">' + tabs + '</div>'
+      + '<div class="note info"><b>' + esc(walk.name) + '</b>：' + esc(walk.why) + '</div>'
+      + steps
+      + '</div>';
+  }
+
+  function render() {
+    const y = window.scrollY;
+    document.getElementById('state').innerHTML = renderState(state);
+    document.getElementById('freeplay').innerHTML = renderFreeplay(state);
+    document.getElementById('walk').innerHTML = renderWalk(state);
+    window.scrollTo(0, y);
+  }
+
+  function dispatch(action) { state = W.reduce(state, action); render(); }
+
+  function readParams() {
+    const out = {};
+    document.querySelectorAll('[data-param]').forEach(function (el) {
+      out[el.getAttribute('data-param')] = el.value;
+    });
+    return out;
+  }
+  function readRunParams(id) {
+    const out = {}, prefix = id + '|';
+    document.querySelectorAll('[data-run-param]').forEach(function (el) {
+      const k = el.getAttribute('data-run-param');
+      if (k.indexOf(prefix) === 0) out[k.slice(prefix.length)] = el.value;
+    });
+    return out;
+  }
+
+  document.addEventListener('input', function (e) {
+    if (e.target.id === 'sentence') ui.sentence = e.target.value;
+    if (e.target.id === 'solidName') ui.solidName = e.target.value;
+  });
+
+  document.addEventListener('click', function (e) {
+    const t = e.target.closest ? e.target.closest('[data-action]') : null;
+    if (!t) return;
+    const a = t.getAttribute('data-action');
+    if (a === 'reset') { ui.sentence = ''; ui.solidName = ''; return dispatch({ type: 'RESET' }); }
+    if (a === 'understand') return dispatch({ type: 'UNDERSTAND', text: (document.getElementById('sentence') || {}).value || '' });
+    if (a === 'quick') return dispatch({ type: 'QUICK', kind: t.getAttribute('data-kind') });
+    if (a === 'preview') return dispatch({ type: 'PREVIEW', params: readParams() });
+    if (a === 'confirm') return dispatch({ type: 'CONFIRM' });
+    if (a === 'cancel') return dispatch({ type: 'CANCEL' });
+    if (a === 'solidify') return dispatch({ type: 'SOLIDIFY', name: (document.getElementById('solidName') || {}).value || '', params: readParams() });
+    if (a === 'run') { const id = t.getAttribute('data-id'); return dispatch({ type: 'RUN_BUTTON', id: id, params: readRunParams(id) }); }
+    if (a === 'walk') { ui.sentence = ''; ui.solidName = ''; return dispatch({ type: 'START_WALK', id: t.getAttribute('data-walk') }); }
+    if (a === 'step') {
+      const wid = t.getAttribute('data-walk'), i = Number(t.getAttribute('data-step'));
+      const walk = WALKS.filter(function (w) { return w.id === wid; })[0];
+      const act = walk.steps[i].action;
+      if (act.type === 'SET_INPUT') ui.sentence = act.text;
+      return dispatch({ type: 'WALK_STEP', walkId: wid, step: i, action: act });
+    }
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
