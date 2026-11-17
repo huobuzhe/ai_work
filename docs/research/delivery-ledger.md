@@ -13,7 +13,7 @@
 | 地图（wayfinder:map） | 2 张，均 CLOSED：地图 #2、地图 #29 |
 | 规格（ready-for-agent） | 2 份，均 CLOSED：规格 #8、规格 #34 |
 | 决策/实施票 | 35 张（5 + 20 + 4 + 6），全 CLOSED |
-| HEAD | `4091c91`（工作树无已跟踪改动；三批归档 commit `d8038ee`/`77ed693`/`4091c91`） |
+| HEAD | 不在此追记 hash——账本写自身仓库 HEAD 会陷入自指：每次为更新它而提交都会让 hash 再过期一次。**交付基线**为三批归档提交 `d8038ee`/`77ed693`/`4091c91`（固定、不再变）；此后当前 HEAD 一律以 `git log` / `git rev-parse HEAD` 为准。工作树无已跟踪改动。 |
 | 验收 | `npm test` 307/307；`engineMatchesFile: true`；`valuesMatch: true`；两票之外每票两轴 code-review 0 hard |
 
 端到端审计（关票状态、四层指针回填、验收布尔、工作树）结果 FAIL=0，详见文末「可复现核对」。
@@ -111,5 +111,5 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 5. 地图 #29 含 #30–#33 指针；
 6. 规格 #8 进度含 #9–#28 指针（#27 因 gist 交叉引用计数 4 次属正常）；
 7. 规格 #34 含 #35–#40 指针、7 区块 + 44 story；
-8. `git rev-parse HEAD` = `4091c91`，工作树无已跟踪 diff（账本落盘后追加三批归档提交 `d8038ee`/`77ed693`/`4091c91`）；
+8. 交付基线 = 三批归档提交 `d8038ee`/`77ed693`/`4091c91`（固定锚点，不随账本自身提交变化）；当前 HEAD 以 `git log` / `git rev-parse HEAD` 为准，工作树无已跟踪 diff；
 9. `npm test` 307/307，`engineMatchesFile: true`，`valuesMatch: true`。
