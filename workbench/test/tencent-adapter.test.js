@@ -363,3 +363,47 @@ test('review 修复 写值步骤标 multiChunk/chunkCount，chunks 为完整负�
   assert.equal(covered, 1 + 12, 'chunks 覆盖全部行（1 表头 + 12 数据），无静默丢失');
 });
 
+// ================= 票 #39（Slice 2 / S6）：未验证类型闸门 + 请求体物化回归（验证既有、不加产品行为） =================
+//  - AC1/AC3 未验证类型闸门：真实计划含 date 列（写入形态未验证）时拒绝真跑 + 显式开关放行；
+//    两 adapter 的开关命名与 #28/README 既定一致（--allow-unverified-types），不新造语义。
+//  - AC2/AC3 请求体物化：gridData.rows 的 [{values:[{cellValue}]}] 形状、序列化无裸数组、
+//    materialize() 对 {fileId}/{sheetId}/{range} 的 body 替换——由 materialize-body.test.js（票 #28）
+//    专测并复用；本文件原有的 AC2 写值请求体形状断言亦继续守住，此处不重复。
+const TS39 = require('../scripts/tencent-adapter');
+
+test('#39 AC1/AC3 腾讯未验证类型闸门：真实计划含 date 列默认拒绝真跑、显式开关放行', async function () {
+  const orig = T.buildTencentPlan;
+  const table = {
+    primaryKey: '姓名', columns: ['姓名', '入职日'],
+    types: { 姓名: 'text', 入职日: 'date' },
+    rows: [{ 姓名: '阿岚', 入职日: '2020-01-01' }]
+  };
+  // 1) 真实计划（不 monkeypatch）：date 写入形态未验证 → plan.unverifiedTypes 非空。
+  const plan = T.buildTencentPlan(table, { title: 't' });
+  assert.equal(plan.ok, true);
+  assert.ok(plan.unverifiedTypes.some(function (u) { return u.field === '入职日'; }), 'date 列应进 unverifiedTypes');
+
+  const saved = { token: process.env.TENCENT_ACCESS_TOKEN, id: process.env.TENCENT_CLIENT_ID, oid: process.env.TENCENT_OPEN_ID };
+  process.env.TENCENT_ACCESS_TOKEN = 'tok'; process.env.TENCENT_CLIENT_ID = 'cid'; process.env.TENCENT_OPEN_ID = 'oid';
+  try {
+    const refused = await TS39.runLive(table, 't', false);
+    assert.equal(refused.ok, false, '含未验证形态的 live 应拒绝');
+    assert.equal(refused.refused, true, '应标记 refused');
+    assert.ok(refused.unverifiedTypes.some(function (u) { return u.field === '入职日'; }), '拒绝回包应列出未验证字段');
+    assert.ok(/--allow-unverified-types/.test(refused.error), '提示应给出确切开关名');
+
+    // 2) 显式确认开关：注入空步骤计划让放行分支止于「计划未走到读回」，不触网，证明开关真能放行。
+    T.buildTencentPlan = function () {
+      return { ok: true, steps: [], unverifiedTypes: [{ field: '入职日', type: 'date', note: '造数据' }], range: 'A1:B2' };
+    };
+    const allowed = await TS39.runLive(table, 't', true);
+    assert.notEqual(allowed.refused, true, 'allow=true 时不应被闸门拒绝');
+    assert.match(allowed.error, /计划未走到读回/, '绕过闸门后应继续执行到无步骤末端');
+  } finally {
+    T.buildTencentPlan = orig;
+    if (saved.token === undefined) delete process.env.TENCENT_ACCESS_TOKEN; else process.env.TENCENT_ACCESS_TOKEN = saved.token;
+    if (saved.id === undefined) delete process.env.TENCENT_CLIENT_ID; else process.env.TENCENT_CLIENT_ID = saved.id;
+    if (saved.oid === undefined) delete process.env.TENCENT_OPEN_ID; else process.env.TENCENT_OPEN_ID = saved.oid;
+  }
+});
+

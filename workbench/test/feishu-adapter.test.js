@@ -14,6 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const E = require('../lib/engine');
 const F = require('../lib/feishu-adapter');
+const ScriptMod = require('../scripts/feishu-adapter');
 
 // ---- AC1：四步链路请求计划（建表 → 加字段 → 写记录 → 读回），复用票 #5 实测形状 ----
 test('AC1 从 extract 配方 + 主表结构生成飞书请求计划（换token/建表/加字段/写记录/读回 五段，共 7 步）', function () {
@@ -116,7 +117,6 @@ test('MEDIUM 修复：未知/缺失类型不静默降级为 text——记 error 
 test('MEDIUM 修复：--live 在含未验证数字码时默认拒绝真跑（不静默发 magic number）', function () {
   // 五类码现已一手核实，真实建表计划不再产生 unverifiedTypes；此测试用单元级注入验证
   // 「护栏本身仍在」：若某计划携带了未验证码，runLive 必须在联网前 refused。
-  const ScriptMod = require('../scripts/feishu-adapter');
   const orig = F.buildFeishuPlan;
   F.buildFeishuPlan = function () {
     return { ok: true, steps: [], unverifiedTypes: [{ field: '实验列', type: 'text', code: 99, note: '造数据：未验证码' }] };
@@ -244,4 +244,63 @@ test('AC4 可复现脚本 scripts/feishu-adapter.js --stub 端到端跑通并读
     { 姓名: '阿岚', 工时: 8, 时薪: 100 },
     { 姓名: '柏舟', 工时: 10, 时薪: 80 }
   ], '脚本读回应与写入一致');
+});
+
+// ================= 票 #39（Slice 2 / S6）：未验证类型闸门 + 请求体物化回归（验证既有、不加产品行为） =================
+// 本票复用既有 seam 把两条真实故障路径钉死，不改产品代码：
+//  - AC1/AC3 未验证类型闸门：默认拒绝真跑 + 显式 --allow-unverified-types 绕过；
+//    开关命名与 #28/README 既定一致，不新造语义。
+//  - AC2/AC3 请求体物化：materialize() 对 body 做 bodyFrom 注入 / 形状保留（gridData.rows 的
+//    [{values:[{cellValue}]}] 形状与占位替换由 materialize-body.test.js（票 #28）专测，此处复用不重复）。
+
+test('#39 AC1/AC3 飞书未验证类型闸门：默认拒绝真跑、显式 --allow-unverified-types 才绕过', async function () {
+  const orig = F.buildFeishuPlan;
+  // 五类码现已一手核实，真实计划不再产生 unverifiedTypes；注入一条模拟“未验证数字码”计划，
+  // steps 置空使绕过分支止于「计划未走到读回」，不触网。
+  F.buildFeishuPlan = function () {
+    return { ok: true, steps: [], unverifiedTypes: [{ field: '实验列', type: 'text', code: 99, note: '造数据：未验证码' }] };
+  };
+  const savedId = process.env.FEISHU_APP_ID, savedSecret = process.env.FEISHU_APP_SECRET;
+  process.env.FEISHU_APP_ID = 'stub-id'; process.env.FEISHU_APP_SECRET = 'stub-secret';
+  const table = { primaryKey: '姓名', columns: ['姓名'], types: { 姓名: 'text' }, rows: [] };
+  try {
+    const refused = await ScriptMod.runLive(table, 't', false);
+    assert.equal(refused.ok, false, '含未验证类型的 live 应拒绝');
+    assert.equal(refused.refused, true, '应标记 refused');
+    assert.equal(refused.unverifiedTypes.length, 1, '应列出未验证字段');
+    assert.ok(/--allow-unverified-types/.test(refused.error), '提示应给出确切开关名（命名与规格一致）');
+    // 显式确认开关：同一计划允许后不再走 refused 分支（证明开关真能放行，非只是提示文案）。
+    const allowed = await ScriptMod.runLive(table, 't', true);
+    assert.notEqual(allowed.refused, true, 'allow=true 时不应被闸门拒绝');
+    assert.match(allowed.error, /计划未走到读回/, '绕过闸门后应继续执行到无步骤末端');
+  } finally {
+    F.buildFeishuPlan = orig;
+    if (savedId === undefined) delete process.env.FEISHU_APP_ID; else process.env.FEISHU_APP_ID = savedId;
+    if (savedSecret === undefined) delete process.env.FEISHU_APP_SECRET; else process.env.FEISHU_APP_SECRET = savedSecret;
+  }
+});
+
+test('#39 AC2/AC3 飞书 materialize() 对 body 物化：换token 注入真实凭据、写记录保留 records 形状', function () {
+  const table = {
+    primaryKey: '姓名', columns: ['姓名', '工时'],
+    types: { 姓名: 'text', 工时: 'number' },
+    rows: [{ 姓名: '阿岚', 工时: 8 }]
+  };
+  const plan = F.buildFeishuPlan(table, { appName: 'probe' });
+  assert.equal(plan.ok, true);
+  const ctx = { creds: { FEISHU_APP_ID: 'real-id', FEISHU_APP_SECRET: 'real-secret' }, appToken: 'at', tableId: 'tbl', tenantToken: 'tkn' };
+
+  // 换token 步骤：bodyFrom 应注入真实凭据值，不得残留契约字段名（占位名）当值。
+  const tokenStep = plan.steps.filter(function (s) { return s.bodyFrom; })[0];
+  assert.ok(tokenStep, '应存在 bodyFrom 换token 步骤');
+  const tokenReq = ScriptMod.materialize(tokenStep, ctx);
+  assert.equal(tokenReq.body.app_id, 'real-id', 'app_id 应注入真实值');
+  assert.equal(tokenReq.body.app_secret, 'real-secret', 'app_secret 应注入真实值');
+  assert.ok(!/FEISHU_APP_ID|FEISHU_APP_SECRET/.test(JSON.stringify(tokenReq.body)), 'body 不得残留凭据字段名当占位值');
+
+  // 写记录步骤：body 形状原样保留（records[].fields），不被物化破坏成裸结构。
+  const writeStep = plan.steps.filter(function (s) { return s.step === '写记录'; })[0];
+  const writeReq = ScriptMod.materialize(writeStep, ctx);
+  assert.ok(Array.isArray(writeReq.body.records), '写记录 body 应保留 records 数组');
+  assert.deepEqual(writeReq.body.records[0].fields, { 姓名: '阿岚', 工时: 8 }, 'records[].fields 单元格值应原样保留');
 });
