@@ -91,21 +91,48 @@ test('dedupe：走完整 reduce 管线 SET_INPUT→UNDERSTAND→PREVIEW 正确�
   assert.ok(s.preview.cells.every(function (c) { return c.col !== '姓名'; }));
 });
 
-// 已知限制（如实记录，非伪造）：applyCells 以「主键值」为行键，且 `rows.filter(...)[0]`
-// 只取**第一条**匹配行。当主键本身重复（正是去重要处理的场景）时，它会命中同键的第一行
-// =**被保留的那一行**，把保留行清空、却把真正该清的重复行留下——即清错了行。
-// 这是 cell-diff 模型与「去重」语义的固有张力：本 demo 的 preview 是正确的，
-// 但 applyCells 对重复主键无「按行索引定位」能力。物理去重需宿主层按行索引删/改行。
-// 下面这条测试把该限制钉死，防止未来有人误以为本 demo 已能安全落地重复主键去重。
-test('dedupe（限制）：applyCells 按主键值取首条匹配行，重复主键时会清错行（清掉被保留行、留下重复行）', function () {
+test('dedupe：CONFIRM 后重复主键去重正确落地（保留首条、清空重复行，不波及保留行）', function () {
+  let s = E.initial(DATA);
+  s = E.reduce(s, { type: 'SET_INPUT', text: '按姓名去重' });
+  s = E.reduce(s, { type: 'UNDERSTAND' });
+  s = E.reduce(s, { type: 'PREVIEW' });
+  s = E.reduce(s, { type: 'CONFIRM' });
+  // 行数不变（清空而非物理删行）。
+  assert.equal(s.rows.length, 5);
+  const alans = s.rows.filter(function (r) { return r.姓名 === '阿岚'; });
+  // 首条阿岚保留原值。
+  assert.equal(alans[0].部门, '销售');
+  assert.equal(alans[0].工号, 'A1');
+  // 重复阿岚被清空非主键列。
+  assert.equal(alans[1].部门, '');
+  assert.equal(alans[1].工号, '');
+  // 柏舟同样：首条保留、重复清空。
+  const bais = s.rows.filter(function (r) { return r.姓名 === '柏舟'; });
+  assert.equal(bais[0].部门, '技术');
+  assert.equal(bais[1].部门, '');
+  // 无重复的岑溪完全不动。
+  assert.equal(s.rows.find(function (r) { return r.姓名 === '岑溪'; }).工号, 'C1');
+});
+
+// 回归：applyCells 现在优先按行索引（cell.rowIndex）精确定位，重复主键也能清对行。
+test('applyCells 按行索引精确定位：重复主键只清空指定重复行、保留首行', function () {
   let s = E.initial({
     primaryKey: '姓名', columns: ['姓名', '部门'],
     rows: [{ 姓名: '阿岚', 部门: '销售' }, { 姓名: '阿岚', 部门: '销售' }]
   });
   const pv = E.preview(s, E.buildDraft('dedupe', '按姓名去重', { 保留策略: '首条' }));
-  // preview 只打算清空第二行（1 格），保留首行。
   assert.equal(pv.cells.length, 1);
   const applied = E.applyCells(s, pv.cells);
-  // 但 applyCells 按主键值「阿岚」取首条匹配行 = 被保留的首行 → 首行被清空、第二行原样保留（清错了行）。
-  assert.deepEqual(applied.rows.map(function (r) { return r.部门; }), ['', '销售']);
+  // 现在清对行：首行（保留行）不动，第二行（重复行）被清空。
+  assert.deepEqual(applied.rows.map(function (r) { return r.部门; }), ['销售', '']);
+});
+
+// 向后兼容：无 rowIndex 的旧 cells（宿主持久化/外部构造）仍按主键值定位。
+test('applyCells 向后兼容：cells 无 rowIndex 时仍按主键值定位', function () {
+  const s = E.initial({
+    primaryKey: '姓名', columns: ['姓名', '部门'],
+    rows: [{ 姓名: '甲', 部门: 'x' }, { 姓名: '乙', 部门: 'y' }]
+  });
+  const applied = E.applyCells(s, [{ row: '乙', col: '部门', before: 'y', after: 'z' }]);
+  assert.deepEqual(applied.rows.map(function (r) { return r.部门; }), ['x', 'z']);
 });

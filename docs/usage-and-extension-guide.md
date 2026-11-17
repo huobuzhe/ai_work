@@ -354,7 +354,7 @@ npm run test:capability    # 能力位矩阵
 
 ## 附：完整走一遍第六节——`dedupe`（按主键去重）最小 demo
 
-这是按[第六节](#六二次开发加一个新功能)真实落地的一份**可运行示例**（已并入本仓库：`lib/engine.js` 新增 `dedupe` 动作、`test/dedupe.test.js` 7 例全绿、全量 `npm test` 314/314、两个 acceptance 仍绿）。可作为你加新功能时的照抄模板。
+这是按[第六节](#六二次开发加一个新功能)真实落地的一份**可运行示例**（已并入本仓库：`lib/engine.js` 新增 `dedupe` 动作 + `applyCells` 行索引寻址、`test/dedupe.test.js` 9 例全绿、全量 `npm test` 316/316、两个 acceptance 仍绿）。可作为你加新功能时的照抄模板。
 
 ### 落地了哪几处改动
 
@@ -364,16 +364,17 @@ npm run test:capability    # 能力位矩阵
 | `lib/engine.js` 的 `stepsFor` | 加 `dedupe` 分支，如实描述"按主键分组、每组保留一条、其余清空" |
 | `lib/engine.js` 的 `understand` | 关键词加 `去重|重复|dedupe|唯一`，让一句话能识别成 `dedupe` |
 | `lib/engine.js` 的 `preview` | 加 `dedupe` 分支：按主键分组，保留策略决定保留组内首/末条，其余重复行的**非主键可见列**清空（`add(...)` 产格） |
-| `test/dedupe.test.js` | 新增 7 例（见下） |
+| `lib/engine.js` 的 `add` + `applyCells` | `add()` 产出的每个 cell 追加 `rowIndex`（行在 `state.rows` 的下标）；`applyCells()` **优先按 `rowIndex` 精确定位**，无有效值回落按主键值（向后兼容） |
+| `test/dedupe.test.js` | 新增 9 例（见下） |
 
 **注意**：`validate()` 无需改——它从 `paramSpec` 自动派生校验，demo 的"枚举值"约束自动生效。这正是"声明对 paramSpec，校验就免费"的体现。
 
 ### 关键设计取舍（值得你记住的两点）
 
 1. **"去重"= 清空重复行的非主键列，不是物理删行**。因为 `applyCells()` 只写单元格值、不提供删行动作。清空可见列是纯 seam 包内最小的可跑形态；物理删行需宿主层按行索引操作。
-2. **`applyCells` 对重复主键有固有局限（如实钉死）**：它以主键值为行键、`rows.filter(...)[0]` 只取首条匹配行。当主键本身重复时，它会**清错行**（清掉被保留的首行、留下重复行）。demo 用一个专门的测试把这个局限钉死（`test/dedupe.test.js` 第 7 例），**绝不假装它能安全落地重复主键去重**。这也是给后来者的警示：想让去重真正落地，得给 `applyCells` 增加"按行索引"的目标寻址能力。
+2. **cell 从「按主键值寻址」升级为「按行索引寻址」（行索引优先、主键值兜底）**。最初 `applyCells` 以主键值为行键、`rows.filter(...)[0]` 只取首条匹配行，主键重复时会**清错行**（清掉被保留的首行、留下重复行）。修法：`add()` 给每个 cell 记 `rowIndex`（该行在 `state.rows` 的下标），`applyCells()` 优先用它精确定位、无有效值再回落主键值。这样**重复主键也能清对行**，同时**不改旧行为**（宿主持久化/外部构造的旧 cells 无 `rowIndex` → 仍按主键值走）。这是一次"加深模块、向后兼容"的典型改动：接口加一个可选字段，落地逻辑按优先级分派。
 
-### 7 个测试分别钉什么
+### 9 个测试分别钉什么
 
 1. `KINDS.dedupe` 声明存在、带 typed `paramSpec`（`保留策略` 枚举两值）。
 2. `buildDraft` 默认参数由 `paramSpec` 派生（默认 `首条`）、`validate` 通过。
@@ -381,7 +382,9 @@ npm run test:capability    # 能力位矩阵
 4. 保留末条：清空每组首条（保留组内最后一条）。
 5. 无重复时零命中（`affectedRows=0`、`cells=[]`，合法）。
 6. 走完整 `reduce` 管线 `SET_INPUT→UNDERSTAND→PREVIEW`，正确识别并产出预览。
-7. **限制固化**：`applyCells` 按主键值取首条匹配行，重复主键时清错行（如实记录，非伪造）。
+7. **CONFIRM 正确落地**：重复主键去重后保留首条、清空重复行、不波及保留行。
+8. **行索引精确定位**：`applyCells` 按 `rowIndex` 只清空指定重复行、保留首行。
+9. **向后兼容**：`cells` 无 `rowIndex` 时仍按主键值定位（旧数据不破）。
 
 ### 你可以照着做的清单（把 `dedupe` 换成你的动作名）
 

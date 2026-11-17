@@ -876,7 +876,12 @@ function preview(state, draft) {
   // 票 #13：add 带 source（改动来源）。cells 只含「将改的格子」，未命中行不产格子，
   // 命中/未命中的区分由结构化 disclosure.swappedRows/unchangedRows 承载（不再设恒真的 hit 字段）。
   const add = function (row, col, before, after, invalid, source) {
-    cells.push({ row: String(row[pk]), col, before, after, invalid: !!invalid, source: source || draft.kind });
+    // 行索引寻址（去重等需要精确到「第几行」而非「主键值等于什么」的动作）：
+    // 记录该行在 state.rows 中的下标。applyCells 优先用它精确定位（重复主键也能清对行）；
+    // 无 index 命中（row 不是 state.rows 里的同一对象）时回落按主键值定位，向后兼容。
+    const rowIndex = state.rows.indexOf(row);
+    cells.push({ row: String(row[pk]), col, before, after, invalid: !!invalid, source: source || draft.kind,
+      rowIndex: rowIndex === -1 ? undefined : rowIndex });
   };
   const scopeCond = p.scope === 'match' ? parseCondition(p.条件, state) : null;
   const inScope = function (r) { return !scopeCond || matches(r, scopeCond); };
@@ -973,7 +978,13 @@ function applyCells(state, cells) {
   cells.forEach(function (c) { if (columns.indexOf(c.col) === -1) columns.push(c.col); });
   const rows = state.rows.map(function (r) { return Object.assign({}, r); });
   cells.forEach(function (c) {
-    const target = rows.filter(function (r) { return String(r[pk]) === c.row; })[0];
+    // 优先按行索引精确定位（重复主键也能清对行）；无有效 rowIndex 时回落按主键值定位（向后兼容）。
+    const byIndex = (typeof c.rowIndex === 'number' && c.rowIndex >= 0 && c.rowIndex < rows.length)
+      ? rows[c.rowIndex]
+      : null;
+    const target = byIndex && String(byIndex[pk]) === c.row
+      ? byIndex
+      : rows.filter(function (r) { return String(r[pk]) === c.row; })[0];
     if (target) target[c.col] = c.after;
   });
   return { columns: columns, rows: rows };
