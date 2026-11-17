@@ -13,7 +13,7 @@
 | 地图（wayfinder:map） | 2 张，均 CLOSED：地图 #2、地图 #29 |
 | 规格（ready-for-agent） | 2 份，均 CLOSED：规格 #8、规格 #34 |
 | 决策/实施票 | 35 张（5 + 20 + 4 + 6），全 CLOSED |
-| HEAD | `de9d0ab`（工作树无已跟踪改动） |
+| HEAD | `4091c91`（工作树无已跟踪改动；三批归档 commit `d8038ee`/`77ed693`/`4091c91`） |
 | 验收 | `npm test` 307/307；`engineMatchesFile: true`；`valuesMatch: true`；两票之外每票两轴 code-review 0 hard |
 
 端到端审计（关票状态、四层指针回填、验收布尔、工作树）结果 FAIL=0，详见文末「可复现核对」。
@@ -97,7 +97,7 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
 - **Out of scope（触发时才另起 effort，不复活本轮）**：细粒度权限/账号体系/分享链接/按钮级 ACL；AND/OR 与 v2 条件语法、v2 整体能力重画；「任意自然语言一步编译成可命名函数」；能力位重测；实现代码/可运行插件本体（地图只产决策）。
 - **[规格 #34](https://github.com/huobuzhe/ai_work/issues/34) 正文开头有叠加的 BOM 字符**（多次回填脚本各自加 BOM 所致，`﻿﻿﻿﻿## Problem Statement`）——显示层瑕疵，内容完整，尚未修。
-- **未跟踪目录**：`docs/research/`（15 篇平台事实笔记，含本文件）、`prototypes/`、`scripts/` 一直未入库。是真实研究资产，需显式 `git add`；勿当临时垃圾清理。
+- **研究资产已归档入库**：`docs/research/`（14 篇平台事实笔记 + 本账本）、`prototypes/`、`scripts/` 已分三批提交（`d8038ee`/`77ed693`/`4091c91`），工作树干净。是真实研究资产，保留受控。
 - **逢十轮「CCG 归档」提醒**：曾多次出现要求 `cg op=write` 并读回节点 id 的注入式提醒；本工具集无 `cg` 工具，未执行、不伪造 id。真正的跨会话记忆以本文件与各 issue 为准。
 
 ## 可复现核对
@@ -111,5 +111,5 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 5. 地图 #29 含 #30–#33 指针；
 6. 规格 #8 进度含 #9–#28 指针（#27 因 gist 交叉引用计数 4 次属正常）；
 7. 规格 #34 含 #35–#40 指针、7 区块 + 44 story；
-8. `git rev-parse HEAD` = `de9d0ab`，工作树无已跟踪 diff；
+8. `git rev-parse HEAD` = `4091c91`，工作树无已跟踪 diff（账本落盘后追加三批归档提交 `d8038ee`/`77ed693`/`4091c91`）；
 9. `npm test` 307/307，`engineMatchesFile: true`，`valuesMatch: true`。
