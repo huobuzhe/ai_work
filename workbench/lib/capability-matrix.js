@@ -94,6 +94,7 @@ Object.keys(CELL_META).forEach(function (id) {
         bit: bit,
         minCase: MIN_CASE,
         verdict: adapter.formulaCapabilities[bit] ? 'true' : 'false', // ← 单一真相源：engine
+        evidenceStatus: adapter.formulaEvidenceStatus[bit], // ← 单一真相源：engine（三维证据状态）
         runnable: m.runnable,
         evidence: m.evidence,
         failingStep: m.failingStep
@@ -195,7 +196,14 @@ function isEmptyCell(v) {
   return false;
 }
 
+// 三维证据状态合法值（来自 engine 单一真相源）。
+const VALID_EVIDENCE_STATUS = [E.EVIDENCE_STATUS.VERIFIED_TRUE, E.EVIDENCE_STATUS.VERIFIED_FALSE, E.EVIDENCE_STATUS.UNVERIFIED_DEFAULT_FALSE];
+
 // 断言/自检：任何一格 verdict=true 必须 runnable=true（不能靠文档/链路事实冒充真跑通过）。
+// 票 #35：再加一层「结论 ⟺ 证据状态」双射校验——
+//   verdict=true  ⟹ evidenceStatus=verified-true（真跑四格全过才可能 true）；
+//   verdict=false ⟹ evidenceStatus∈{verified-false,unverified-default-false}（一手负面或文档未验证）；
+//   缺失/非法 evidenceStatus 一律拒绝（防漂移：禁止无状态或乱写状态蒙混）。
 // 遍历实际 PROBES 的所有 key（含测试临时注入的），而非写死的 ADAPTER_IDS，保证基建对被测数据全覆盖。
 function assertNoUnbackedTrue(probes) {
   const table = probes || PROBES;
@@ -210,6 +218,15 @@ function assertNoUnbackedTrue(probes) {
       if (!c.evidence) {
         throw new Error('能力位断言违规：' + id + '/' + c.bit + ' 缺 evidence 链接');
       }
+      if (VALID_EVIDENCE_STATUS.indexOf(c.evidenceStatus) === -1) {
+        throw new Error('能力位断言违规：' + id + '/' + c.bit + ' evidenceStatus 缺失或非法（必须是三值枚举之一）');
+      }
+      if (c.verdict === 'true' && c.evidenceStatus !== E.EVIDENCE_STATUS.VERIFIED_TRUE) {
+        throw new Error('能力位断言违规：' + id + '/' + c.bit + ' 记 true 但 evidenceStatus 非 verified-true（无真跑不得记 true）');
+      }
+      if (c.verdict === 'false' && c.evidenceStatus === E.EVIDENCE_STATUS.VERIFIED_TRUE) {
+        throw new Error('能力位断言违规：' + id + '/' + c.bit + ' 记 false 但 evidenceStatus=verified-true（结论与证据状态漂移）');
+      }
     });
   });
   return true;
@@ -222,7 +239,7 @@ function getMatrix() {
   return ADAPTER_IDS.map(function (id) {
     const p = PROBES[id];
     const cells = {};
-    p.cells.forEach(function (c) { cells[c.bit] = { verdict: c.verdict, runnable: c.runnable, evidence: c.evidence, failingStep: c.failingStep || null, evidenceLive: c.evidenceLive ? Object.assign({}, c.evidenceLive) : null }; });
+    p.cells.forEach(function (c) { cells[c.bit] = { verdict: c.verdict, evidenceStatus: c.evidenceStatus, runnable: c.runnable, evidence: c.evidence, failingStep: c.failingStep || null, evidenceLive: c.evidenceLive ? Object.assign({}, c.evidenceLive) : null }; });
     return { adapterId: id, label: p.label, cells: cells };
   });
 }
@@ -259,11 +276,20 @@ function renderMarkdown(opts) {
     const ov = override[id] || {};
     const cells = CAPABILITY_BITS.map(function (bit) {
       const c = p.cells.find(function (x) { return x.bit === bit; });
-      const verdict = Object.prototype.hasOwnProperty.call(ov, bit)
-        ? (ov[bit] ? 'true' : 'false')
-        : c.verdict;
-      let s = verdict;
-      if (verdict === 'false' && c.failingStep) s += '（' + c.failingStep + '）';
+      const overridden = Object.prototype.hasOwnProperty.call(ov, bit);
+      const verdict = overridden ? (ov[bit] ? 'true' : 'false') : c.verdict;
+      // 证据状态必须随 verdict 走：降级覆盖把 verified-true 的本地位翻成 false 后，
+      // 若仍印 verified-true 就得到 false[verified-true]——正是加载期守卫拒绝的自相矛盾态。
+      // 真跑降级为 false 是「一手负面」（本次真跑没过），故显示 verified-false 并补失败步骤；
+      // 反方向（覆盖翻成 true）本就不允许，静态 c.verdict 与 evidenceStatus 保持不变。
+      let status = c.evidenceStatus;
+      let failing = c.failingStep;
+      if (overridden && verdict === 'false' && status === E.EVIDENCE_STATUS.VERIFIED_TRUE) {
+        status = E.EVIDENCE_STATUS.VERIFIED_FALSE;
+        failing = failing || '本会话真跑降级：该位未能通过最小用例';
+      }
+      let s = verdict + '[' + status + ']';
+      if (verdict === 'false' && failing) s += '（' + failing + '）';
       s += ' · ' + c.evidence;
       if (c.runnable && verdict === 'true') s += ' · [本会话真跑]';
       if (c.evidenceLive) s += ' · [持凭据实测佐证 ' + c.evidenceLive.ranAt + '：' + (c.evidenceLive.chainOk ? '链路通、公式位结构不支持' : '链路失败') + ']';

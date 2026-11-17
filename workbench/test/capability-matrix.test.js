@@ -107,6 +107,15 @@ test('AC4 renderMarkdown 可接受降级后的能力位覆盖，落盘产物如�
   assert.equal((localLine.match(/\[本会话真跑\]/g) || []).length, 2, '降级两个 true 后只剩两个真跑标记');
 });
 
+test('#35 AC4 降级覆盖不得渲染出自相矛盾的 false[verified-true]（该态加载期会被守卫拒绝）', function () {
+  const override = { local: { canRecalc: false } };
+  const md = M.renderMarkdown({ capabilities: override });
+  const localLine = md.split('\n').filter(function (l) { return l.indexOf(M.PROBES.local.label) !== -1; })[0];
+  // 降级位 verdict 变 false，证据状态必须同步落到非 verified-true，绝不印出自相矛盾的 false[verified-true]。
+  assert.ok(localLine.indexOf('false[verified-true]') === -1, '降级位不得渲染 false[verified-true]（守卫会拒绝该态）');
+  assert.ok(/false\[(verified-false|unverified-default-false)\]/.test(localLine), '降级位应显示 false + 非 verified-true 的证据状态');
+});
+
 // ---- AC4：落盘矩阵产物与当前渲染一致（漂移守卫）----
 // 落盘产物可以携带「持凭据实测佐证」标注（由真跑回填，只在提交的产物里存在），
 // 但表结构/能力位/证据/失败步骤这些静态部分必须与 renderMarkdown() 一致。
@@ -133,4 +142,76 @@ test('AC5 本地 Excel 探针真跑四格全过（=C2*D2 写存活 + 重算值�
   // 结果与声明的 local 四格 true 一致
   const declared = M.formulaCapabilitiesFromMatrix('local');
   M.CAPABILITY_BITS.forEach(function (b) { assert.equal(r[b], declared[b], 'local/' + b + ' 真跑结果应与声明一致'); });
+});
+
+// ---- #35 / 规格 #34：三维证据状态枚举（唯一净新增 seam）----
+// seam：capability-matrix 数据视图（getMatrix/PROBES/assertNoUnbackedTrue）。
+// 钉住：三值枚举、布尔与证据状态一致、只认 verified-true、自检拦无证据/漂移、实测佐证不翻结论。
+const EVIDENCE_STATUS_VALID = Object.values(E.EVIDENCE_STATUS);
+
+function cellOf(id, bit) {
+  return M.PROBES[id].cells.find(function (c) { return c.bit === bit; });
+}
+
+test('#35 AC1 每格带三值证据状态枚举，且 verdict 与证据状态一致（仅 verified-true 为真）', function () {
+  M.ADAPTER_IDS.forEach(function (id) {
+    M.PROBES[id].cells.forEach(function (c) {
+      assert.ok(EVIDENCE_STATUS_VALID.indexOf(c.evidenceStatus) !== -1, id + '/' + c.bit + ' evidenceStatus 必须是三值枚举之一：' + c.evidenceStatus);
+      if (c.verdict === 'true') {
+        assert.equal(c.evidenceStatus, 'verified-true', id + '/' + c.bit + ' verdict=true 必须 evidenceStatus=verified-true');
+      } else {
+        assert.notEqual(c.evidenceStatus, 'verified-true', id + '/' + c.bit + ' verdict=false 不得标 verified-true');
+      }
+    });
+  });
+});
+
+test('#35 AC1 三态分布钉死：local 四格 verified-true / 腾讯三格 verified-false + functionSet 未验证 / 飞书四格未验证', function () {
+  M.CAPABILITY_BITS.forEach(function (b) { assert.equal(cellOf('local', b).evidenceStatus, 'verified-true', 'local/' + b); });
+  ['canWriteFormula', 'canRecalc', 'canReadComputed'].forEach(function (b) {
+    assert.equal(cellOf('tencent', b).evidenceStatus, 'verified-false', 'tencent/' + b + ' 一手负面已验证');
+  });
+  assert.equal(cellOf('tencent', 'functionSet').evidenceStatus, 'unverified-default-false', 'tencent/functionSet 未见官方清单，保守记 false');
+  M.CAPABILITY_BITS.forEach(function (b) { assert.equal(cellOf('feishu', b).evidenceStatus, 'unverified-default-false', 'feishu/' + b + ' 文档层未验证+豁免'); });
+});
+
+test('#35 AC4 造一个「记 true 但证据状态非 verified-true」的漂移格会被 assertNoUnbackedTrue 拒绝', function () {
+  const bad = { x: { adapterId: 'x', label: 'x', cells: [{ bit: 'canWriteFormula', minCase: M.MIN_CASE, verdict: 'true', runnable: true, evidence: 'u', evidenceStatus: 'unverified-default-false' }] } };
+  assert.throws(function () { M.assertNoUnbackedTrue(bad); }, /verified-true/);
+});
+
+test('#35 AC4 缺 evidenceStatus 或填非法值的格会被 assertNoUnbackedTrue 拒绝', function () {
+  const missing = { x: { adapterId: 'x', label: 'x', cells: [{ bit: 'canWriteFormula', minCase: M.MIN_CASE, verdict: 'false', runnable: false, evidence: 'u', failingStep: 's' }] } };
+  assert.throws(function () { M.assertNoUnbackedTrue(missing); }, /evidenceStatus/);
+  const illegal = { x: { adapterId: 'x', label: 'x', cells: [{ bit: 'canWriteFormula', minCase: M.MIN_CASE, verdict: 'false', runnable: false, evidence: 'u', failingStep: 's', evidenceStatus: 'maybe-true' }] } };
+  assert.throws(function () { M.assertNoUnbackedTrue(illegal); }, /evidenceStatus/);
+});
+
+test('#35 AC4 持凭据实测佐证只加厚证据，不翻动 verdict 与 evidenceStatus', function () {
+  const before = M.getMatrix();
+  try {
+    M.recordLiveEvidence('feishu', { ok: true }, { ranAt: '2026-01-01T00:00:00.000Z' });
+    const after = M.getMatrix();
+    ['local', 'feishu', 'tencent'].forEach(function (id) {
+      M.CAPABILITY_BITS.forEach(function (b) {
+        assert.equal(after.find(function (r) { return r.adapterId === id; }).cells[b].verdict,
+          before.find(function (r) { return r.adapterId === id; }).cells[b].verdict, id + '/' + b + ' verdict 不应被实测佐证翻动');
+        assert.equal(after.find(function (r) { return r.adapterId === id; }).cells[b].evidenceStatus,
+          before.find(function (r) { return r.adapterId === id; }).cells[b].evidenceStatus, id + '/' + b + ' evidenceStatus 不应被实测佐证翻动');
+      });
+    });
+    assert.ok(cellOf('feishu', 'canWriteFormula').evidenceLive, '飞书格应挂上实测佐证');
+  } finally {
+    M.PROBES.feishu.cells.forEach(function (c) { delete c.evidenceLive; });
+  }
+});
+
+test('#35 AC1 getMatrix 暴露每格 evidenceStatus，renderMarkdown 逐格标注三态', function () {
+  M.getMatrix().forEach(function (row) {
+    Object.keys(row.cells).forEach(function (b) {
+      assert.ok(EVIDENCE_STATUS_VALID.indexOf(row.cells[b].evidenceStatus) !== -1, row.adapterId + '/' + b + ' getMatrix 应暴露 evidenceStatus');
+    });
+  });
+  const md = M.renderMarkdown();
+  EVIDENCE_STATUS_VALID.forEach(function (s) { assert.ok(md.indexOf(s) !== -1, '矩阵 Markdown 应标注证据状态 ' + s); });
 });

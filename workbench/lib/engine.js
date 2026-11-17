@@ -83,6 +83,18 @@ const COMMON_PARAMS = [
 // 不含任何可执行函数（本引擎不在此处做 I/O；真实读写的文件桥/HTTP 在 scripts/ 与后续 S3/S4）。
 // ============================================================================
 
+// 三维证据状态枚举（票 #35 / 规格 #34）：能力位除 binary 结论外，再带一个「证据状态」+ 一手来源。
+//  - verified-true：真跑四格全过（仅 local，acceptance:formula valuesMatch:true）。
+//  - verified-false：一手负面已验证（腾讯三格：无公式字段/无重算接口/无读计算值接口）。
+//  - unverified-default-false：文档层未验证 / 使用者豁免，按共识 ⑲ 保守记 false（飞书四格 + 腾讯 functionSet）。
+// 不变量：只有 evidenceStatus === verified-true 且布尔结论为真时动作才解锁；其余一律禁用 + 预览提示。
+// 绝不因「链路能建表」或「使用者豁免」就把未验证位重测成 true；不提供 opt-in 覆盖开关。
+const EVIDENCE_STATUS = Object.freeze({
+  VERIFIED_TRUE: 'verified-true',
+  VERIFIED_FALSE: 'verified-false',
+  UNVERIFIED_DEFAULT_FALSE: 'unverified-default-false'
+});
+
 // 统一表格操作接口的四类能力名（纯声明，供文档/校验/后续 adapter 实装对齐用）。
 const ADAPTER_INTERFACE = ['读表', '写单元格', '建表', '读回计算值'];
 
@@ -103,6 +115,10 @@ const ADAPTERS = {
     label: '本地 Excel（零凭据）',
     capabilities: { 读表: true, 写单元格: true, 建表: true, 读回计算值: true },
     formulaCapabilities: { canWriteFormula: true, canRecalc: true, canReadComputed: true, functionSet: true },
+    formulaEvidenceStatus: {
+      canWriteFormula: EVIDENCE_STATUS.VERIFIED_TRUE, canRecalc: EVIDENCE_STATUS.VERIFIED_TRUE,
+      canReadComputed: EVIDENCE_STATUS.VERIFIED_TRUE, functionSet: EVIDENCE_STATUS.VERIFIED_TRUE
+    },
     evidence: '仓内实测：function 公式字符串产物 + LibreOffice recalculate + xlsx_bridge.py read-values 闭环（acceptance:formula，valuesMatch:true）。'
   },
   feishu: {
@@ -110,13 +126,21 @@ const ADAPTERS = {
     label: '飞书多维表格 / 电子表格',
     capabilities: { 读表: true, 写单元格: true, 建表: true, 读回计算值: false },
     formulaCapabilities: { canWriteFormula: false, canRecalc: false, canReadComputed: false, functionSet: false },
-    evidence: '按文档层 false：飞书开放平台未见写公式/重算/读计算值的一手接口（docs/research/cloud-capability-matrix.md）。'
+    formulaEvidenceStatus: {
+      canWriteFormula: EVIDENCE_STATUS.UNVERIFIED_DEFAULT_FALSE, canRecalc: EVIDENCE_STATUS.UNVERIFIED_DEFAULT_FALSE,
+      canReadComputed: EVIDENCE_STATUS.UNVERIFIED_DEFAULT_FALSE, functionSet: EVIDENCE_STATUS.UNVERIFIED_DEFAULT_FALSE
+    },
+    evidence: '按文档层 false：飞书开放平台未见写公式/重算/读计算值的一手接口（docs/research/cloud-capability-matrix.md）；使用者豁免 Step7/8/9，能力位零实测。'
   },
   tencent: {
     id: 'tencent',
     label: '腾讯文档在线表格',
     capabilities: { 读表: true, 写单元格: true, 建表: true, 读回计算值: false },
     formulaCapabilities: { canWriteFormula: false, canRecalc: false, canReadComputed: false, functionSet: false },
+    formulaEvidenceStatus: {
+      canWriteFormula: EVIDENCE_STATUS.VERIFIED_FALSE, canRecalc: EVIDENCE_STATUS.VERIFIED_FALSE,
+      canReadComputed: EVIDENCE_STATUS.VERIFIED_FALSE, functionSet: EVIDENCE_STATUS.UNVERIFIED_DEFAULT_FALSE
+    },
     evidence: '一手负面已验证：V3 batchUpdate 的 CellValue 无公式字段、无重算接口、无读计算值接口（docs/research/cloud-capability-matrix.md、tencent-v3-batchupdate-request-shape.md）。'
   }
 };
@@ -129,17 +153,28 @@ function adapterOf(state) {
   return ADAPTERS[id] ? ADAPTERS[id] : ADAPTERS[DEFAULT_ADAPTER];
 }
 
+// 纯函数：某 adapter 的某能力位是否「解锁」——只有布尔结论为真且证据状态为 verified-true 才解锁。
+// 恰好两个参数 (adapterId, bit)，不提供第三参数做强制解锁（无 opt-in 覆盖口）。
+// 布尔为真但证据状态非 verified-true（漂移）/任何非解锁态，一律返回 false（禁用 + 预览提示由 blocker 负责）。
+function isCapabilityUnlocked(adapterId, bit) {
+  const adapter = ADAPTERS[adapterId];
+  if (!adapter) return false;
+  return adapter.formulaCapabilities[bit] === true
+    && adapter.formulaEvidenceStatus && adapter.formulaEvidenceStatus[bit] === EVIDENCE_STATUS.VERIFIED_TRUE;
+}
+
 // 纯函数：给定配方草稿 draft 与 state，返回被当前 adapter 能力位挡下的 blocker 列表。
 // 每项 { cap, need, reason }；空数组 = 无阻塞（该动作在当前 adapter 可用）。
 // 只有依赖公式能力位的动作（function）可能被挡；结构化动作永远返回 []。
+// 解锁判据统一走 isCapabilityUnlocked（verified-true 才放行），杜绝只看布尔结论就放行的漂移。
 function capabilityBlockersOf(draft, state) {
   if (!draft || !draft.kind) return [];
   const deps = KIND_CAPABILITY_DEPS[draft.kind];
   if (!deps) return [];
-  const fc = adapterOf(state).formulaCapabilities;
+  const adapterId = adapterOf(state).id;
   const out = [];
   deps.forEach(function (d) {
-    if (fc[d.cap] === false) out.push({ cap: d.cap, need: d.need, reason: d.reason });
+    if (!isCapabilityUnlocked(adapterId, d.cap)) out.push({ cap: d.cap, need: d.need, reason: d.reason });
   });
   return out;
 }
@@ -1206,7 +1241,7 @@ module.exports = {
   TYPE_ENUM, TYPE_MAP, UPLOAD_WHITELIST, DEFAULT_PRIMARY_KEY,
   validateManifest, checkUpload, validateRows, detectConflicts, createTable,
   COMMON_PARAMS, deriveIssues,
-  ADAPTERS, ADAPTER_INTERFACE, KIND_CAPABILITY_DEPS, DEFAULT_ADAPTER,
-  adapterOf, capabilityBlockers: capabilityBlockersOf,
+  ADAPTERS, ADAPTER_INTERFACE, KIND_CAPABILITY_DEPS, DEFAULT_ADAPTER, EVIDENCE_STATUS,
+  adapterOf, isCapabilityUnlocked, capabilityBlockers: capabilityBlockersOf,
   CREDENTIAL_CONTRACTS, validateCredentials
 };

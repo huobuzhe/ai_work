@@ -179,3 +179,66 @@ test('initial 保留传入的合法 adapter（id 不变）；非法 adapter 回�
   assert.equal(bad.noteTone, 'warn');
   assert.ok(typeof bad.note === 'string' && bad.note.length > 0, '非法 adapter 应有提示文案');
 });
+
+// ---- #35 / 规格 #34：三维证据状态枚举支撑的解锁判据（引擎 seam）----
+// seam：lib/engine.js 的 adapter 声明 + isCapabilityUnlocked + capabilityBlockers。
+// 钉住：三值枚举导出、仅 verified-true 解锁、无 opt-in 绕过口、非解锁态一律 blocker+提示。
+const EVIDENCE_STATUS_ALL = Object.values(E.EVIDENCE_STATUS);
+
+test('#35 AC1 引擎导出三值证据状态枚举 EVIDENCE_STATUS（冻结常量）', function () {
+  const S = E.EVIDENCE_STATUS;
+  assert.ok(S, 'E.EVIDENCE_STATUS 应导出');
+  assert.equal(S.VERIFIED_TRUE, 'verified-true');
+  assert.equal(S.VERIFIED_FALSE, 'verified-false');
+  assert.equal(S.UNVERIFIED_DEFAULT_FALSE, 'unverified-default-false');
+  assert.equal(Object.isFrozen(S), true, 'EVIDENCE_STATUS 应被冻结（不可在运行时改写三值）');
+});
+
+test('#35 AC1 三个 adapter 各自声明 formulaEvidenceStatus 四格且值合法', function () {
+  ['local', 'feishu', 'tencent'].forEach(function (id) {
+    const m = E.ADAPTERS[id].formulaEvidenceStatus;
+    assert.ok(m, id + ' 缺 formulaEvidenceStatus');
+    CAP_KEYS.forEach(function (k) {
+      assert.ok(EVIDENCE_STATUS_ALL.indexOf(m[k]) !== -1, id + '.' + k + ' 证据状态非法：' + m[k]);
+    });
+  });
+});
+
+test('#35 AC2 isCapabilityUnlocked 恰好两个参数（无 opt-in 覆盖口）', function () {
+  assert.equal(typeof E.isCapabilityUnlocked, 'function', '应导出纯函数 isCapabilityUnlocked');
+  assert.equal(E.isCapabilityUnlocked.length, 2, 'isCapabilityUnlocked 应只接 (adapterId, bit)，不接受强制解锁参数');
+});
+
+test('#35 AC2 只有 verified-true 解锁：local 四格全解锁', function () {
+  CAP_KEYS.forEach(function (k) {
+    assert.equal(E.isCapabilityUnlocked('local', k), true, 'local.' + k + ' 应解锁');
+  });
+});
+
+test('#35 AC2 非 verified-true 一律不解锁：飞书四格未验证、腾讯三格负面+一格未验证', function () {
+  ['feishu', 'tencent'].forEach(function (id) {
+    CAP_KEYS.forEach(function (k) {
+      assert.equal(E.isCapabilityUnlocked(id, k), false, id + '.' + k + ' 不应解锁');
+    });
+  });
+});
+
+test('#35 AC2 布尔为真但证据状态非 verified-true 的漂移 adapter 仍不解锁', function () {
+  const saved = E.ADAPTERS.local.formulaEvidenceStatus;
+  try {
+    E.ADAPTERS.local.formulaEvidenceStatus = Object.assign({}, saved, { canWriteFormula: 'unverified-default-false' });
+    assert.equal(E.isCapabilityUnlocked('local', 'canWriteFormula'), false, '布尔真但状态非 verified-true 不得解锁');
+  } finally {
+    E.ADAPTERS.local.formulaEvidenceStatus = saved;
+  }
+});
+
+test('#35 AC2 capabilityBlockers 走解锁判据：现有三 adapter 行为不回归且提示点名能力位', function () {
+  assert.deepEqual(E.capabilityBlockers(E.buildDraft('function', null, {}), mkState('local')), [], 'local function 无 blocker');
+  ['feishu', 'tencent'].forEach(function (id) {
+    const bs = E.capabilityBlockers(E.buildDraft('function', null, {}), mkState(id));
+    assert.ok(bs.length > 0, id + ' function 应有 blocker');
+    assert.ok(bs.some(function (b) { return b.cap === 'canWriteFormula'; }), id + ' blocker 应点名 canWriteFormula');
+    assert.ok(bs.every(function (b) { return typeof b.reason === 'string' && b.reason.length > 0; }), id + ' blocker 应带原因提示');
+  });
+});
