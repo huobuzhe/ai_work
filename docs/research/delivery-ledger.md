@@ -1,6 +1,6 @@
 # 交付账本（Delivery Ledger）
 
-> 快照时间：2026-11-17（Asia/Shanghai）。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
+> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
 > 用途：两个 effort 收官后的最终清单与唯一 backlog，供后续会话/接手人直接查阅，不必重跑清点。
 
 ## 全局状态
@@ -15,7 +15,7 @@
 | 决策/实施票 | 35 张（5 + 20 + 4 + 6），全 CLOSED |
 | 仓库根 README | `README.md`，commit `b44244b`（单页，5/5 人工验收全过） |
 | HEAD | 不在此追记 hash——账本写自身仓库 HEAD 会陷入自指：每次为更新它而提交都会让 hash 再过期一次。**交付基线**为三批归档提交 `d8038ee`/`77ed693`/`4091c91`（固定、不再变）；此后当前 HEAD 一律以 `git log` / `git rev-parse HEAD` 为准。工作树无已跟踪改动。 |
-| 验收 | `npm test` 307/307；`engineMatchesFile: true`；`valuesMatch: true`；两票之外每票两轴 code-review 0 hard |
+| 验收 | `npm test` 全绿（**计数以 `npm test` 实际输出为准，不在此写死**，见 README 反腐化纪律）；`engineMatchesFile: true`；`valuesMatch: true`；两票之外每票两轴 code-review 0 hard |
 
 端到端审计（关票状态、四层指针回填、验收布尔、工作树）结果 FAIL=0，详见文末「可复现核对」。
 
@@ -93,6 +93,28 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 ---
 
+## 交付后增量（基线之后、2026-11-18 补记）
+
+> 交付基线（三批归档提交 `4091c91`）之后，仓库继续演进。本节把此后的实质交付补进账本，避免「账本落后真实仓库」。此段之后仍以 `git log` 为准。
+
+**已推送远端**：此前 52 个本地提交从未推到 `origin/master`（issue 关票走 `gh` API 本就同步，故只有 git 历史滞后）。2026-11-18 已 `git push` 推送（本机 git 直连 https 遇 DNS 解析失败，用 `git -c http.family=ipv4 push` 解决并 `git config http.family ipv4` 持久化）。
+
+| 主题 | commit | 要点 |
+| --- | --- | --- |
+| applyCells 行索引寻址 | `6bfa0ea` | `add()` 产格追加 `rowIndex`；`applyCells()` 优先按 `rowIndex` 精确定位、无则回落按主键值（向后兼容）。修复重复主键去重会误伤保留行的隐患。`test/dedupe.test.js` 9 例钉住 |
+| dedupe 最小扩展示例 | `173a885` | `KINDS.dedupe`（`保留策略` 首条/末条）+ stepsFor/understand/preview 分支；`docs/usage-and-extension-guide.md` 附 worked example。是「如何加一个新动作」的活样板 |
+| dedupe 预置按钮 | `73e82e9` | `workbench/registry/preset-dedupe-by-name.json` 预置按钮；`load-registry.js` → total:3 ok:true，`test/registry.test.js` 25/25 |
+| 使用与二次开发指南 | `e805c4c` | `docs/usage-and-extension-guide.md`（355 行，10 节 + worked example） |
+| 对外交付报告 | `15fd241` | `docs/delivery-report.md`（57 行，可对外分享） |
+| 仓库根 README | `b44244b` | `README.md`（26 行，#1 交付物，见上节） |
+| 账本收尾三连 | `e224fdd`/`4c744a6`/`d35a7f4`/`402faae`/`68dab70` | README 交付同步、description 边界修订、BOM 瑕疵标记、HEAD 固定锚点、研究资产入库校正 |
+
+**本次新增交付（2026-11-18，未提交时补记）：**
+
+- **详细使用手册** `docs/usage-guide.md`：从「怎么打开（3 种方式）」到「每个按钮/动作逐步用法」到「新增动作 checklist」，每步不省；含已实跑验证的命令示例（五步流程、固化、预览快照生成）。
+- **界面预览面板** `workbench/preview/index.html`（生成脚本 `workbench/scripts/build-preview.js`，npm `build:preview`）：用真实 `lib/engine.js` + `client/index.js` 投影，把「预览卡六段 + 按钮库」渲染成自包含静态 HTML（零外部依赖、6 张示例卡）。解决「面板本体只能挂宿主、无独立可视化」的盲区；双击即可看面板长相。
+- **补客户端面板测试** `workbench/test/panel-projection.test.js`（10 例）：逐段钉住 `projectPreviewCard` 六段投影、校验失败卡、飞书禁用卡、`projectButtonLibrary` 双来源合并/空态/向后兼容——补齐 `panel-smoke.test.js` 仅覆盖「注册 + 一个 happy path」的盲区。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
@@ -114,4 +136,4 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 6. 规格 #8 进度含 #9–#28 指针（#27 因 gist 交叉引用计数 4 次属正常）；
 7. 规格 #34 含 #35–#40 指针、7 区块 + 44 story；
 8. 交付基线 = 三批归档提交 `d8038ee`/`77ed693`/`4091c91`（固定锚点，不随账本自身提交变化）；当前 HEAD 以 `git log` / `git rev-parse HEAD` 为准，工作树无已跟踪 diff；
-9. `npm test` 307/307，`engineMatchesFile: true`，`valuesMatch: true`。
+9. `npm test` 全绿（计数以实际输出为准，不写死），`engineMatchesFile: true`，`valuesMatch: true`。

@@ -18,6 +18,7 @@
     "test",
     "registry",
     "templates",
+    "preview",
     "cordis.patch.yml",
     "README.md",
     "SMOKE.md",
@@ -34,7 +35,8 @@
     "acceptance": "node scripts/acceptance-run.js",
     "acceptance:formula": "node scripts/acceptance-formula.js",
     "test:capability": "node --test test/capability-matrix.test.js",
-    "capability:probe": "node scripts/capability-probe.js --run-local --write-matrix"
+    "capability:probe": "node scripts/capability-probe.js --run-local --write-matrix",
+    "build:preview": "node scripts/build-preview.js"
   },
   "engines": {
     "node": ">=22"
