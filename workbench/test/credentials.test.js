@@ -9,6 +9,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const E = require('../lib/engine');
+const FS = require('../scripts/feishu-adapter');
+const TS = require('../scripts/tencent-adapter');
 
 // 仅用于校验路径的假值 stub（绝不写入仓库/日志/issue）。
 const STUB = {
@@ -147,4 +149,91 @@ test('tencent 声明刷新专用字段 CLIENT_SECRET / REFRESH_TOKEN（与 feish
   assert.ok(tr && Array.isArray(tr.fields), 'tencent 应声明 tokenRefresh.fields');
   assert.ok(tr.fields.indexOf('TENCENT_CLIENT_SECRET') !== -1, '应声明 TENCENT_CLIENT_SECRET');
   assert.ok(tr.fields.indexOf('TENCENT_REFRESH_TOKEN') !== -1, '应声明 TENCENT_REFRESH_TOKEN');
+});
+
+// ============================================================================
+// 票 #36（Slice 2 / S6）：飞书优先 + 两套独立凭据契约核验（验证既有、不加产品行为）。
+// #22 已钉凭据字段/注入/失效/错误映射四要素；本票补 #22 未覆盖的三条回归护栏：
+//  1. 凭据负担不对称（飞书低门槛 / 腾讯 OAuth2 + 刷新）——这是「第一梯队」在代码里的
+//     唯一体现。平台优先级本身与证据事实（飞书 code:0 读回 2x2、腾讯 建表 ret:0 /
+//     写读豁免 / OAuth2+scope 审核 / 三元组头 / V2 deprecated）记在规格 #34 与调研 note，
+//     非代码常量，不在本票测试范围。
+//  2. 三组错误码（飞书 / 腾讯 V2 / 腾讯 V3）互不串用。
+//  3. runLive 缺本机凭据明确拒绝（早返回不联网、不静默重跑）。
+// 范围说明：AC3「凭据失效→可读预览提示 + 禁用动作」目前无运行时 seam
+// （validateCredentials 未接入 buildPreview，errorMap 运行时不消费），加此行为属产品
+// 改动、本票范围外；「真实值零入库 / 不回显」由 #22 的 sentinel 用例钉死。
+// 全部断言针对既有实现，不改产品代码。
+// ============================================================================
+
+// ---- AC1：凭据负担不对称（飞书低门槛 vs 腾讯 OAuth2 + 刷新）----
+test('#36 AC1 凭据负担不对称：飞书刷新复用必填字段；腾讯需额外 OAuth2 刷新字段', function () {
+  const f = E.CREDENTIAL_CONTRACTS.feishu;
+  const t = E.CREDENTIAL_CONTRACTS.tencent;
+  assert.equal(f.fields.length, 3, '飞书 3 个必填字段');
+  assert.equal(f.tokenRefresh, undefined, '飞书刷新复用必填 app_id/app_secret，无额外刷新字段');
+  assert.ok(/FEISHU_APP_ID/.test(f.expiry.refresh), '飞书刷新用必填的 app_id（低门槛）');
+  assert.ok(/FEISHU_APP_SECRET/.test(f.expiry.refresh), '飞书刷新用必填的 app_secret（低门槛）');
+  assert.ok(t.tokenRefresh && t.tokenRefresh.fields.length === 2,
+    '腾讯需 OAuth2 刷新专用字段（client_secret/refresh_token），门槛更高');
+  assert.ok(/REFRESH_TOKEN/.test(t.expiry.refresh), '腾讯刷新走 refresh_token');
+  assert.ok(t.fields.length + t.tokenRefresh.fields.length > f.fields.length,
+    '腾讯总凭据字段多于飞书（门槛更高）');
+});
+
+// ---- AC2：三组失效映射互不串用（飞书 / 腾讯 V2 / 腾讯 V3）----
+test('#36 AC2 三组错误码互不串用：飞书码 / 腾讯 V2 码 / 腾讯 V3 码无交集', function () {
+  const feishuCodes = Object.keys(E.CREDENTIAL_CONTRACTS.feishu.errorMap);
+  const tencentV2 = Object.keys(E.CREDENTIAL_CONTRACTS.tencent.errorMap);
+  const tencentV3 = Object.keys(E.CREDENTIAL_CONTRACTS.tencent.v3ErrorMap);
+  const groups = { '飞书': feishuCodes, '腾讯V2': tencentV2, '腾讯V3': tencentV3 };
+  const names = Object.keys(groups);
+  for (let i = 0; i < names.length; i++) {
+    for (let j = i + 1; j < names.length; j++) {
+      const overlap = groups[names[i]].filter(function (k) { return groups[names[j]].indexOf(k) !== -1; });
+      assert.deepEqual(overlap, [], names[i] + ' 与 ' + names[j] + ' 错误码不应串用：' + overlap.join(','));
+    }
+  }
+  // 一手码各归其位，防被挪到别家表
+  assert.ok(feishuCodes.indexOf('99991663') !== -1, '99991663 归飞书 tenant token');
+  assert.ok(tencentV2.indexOf('37019') !== -1, '37019 归腾讯 V2 token 校验');
+  assert.ok(tencentV3.indexOf('400006') !== -1, '400006 归腾讯 V3 鉴权');
+});
+
+// ---- AC3：runLive 缺凭据明确拒绝（不静默重跑、早返回不联网）----
+// 注：真实值「不回显」由 #22 的 sentinel 用例钉死；这里凭据全删，无值可回显，
+// 故只断言「明确拒绝 + 可读提示 + 报字段名」，标题不再声称覆盖不回显。
+test('#36 AC3 飞书 runLive 缺本机凭据：明确拒绝并报字段，不静默', async function () {
+  const keys = ['FEISHU_APP_ID', 'FEISHU_APP_SECRET'];
+  const saved = {};
+  keys.forEach(function (k) { saved[k] = process.env[k]; delete process.env[k]; });
+  try {
+    const table = { primaryKey: '姓名', columns: ['姓名'], types: { 姓名: 'text' }, rows: [] };
+    const r = await FS.runLive(table, 't', false);
+    assert.equal(r.ok, false, '缺凭据必须拒绝，不得静默继续');
+    assert.ok(/缺本机凭据环境变量/.test(r.error), '应给可读提示');
+    assert.ok(/FEISHU_APP_ID/.test(r.error));
+    assert.ok(/FEISHU_APP_SECRET/.test(r.error));
+    assert.ok(/凭据绝不入库/.test(r.error));
+  } finally {
+    keys.forEach(function (k) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; });
+  }
+});
+
+test('#36 AC3 腾讯 runLive 缺本机凭据：明确拒绝并报三头字段，不静默', async function () {
+  const keys = ['TENCENT_ACCESS_TOKEN', 'TENCENT_CLIENT_ID', 'TENCENT_OPEN_ID'];
+  const saved = {};
+  keys.forEach(function (k) { saved[k] = process.env[k]; delete process.env[k]; });
+  try {
+    const table = { primaryKey: '姓名', columns: ['姓名'], types: { 姓名: 'text' }, rows: [] };
+    const r = await TS.runLive(table, 't', false);
+    assert.equal(r.ok, false, '缺凭据必须拒绝，不得静默继续');
+    assert.ok(/缺本机凭据环境变量/.test(r.error), '应给可读提示');
+    assert.ok(/TENCENT_ACCESS_TOKEN/.test(r.error));
+    assert.ok(/TENCENT_CLIENT_ID/.test(r.error));
+    assert.ok(/TENCENT_OPEN_ID/.test(r.error));
+    assert.ok(/凭据绝不入库/.test(r.error));
+  } finally {
+    keys.forEach(function (k) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; });
+  }
 });
