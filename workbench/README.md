@@ -41,6 +41,20 @@ function 重算用 bundled LibreOffice Kit CLI（非系统 soffice）：默认�
 
 无第三方依赖：测试只用 Node 内置 `node:test` + `node:vm`；文件读写只用本机 Python + openpyxl。本仓无 TypeScript 编译器，全包为纯 JS，类型安全以 `node --check` 语法检查代替（无 tsc，不伪造 typecheck）。
 
+## 回归清单：#27 五轮实测坑 → #28 固化（勿随意删）
+
+来源：票 [#27](https://github.com/huobuzhe/ai_work/issues/27)持真实凭据跑「建表→写值→读回」时连续暴露、已修的五类 bug，由票 [#28](https://github.com/huobuzhe/ai_work/issues/28)固化成回归。这几类坑一旦复发会在 `npm test` 阶段被钉住——删/改这些用例前先读本段，别当成多余的形状快照清掉。
+
+| 坑（真实故障现象） | 修复 commit | 钉在哪个测试 |
+| --- | --- | --- |
+| 写值回包判据：`responses[].updateRangeResponse.updatedCells > 0` 才算成功，0 / 缺 responses / 业务错 / 非 200 一律失败；兼容 `data.responses` 与根级 `responses` 两种形状 | `4908c94` | `test/tencent-adapter.test.js` → `classifyWriteResponse` 回归 |
+| 读回内容判据：从 `gridData.rows[].values[].cellValue` 抽值，`nonEmpty===0` 判「链路通但数据未落盘」为失败；官方空单元格 `{text:""}` 不计入非空 | `4908c94` + `a2ea6b5` | `test/tencent-adapter.test.js` → `classifyReadResponse` 回归 |
+| 请求体形状：`gridData.rows` 必须是 `[{values:[{cellValue}]}]`（RowData 形状），序列化后**不得**出现 `"rows":[[{` 裸数组（断言序列化产物，不只断言对象结构） | `34c6347` | `test/tencent-adapter.test.js` → 序列化级断言 |
+| body 占位符替换：`materialize()` 必须对 **body** 也做 `{fileId}/{sheetId}/{range}` 替换（此前只换 URL → 发出字面量 `{sheetId}` → `missing data not found`）；`substituteBodyPlaceholders` 只替换整串恰等于占位符的值、不误伤正文 `{}` | `1cdb9a9` | `test/materialize-body.test.js`（直断 scripts 层 `materialize`，不经 `--stub` 回放）+ `test/tencent-adapter.test.js` → `substituteBodyPlaceholders` 回归 |
+| 读回摘要剔空行：`summarizeReadBack` 对平台预置空行（`{}` / `{text:""}`）不计入数据，`nonEmptyRowCount` / `emptyRowCount` / `sample` 取真实有内容行 | `a2ea6b5` | `test/cloud-capability-probe.test.js` → `recordLiveEvidence` 读回摘要剔除空行 |
+
+盲区说明：`--stub` 走 lib 的内存回放（`runTencentPlanWithStub`），**不经过** scripts 层 `materialize`；lib 单测此前只测了 `substituteBodyPlaceholders` 纯函数，没测「`materialize` 是否真把它接进 body」。故 `test/materialize-body.test.js` 是对该盲区的端到端直断，不可省。
+
 ## 边界（Slice 1 / 票 #9、#11、#12、#13、#14、#15、#16、#10）
 
 - 零云凭据：不涉及飞书 / 腾讯 / Microsoft Graph。函数计算由本地 LibreOffice 重算，不调用任何云 API。
