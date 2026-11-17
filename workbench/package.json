@@ -4,10 +4,11 @@
   "private": true,
   "description": "表格工作台：把建表与日常繁琐表格操作收进按钮与输入框（第一刀=本地 Excel 零凭据闭环）。规格 #8 / 票 #9。",
   "type": "commonjs",
-  "main": "lib/engine.js",
+  "main": "lib/index.mjs",
   "exports": {
     ".": "./lib/engine.js",
     "./engine": "./lib/engine.js",
+    "./host": "./lib/index.mjs",
     "./client": "./client/client.js",
     "./package.json": "./package.json"
   },
