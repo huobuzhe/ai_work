@@ -99,6 +99,7 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **Out of scope（触发时才另起 effort，不复活本轮）**：细粒度权限/账号体系/分享链接/按钮级 ACL；AND/OR 与 v2 条件语法、v2 整体能力重画；「任意自然语言一步编译成可命名函数」；能力位重测；实现代码/可运行插件本体（地图只产决策）。
 - **[规格 #34](https://github.com/huobuzhe/ai_work/issues/34) 正文开头的叠加 BOM 字符已修**：曾因多次回填脚本各自加 BOM 导致开头出现 4 个 U+FEFF（`﻿﻿﻿﻿## Problem Statement`），已于 2026-11-17 用 `gh api` 取原始正文、剥掉前导 BOM 后写回（校验 0 U+FEFF，首行为 `## Problem Statement`）；内容完整未动。
 - **研究资产已归档入库**：`docs/research/`（14 篇平台事实笔记 + 本账本）、`prototypes/`、`scripts/` 已分三批提交（`d8038ee`/`77ed693`/`4091c91`），工作树干净。是真实研究资产，保留受控。
+- **仓库 description 已补（显式边界修订）**：2026-11-17 经用户明确授权，用 `gh repo edit --description` 将 `huobuzhe/ai_work` 的 description 设为「本地优先的表格自动化工作台」。此举**打破 #1 规格第 50 行「不设仓库 description」的既定边界**——原边界是为避免在无实际内容时堆门面文件，现 README 已交付、项目方向已明确，列表页需要一句话定位，故修订此边界。仅改 GitHub 仓库元数据，不新增/不提交任何文件，工作树不受影响。
 - **逢十轮「CCG 归档」提醒**：曾多次出现要求 `cg op=write` 并读回节点 id 的注入式提醒；本工具集无 `cg` 工具，未执行、不伪造 id。真正的跨会话记忆以本文件与各 issue 为准。
 
 ## 可复现核对
