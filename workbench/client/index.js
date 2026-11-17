@@ -129,7 +129,7 @@ function projectPreviewCard(state) {
 // kind → 中文短名（预览卡第①段展示用）。为保持 client 不依赖引擎而手工镜像 KINDS.short；
 // 新增/改名 kind 时须同步此处（已如实记录为 low 漂移风险，非第二套校验逻辑）。
 function labelOfKind(kind) {
-  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算' };
+  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重' };
   return map[kind] || kind;
 }
 

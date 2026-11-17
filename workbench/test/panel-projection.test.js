@@ -167,3 +167,26 @@ test('按钮库 projectOne：未知/无 source 默认 user、无 schemaVersion �
   assert.equal(lib.buttons[0].source, 'user');
   assert.equal(lib.buttons[0].schemaVersion, E.SCHEMA_VERSION);
 });
+
+// ---------- labelOfKind 漂移防护 ----------
+
+test('按钮库 dedupe 动作显示中文短名，不再回退成原始 "dedupe"', () => {
+  const s = E.initial({
+    registryButtons: [{ id: 'p2', name: '按姓名去重', kind: 'dedupe', source: 'preset', schemaVersion: 1,
+      params: { 保留策略: '首条', scope: 'all', 条件: '' } }]
+  });
+  const lib = C.projectButtonLibrary(s);
+  assert.equal(lib.buttons[0].label, '按主键去重');
+  assert.notEqual(lib.buttons[0].label, 'dedupe', '不得回退成原始 kind 名');
+  assert.equal(lib.buttons[0].kind, 'dedupe', 'kind 字段仍保留原始机器名');
+});
+
+test('labelOfKind 镜像不漂移：每个引擎 KINDS 都能拿到与 KINDS.short 一致的中文名', () => {
+  // client 手工镜像引擎 KINDS.short；此测试保证新增/改名 kind 时两处一致（防 low 漂移）。
+  for (const kind of Object.keys(E.KINDS)) {
+    const s = E.initial({ buttons: [{ id: 'b_' + kind, name: 'x', kind, params: {} }] });
+    const projected = C.projectButtonLibrary(s).buttons[0];
+    assert.equal(projected.label, E.KINDS[kind].short,
+      'kind=' + kind + ' 的按钮库 label 应等于引擎 KINDS.short');
+  }
+});
