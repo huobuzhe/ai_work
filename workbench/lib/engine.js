@@ -55,6 +55,17 @@ const KINDS = {
       { key: '表达式', 类型: '表达式', 必填: true, 默认值: '工时 * 时薪', 约束: { translatable: true } },
       { key: '输出列', 类型: '列名', 必填: true, 默认值: '应发', 约束: { newColumn: true } }
     ]
+  },
+  // ⑤ dedupe（最小扩展示例，见 docs/usage-and-extension-guide.md 第六节）：
+  // 按主键去重——保留策略（首条/末条）保留一条，其余重复行的可见列清空。
+  // 诚实边界：applyCells 只写单元格值、不物理删行，故「去重」= 把重复行清空（不是删行）；
+  // 这是纯 seam 包内最小可跑的形态，物理删行需宿主层提供删行动作、不在本 demo 范围。
+  dedupe: {
+    label: '⑤ 按主键去重', short: '按主键去重',
+    medium: '结构化动作：按主键保留一条、清空其余重复行',
+    paramSpec: [
+      { key: '保留策略', 类型: '枚举', 必填: true, 默认值: '首条', 约束: { enum: ['首条', '末条'] } }
+    ]
   }
 };
 
@@ -605,6 +616,11 @@ function stepsFor(kind, p) {
     '按每行的列位置换成 A1 引用（列来自表头、行来自记录序）',
     '公式写进新列「' + p.输出列 + '」，计算交给本地引擎重算后读回缓存值'
   ];
+  if (kind === 'dedupe') return [
+    scopeStep,
+    '按主键把记录分组',
+    '每组只保留「' + p.保留策略 + '」，其余重复组的可见列清空'
+  ];
   return [];
 }
 function explanationFor(kind, p, sentence) {
@@ -682,6 +698,7 @@ function understand(sentence) {
   else if (/调换|交换|互换|对调/.test(s)) kind = 'swap';
   else if (/条件|大于|小于|超过|删掉|清空|标记|标注|加班/.test(s)) kind = 'conditional';
   else if (/计算|乘|函数|公式|算成|求和|[*+]/.test(s)) kind = 'function';
+  else if (/去重|重复|dedupe|唯一/.test(s)) kind = 'dedupe';
   if (!kind) return { error: '没匹配到任何一种功能（本版只是关键词匹配，不是真 LLM）' };
   return { kind: kind, sentence: s };
 }
@@ -909,6 +926,29 @@ function preview(state, draft) {
       // 产物是公式字符串（不是 JS 算出的数值）；计算交给 LibreOffice 重算后读回缓存值。
       const formula = toFormula(p.表达式, state, ri);
       add(r, p.输出列, beforeOf(state, r, p.输出列), formula || '', !formula, 'function');
+    });
+  } else if (draft.kind === 'dedupe') {
+    // ⑤ 按主键去重（最小扩展示例）：按主键分组，保留策略（首条/末条）保留一条，
+    // 其余重复行的「非主键可见列」清空。applyCells 只写单元格值、不物理删行——诚实边界。
+    const keepLast = p.保留策略 === '末条';
+    // 按出现顺序分组，只保留在主键上不同值的第一/最后一条索引。
+    const seen = Object.create(null);
+    state.rows.forEach(function (r, ri) {
+      if (!inScope(r)) return;
+      const key = String(r[pk]);
+      if (seen[key] === undefined) seen[key] = [];
+      seen[key].push(ri);
+    });
+    state.rows.forEach(function (r, ri) {
+      if (!inScope(r)) return;
+      const group = seen[String(r[pk])];
+      const keepIdx = keepLast ? group[group.length - 1] : group[0];
+      if (ri === keepIdx) return; // 保留行不动
+      // 清空该重复行的所有非主键可见列（主键列保留，避免把整行变空）。
+      state.columns.forEach(function (col) {
+        if (col === pk) return;
+        add(r, col, beforeOf(state, r, col), '', false, 'dedupe');
+      });
     });
   }
   const rowSet = {};

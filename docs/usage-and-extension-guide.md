@@ -352,4 +352,50 @@ npm run test:capability    # 能力位矩阵
 
 ---
 
+## 附：完整走一遍第六节——`dedupe`（按主键去重）最小 demo
+
+这是按[第六节](#六二次开发加一个新功能)真实落地的一份**可运行示例**（已并入本仓库：`lib/engine.js` 新增 `dedupe` 动作、`test/dedupe.test.js` 7 例全绿、全量 `npm test` 314/314、两个 acceptance 仍绿）。可作为你加新功能时的照抄模板。
+
+### 落地了哪几处改动
+
+| 落点 | 改了什么 |
+| --- | --- |
+| `lib/engine.js` 的 `KINDS` | 新增 `dedupe` 一项，`paramSpec` 只有 `保留策略`（枚举 `首条`/`末条`，默认 `首条`） |
+| `lib/engine.js` 的 `stepsFor` | 加 `dedupe` 分支，如实描述"按主键分组、每组保留一条、其余清空" |
+| `lib/engine.js` 的 `understand` | 关键词加 `去重|重复|dedupe|唯一`，让一句话能识别成 `dedupe` |
+| `lib/engine.js` 的 `preview` | 加 `dedupe` 分支：按主键分组，保留策略决定保留组内首/末条，其余重复行的**非主键可见列**清空（`add(...)` 产格） |
+| `test/dedupe.test.js` | 新增 7 例（见下） |
+
+**注意**：`validate()` 无需改——它从 `paramSpec` 自动派生校验，demo 的"枚举值"约束自动生效。这正是"声明对 paramSpec，校验就免费"的体现。
+
+### 关键设计取舍（值得你记住的两点）
+
+1. **"去重"= 清空重复行的非主键列，不是物理删行**。因为 `applyCells()` 只写单元格值、不提供删行动作。清空可见列是纯 seam 包内最小的可跑形态；物理删行需宿主层按行索引操作。
+2. **`applyCells` 对重复主键有固有局限（如实钉死）**：它以主键值为行键、`rows.filter(...)[0]` 只取首条匹配行。当主键本身重复时，它会**清错行**（清掉被保留的首行、留下重复行）。demo 用一个专门的测试把这个局限钉死（`test/dedupe.test.js` 第 7 例），**绝不假装它能安全落地重复主键去重**。这也是给后来者的警示：想让去重真正落地，得给 `applyCells` 增加"按行索引"的目标寻址能力。
+
+### 7 个测试分别钉什么
+
+1. `KINDS.dedupe` 声明存在、带 typed `paramSpec`（`保留策略` 枚举两值）。
+2. `buildDraft` 默认参数由 `paramSpec` 派生（默认 `首条`）、`validate` 通过。
+3. 保留首条：清空每个重复组第二条及以后的非主键列（受影响 2 行、4 格、不碰主键列）。
+4. 保留末条：清空每组首条（保留组内最后一条）。
+5. 无重复时零命中（`affectedRows=0`、`cells=[]`，合法）。
+6. 走完整 `reduce` 管线 `SET_INPUT→UNDERSTAND→PREVIEW`，正确识别并产出预览。
+7. **限制固化**：`applyCells` 按主键值取首条匹配行，重复主键时清错行（如实记录，非伪造）。
+
+### 你可以照着做的清单（把 `dedupe` 换成你的动作名）
+
+```text
+1. KINDS 里加 { label, short, medium, paramSpec:[...] }        ← 参数用带类型声明
+2. 若依赖公式能力 → KIND_CAPABILITY_DEPS 加依赖；否则不加
+3. stepsFor 加分支（如实描述步骤）
+4. understand 加关键词（若希望一句话可识别）
+5. preview 加分支：用 add(row,col,before,after,invalid,source) 产格
+6. 写 test/<feature>.test.js（先红后绿），断言 cells/affectedRows/invalid
+7. npm test + npm run acceptance + npm run acceptance:formula 全绿
+8. workbench/README.md 边界段补一段 + （可选）registry/ 加预置按钮
+```
+
+---
+
 _本文档由仓库当前状态（`workbench/` `dsh-workbench@0.1.0`，HEAD 见 `git rev-parse HEAD`）整理；函数签名与行号以源码为准，改动后请同步更新本文。_
