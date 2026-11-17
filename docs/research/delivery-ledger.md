@@ -8,11 +8,12 @@
 | 项 | 值 |
 | --- | --- |
 | issue 总数 | 40 |
-| CLOSED | 39 |
-| OPEN | 1（[仓库 README：项目方向未定，先固化边界共识](https://github.com/huobuzhe/ai_work/issues/1)，`needs-info`，搁置） |
+| CLOSED | 40（**全部关闭**，含 [仓库 README](https://github.com/huobuzhe/ai_work/issues/1)，2026-11-17 交付并关闭） |
+| OPEN | 0 |
 | 地图（wayfinder:map） | 2 张，均 CLOSED：地图 #2、地图 #29 |
-| 规格（ready-for-agent） | 2 份，均 CLOSED：规格 #8、规格 #34 |
+| 规格（ready-for-agent） | 3 份，均 CLOSED：规格 #8、规格 #34、[仓库 README](https://github.com/huobuzhe/ai_work/issues/1) |
 | 决策/实施票 | 35 张（5 + 20 + 4 + 6），全 CLOSED |
+| 仓库根 README | `README.md`，commit `b44244b`（单页，5/5 人工验收全过） |
 | HEAD | 不在此追记 hash——账本写自身仓库 HEAD 会陷入自指：每次为更新它而提交都会让 hash 再过期一次。**交付基线**为三批归档提交 `d8038ee`/`77ed693`/`4091c91`（固定、不再变）；此后当前 HEAD 一律以 `git log` / `git rev-parse HEAD` 为准。工作树无已跟踪改动。 |
 | 验收 | `npm test` 307/307；`engineMatchesFile: true`；`valuesMatch: true`；两票之外每票两轴 code-review 0 hard |
 
@@ -80,15 +81,15 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 ---
 
-## 唯一 backlog：#1（搁置）
+## 最终交付：#1 仓库 README（已关闭）
 
-**[仓库 README：项目方向未定，先固化边界共识](https://github.com/huobuzhe/ai_work/issues/1)** — OPEN，`needs-info`（2026-11-17 由 `ready-for-agent` 改标，理由见 [issuecomment-6950543103](https://github.com/huobuzhe/ai_work/issues/1#issuecomment-6950543103)）。
+**[仓库 README：项目方向未定，先固化边界共识](https://github.com/huobuzhe/ai_work/issues/1)** — **CLOSED**（2026-11-17）。
 
-- **状态**：搁置，不要立即实现。改 `needs-info` 是因为原 `ready-for-agent`（「可交给 AFK agent 实现」）与票面「暂不写」自相矛盾，会误导未来 agent 直接开工；保持 OPEN 而非关闭，是因为规格写明方向明确后**直接复用本票**，另起 effort 会冲突。
-- **解除条件（票面原文）**：用户能一句话说清「这个项目是做什么的」。
-- **满足后怎么做**：直接按本规格写仓库根那一个单页说明文件——中文一页、专有名词保留英文、只写仓库相对路径与公开仓库名、允许一句开 Issue 入口但不引导 PR、验收走公开首页渲染层人工清单；不重跑 `/grill-with-docs`；`/to-tickets` 由用户手动执行。
-- **不写时**：不新增文件、不改 agent 入口与仓库级配置、不动 description / License / CONTRIBUTING；工作树保持干净。
-- **来源**：三轮 `/grill-with-docs` Q1–Q8 共识（2026-11-14）。两张地图都把它列在 Out of scope，措辞是「另一条线，不并入本地图」——effort 间边界，非判它死亡。
+- **解除经过**：曾以 `needs-info` 搁置，解除条件是「用户能一句话说清这个项目是做什么的」。2026-11-17 经一轮 `/grilling` 问答（Q1 定位 / Q2 价值 / Q3 阶段披露 / Q4 边界，均按推荐）收敛出方向句并记入 [issuecomment-1](https://github.com/huobuzhe/ai_work/issues/1)（方向句：[issuecomment-6952073942](https://github.com/huobuzhe/ai_work/issues/1#issuecomment-6952073942)），随后标签改回 `ready-for-agent`。
+- **方向句**：一个「表格自动化工作台」——把建表/填数/套公式/按条件改数据收进一键按钮，本地 Excel 零凭据可用，云端能力在规划中、尚未实测。
+- **交付物**：仓库根 `README.md`，commit `b44244b`（单页 26 行，仅此一个文件，5/5 人工验收全过；无内部术语/本机信息，诚实披露云端未实测）。
+- **收口链**：comment [issuecomment-6952234277](https://github.com/huobuzhe/ai_work/issues/1#issuecomment-6952234277) → close #1。
+- **边界落实**：读者/定位面向陌生访客不提内部工作流；中文为主；只写仓库相对路径与公开仓库名、无绝对路径/用户名/代理端口；允许一句开 Issue 入口、不引导 PR；仅动一个文件，未改 description/License/CONTRIBUTING；与 agent 入口/配置目录互不引用。
 
 ---
 
@@ -104,7 +105,7 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 本账本由一次只读审计脚本核对通过（FAIL=0），核对项：
 
-1. 容器票 #2/#29/#8/#34 全 CLOSED；
+1. 容器票 #2/#29/#8/#34 **及 #1** 全 CLOSED；
 2. #9–#28 全 CLOSED；
 3. #35–#40 全 CLOSED；
 4. 地图 #2 的 Decisions so far 含 #3–#7 + #8 指针；
