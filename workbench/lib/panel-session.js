@@ -75,6 +75,9 @@ function createSessionStore(opts) {
     }
     return registryCache;
   }
+  // per-file 状态隔离：每个 store 实例各自持有一份 Map。此前误为模块级共享 Map，
+  // 导致两个 store（不同测试/不同 profile 重置）看到同一 file key 的历史 EXECUTED state，
+  // 第一个动作被 reducer 忽略、视图仍是旧数据。改为实例级 Map 修复。
   const states = Object.create(null); // fileAbs -> engine state
 
   function key(file) { return String(file || ''); }

@@ -374,6 +374,31 @@ function renderWorkbenchPanel(hostState) {
             children: '重命名'
           }, 'ren' + i),
           jsx('button', {
+            type: 'button', 'data-wb-btn-params': b.id, title: '改参数（基于当前表重新给参数，改完强制退回预览确认）',
+            onClick: function (ev) {
+              try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {}
+              // 简单交互：逐项询问当前 kind 的参数（列名/枚举/文本）。空输入=跳过该参数。
+              try {
+                if (typeof window === 'undefined' || !window.prompt) return;
+                var next = {};
+                Object.keys(b.params || {}).forEach(function (k) {
+                  if (k === 'scope' || k === '条件') return; // scope/条件 走单独输入
+                  var cur = b.params[k];
+                  var v = window.prompt('参数「' + k + '」', cur == null ? '' : String(cur));
+                  if (v != null && String(v) !== String(cur)) next[k] = String(v);
+                });
+                var scope = window.prompt('作用范围（all=全部 / match=按条件）', b.params.scope || 'all');
+                if (scope != null && scope !== (b.params.scope || 'all')) next.scope = String(scope).trim();
+                if (String(next.scope || b.params.scope) === 'match') {
+                  var cond = window.prompt('匹配条件（单比较，如 工时 > 100）', b.params.条件 || '');
+                  if (cond != null) next['条件'] = String(cond).trim();
+                }
+                if (Object.keys(next).length) onButtonAction('params', b.id, { params: next });
+              } catch (_) {}
+            },
+            children: '改参数'
+          }, 'prm' + i),
+          jsx('button', {
             type: 'button', 'data-wb-btn-delete': b.id, title: '删除',
             onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { onButtonAction('delete', b.id); } catch (_) {} },
             children: '删除'
@@ -717,6 +742,7 @@ function registerWorkbenchPanel(ctx) {
               if (op === 'run') runAction('RUN_BUTTON', { id: id });
               else if (op === 'rename') runAction('RENAME_BUTTON', { id: id, name: (extra && extra.name) || '' });
               else if (op === 'delete') runAction('DELETE_BUTTON', { id: id });
+              else if (op === 'params') runAction('SET_BUTTON_PARAMS', { id: id, params: (extra && extra.params) || {} });
             } catch (_) {}
           };
           // 票 #52：从模板新建表格。模板清单一次拉取（/templates），点「新建」POST /create。

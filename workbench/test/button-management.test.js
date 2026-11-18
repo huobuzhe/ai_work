@@ -62,9 +62,11 @@ test('按钮管理 UI：有 onButtonAction 时每个按钮旁渲染 运行/重�
   assert.match(html, /data-wb-btn-run="b1"/);
   assert.match(html, /data-wb-btn-rename="b1"/);
   assert.match(html, /data-wb-btn-delete="b1"/);
+  assert.match(html, /data-wb-btn-params="b1"/); // 票 #54：改参数入口
   assert.match(html, /▶运行/);
   assert.match(html, /重命名/);
   assert.match(html, /删除/);
+  assert.match(html, /改参数/);
 });
 
 // ---- seam C：RUN_BUTTON 写回磁盘 ----
@@ -73,7 +75,9 @@ function makeDeps(overrides) {
   const deps = Object.assign({
     readTable: function () { return { columns: ['姓名', '工时', '职位'], rows: [{ '姓名': 'a', '工时': 80, '职位': '人' }, { '姓名': 'b', '工时': 100, '职位': '人' }] }; },
     resolveFile: function (f) { return f; },
-    applyTable: function (file, cells) { writes.push({ file: file, cells: cells }); return { ok: true, cellsWritten: cells.length }; }
+    applyTable: function (file, cells) { writes.push({ file: file, cells: cells }); return { ok: true, cellsWritten: cells.length }; },
+    // 测试隔离：内存实现，绝不读写磁盘 sidecar，避免历史残留按钮污染（此前真实 bug：脏 sidecar 让 b1 的旧参数顶替了本次固化）。
+    store: require('../lib/panel-session').createSessionStore({ loadButtons: function () { return null; }, saveButtons: function () { return true; }, loadRegistry: function () { return []; } })
   }, overrides || {});
   return { deps: deps, writes: writes };
 }
@@ -124,4 +128,39 @@ test('DELETE_BUTTON：删除后 buttons 不含该 id，不写盘', () => {
   assert.strictEqual(del.status, 200);
   assert.strictEqual(del.body.buttons.filter(function (b) { return b.id === btn.id; }).length, 0, '按钮应已删除');
   assert.strictEqual(writes.length, 0, '删除不应写盘');
+});
+
+// ---- 票 #54：改参数（SET_BUTTON_PARAMS）seam C + 派生常量 ----
+test('SET_BUTTON_PARAMS：改参数后按钮 params 更新、steps 重建、不写盘', () => {
+  const { deps, writes } = makeDeps();
+  const h = makeActionHandler(deps);
+  h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: 'p.xlsx', action: { type: 'QUICK', kind: 'swap', params: { 字段A: '姓名', 字段B: '工时', scope: 'all' } } }) });
+  h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: 'p.xlsx', action: { type: 'CONFIRM' } }) });
+  const solid = h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: 'p.xlsx', action: { type: 'SOLIDIFY', name: '对调姓名工时' } }) });
+  const btn = solid.body.buttons[0];
+  assert.strictEqual(btn.params['字段A'], '姓名', '固化按钮沿用 QUICK 的字段A=姓名');
+  writes.length = 0;
+  const upd = h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: 'p.xlsx', action: { type: 'SET_BUTTON_PARAMS', id: btn.id, params: { 字段A: '工时', 字段B: '职位' } } }) });
+  assert.strictEqual(upd.status, 200);
+  const after = upd.body.buttons.filter(function (b) { return b.id === btn.id; })[0];
+  assert.strictEqual(after.params['字段A'], '工时', '改参数后 字段A 应更新');
+  assert.strictEqual(after.params['字段B'], '职位', '改参数后 字段B 应更新');
+  assert.ok(Array.isArray(after.steps) && after.steps.length > 0, 'steps 应基于新参数重建');
+  assert.ok(after.steps.some(function (s) { return s.indexOf('工时') !== -1; }), 'steps 应提到新字段');
+  assert.strictEqual(writes.length, 0, '改参数不应写盘');
+});
+
+test('SET_BUTTON_PARAMS：非法参数（列不存在）被封闭校验拦下、按钮保持原值', () => {
+  const { deps } = makeDeps();
+  const h = makeActionHandler(deps);
+  h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: 'q.xlsx', action: { type: 'QUICK', kind: 'swap', params: { 字段A: '姓名', 字段B: '工时', scope: 'all' } } }) });
+  h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: 'q.xlsx', action: { type: 'CONFIRM' } }) });
+  const solid = h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: 'q.xlsx', action: { type: 'SOLIDIFY', name: 'b' } }) });
+  const btn = solid.body.buttons[0];
+  assert.strictEqual(btn.params['字段A'], '姓名', '固化按钮沿用 QUICK 的字段A=姓名');
+  const bad = h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: 'q.xlsx', action: { type: 'SET_BUTTON_PARAMS', id: btn.id, params: { 字段A: '不存在的列' } } }) });
+  assert.strictEqual(bad.status, 200);
+  const after = bad.body.buttons.filter(function (b) { return b.id === btn.id; })[0];
+  assert.strictEqual(after.params['字段A'], '姓名', '非法参数不应写入，应保持原值');
+  assert.match(bad.body.note || '', /没通过封闭校验/, '应如实提示校验失败');
 });
