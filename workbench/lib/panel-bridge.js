@@ -16,6 +16,38 @@
  */
 const path = require('path');
 const { buildPanelState, buildButtonPreview } = require('./panel-state');
+const { createSessionStore } = require('./panel-session');
+
+/**
+ * 默认写表器：把 cells 写回 xlsx（CONFIRM 执行用）。
+ * 走脚本 xlsx_bridge.py apply <file> <cells_json_file>：按主键列写 c['after']、新列自动补表头。
+ * @param {string} file 绝对路径
+ * @param {object[]} cells 引擎 preview 产出的单元格改动（[{col,row,after,...}]）
+ */
+function defaultApplyTable(file, cells) {
+  const { spawnSync } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
+  const tmp = path.join(os.tmpdir(), 'workbench-apply-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.json');
+  fs.writeFileSync(tmp, JSON.stringify(cells || []), 'utf8');
+  const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  let lastErr = null;
+  try {
+    for (const bin of candidates) {
+      const r = spawnSync(bin, [bridge, 'apply', file, tmp], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+      if (r.error) { lastErr = r.error; continue; }
+      if (r.status !== 0) {
+        lastErr = new Error('xlsx_bridge apply exit ' + r.status + ': ' + (r.stderr || '').trim());
+        continue;
+      }
+      return { ok: true, cellsWritten: (cells || []).length };
+    }
+    throw lastErr || new Error('找不到可用的 python 解释器');
+  } finally {
+    try { fs.unlinkSync(tmp); } catch (_) {}
+  }
+}
 
 /**
  * 默认读表器：spawn python xlsx_bridge.py read-values <file>，解析其 stdout JSON。
@@ -184,4 +216,115 @@ function makeButtonHandler(deps) {
   };
 }
 
-module.exports = { makeStateHandler, makeButtonHandler, defaultReadTable };
+/**
+ * 票 #47：生成 /workbench-api/action 的 handler（纯函数工厂，便于测试）。
+ * 语义：面板里「输入一句话 → 理解 → 预览 → 确认 → 固化按钮」的每一步都作为 action 发到这里，
+ * Host 侧用引擎状态机（panel-session 维护的 per-file state）执行，返回新的视图模型。
+ *
+ * 路由：POST（或 GET，兼容） /workbench-api/action
+ *   body/query: { file, sessionId, action:<JSON {type,...}> }
+ *   → 200 { file, stage, input, draft, preview, note, noteTone, buttons, registryButtons }
+ *   → 400 缺 file / action JSON 非法
+ *   → 405 既非 GET 也非 POST
+ *   → 500 读表失败
+ *
+ * CONFIRM 执行：reduce 后若 stage==='EXECUTED'，把该次 preview.cells 写回 xlsx（applyTable），
+ * 并把写表结果并入视图（writtenCells / writtenOk），让面板如实告诉用户「已写入磁盘」。
+ *
+ * @param {{readTable?:Function, resolveFile?:Function, applyTable?:Function, store?:object}} deps
+ * @returns {(req:{method:string,url:string,body?:string}) => {status:number, body:object}}
+ */
+function makeActionHandler(deps) {
+  deps = deps || {};
+  const readTable = deps.readTable || defaultReadTable;
+  const resolveFile = deps.resolveFile || function (file /*, sessionId */) { return file; };
+  const applyTable = deps.applyTable || defaultApplyTable;
+  const store = deps.store || createSessionStore();
+  return function handler(req) {
+    const method = (req && req.method) || 'GET';
+    if (method !== 'GET' && method !== 'POST') return { status: 405, body: { error: '只支持 GET/POST' } };
+    // 参数可来自 query（GET）或 body（POST，JSON 或 urlencoded）
+    const params = {};
+    let urlStr = (req && req.url) || '';
+    const qi = urlStr.indexOf('?');
+    if (qi !== -1) {
+      urlStr.slice(qi + 1).split('&').forEach(function (kv) {
+        if (!kv) return;
+        const i = kv.indexOf('=');
+        const k = i === -1 ? kv : kv.slice(0, i);
+        const v = i === -1 ? '' : kv.slice(i + 1);
+        params[decodeURIComponent(k)] = decodeURIComponent(v);
+      });
+    }
+    if (req && req.body) {
+      try {
+        const b = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+        if (b && typeof b === 'object') Object.keys(b).forEach(function (k) { params[k] = b[k]; });
+      } catch (e) {
+        return { status: 400, body: { error: 'body JSON 非法：' + ((e && e.message) || e) } };
+      }
+    }
+    const file = params.file;
+    const sessionId = params.sessionId;
+    if (!file) return { status: 400, body: { error: '缺少 file 参数' } };
+    let action = params.action;
+    if (typeof action === 'string') {
+      try { action = JSON.parse(action); } catch (e) {
+        return { status: 400, body: { error: 'action JSON 非法：' + ((e && e.message) || e) } };
+      }
+    }
+    if (!action || typeof action !== 'object' || !action.type) {
+      return { status: 400, body: { error: '缺少 action（需含 type）' } };
+    }
+    let absPath;
+    try {
+      absPath = resolveFile(file, sessionId);
+    } catch (e) {
+      return { status: 400, body: { error: '无法解析文件路径：' + ((e && e.message) || e) } };
+    }
+    let table;
+    try {
+      table = readTable(absPath);
+    } catch (e) {
+      return { status: 500, body: { error: '读表失败：' + ((e && e.message) || e) } };
+    }
+    const beforeStage = store.view(absPath, table).stage;
+    let vm;
+    try {
+      vm = store.applyAction(absPath, table, action);
+    } catch (e) {
+      return { status: 500, body: { error: '执行动作失败：' + ((e && e.message) || e) } };
+    }
+    // CONFIRM 真正落到磁盘：stage 从非 EXECUTED 变到 EXECUTED 的那一次，把 cells 写出。
+    const wrote = {};
+    if (action.type === 'CONFIRM' && vm.stage === 'EXECUTED' && beforeStage !== 'EXECUTED' && vm.preview && vm.preview.cells) {
+      try {
+        const r = applyTable(absPath, vm.preview.cells);
+        wrote.writtenOk = true;
+        wrote.writtenCells = (r && r.cellsWritten != null) ? r.cellsWritten : vm.preview.cells.length;
+      } catch (e) {
+        wrote.writtenOk = false;
+        wrote.writeError = (e && e.message) || String(e);
+      }
+    }
+    return {
+      status: 200,
+      body: {
+        file: absPath,
+        stage: vm.stage,
+        input: vm.input,
+        draft: vm.draft,
+        preview: vm.preview,
+        note: vm.note,
+        noteTone: vm.noteTone,
+        buttons: vm.buttons,
+        registryButtons: vm.registryButtons,
+        writtenOk: wrote.writtenOk,
+        writtenCells: wrote.writtenCells,
+        writeError: wrote.writeError
+      }
+    };
+  };
+}
+
+module.exports = { makeStateHandler, makeButtonHandler, makeActionHandler, defaultReadTable, defaultApplyTable };

@@ -213,6 +213,57 @@ function renderWorkbenchPanel(hostState) {
 
   const children = [];
   children.push(jsx('div', { style: { fontWeight: 600, marginBottom: 8 }, children: '表格工作台' }, 'hdg'));
+  // 票 #47：面板内「新建配方」交互区——输入一句话 → 理解 → 预览 → 确认执行 → 固化为按钮。
+  // 仅在宿主提供 onAction 时渲染（旧调用/纯投影模式保持原样，向后兼容）。
+  const onAction = hostState && typeof hostState.onAction === 'function' ? hostState.onAction : null;
+  if (onAction) {
+    const onInput = hostState && typeof hostState.onInput === 'function' ? hostState.onInput : function () {};
+    const stage = (hostState && hostState.stage) || 'IDLE';
+    const inputVal = (hostState && typeof hostState.inputText === 'string') ? hostState.inputText : '';
+    const canPreview = stage === 'UNDERSTOOD' || stage === 'PREVIEWED';
+    const canConfirm = stage === 'PREVIEWED' && preview && !preview.invalid;
+    const canSolidify = stage === 'EXECUTED';
+    const busy = !!(hostState && hostState.actionBusy);
+    const mkAction = function (type, label, enabled, extraStyle) {
+      return jsx('button', {
+        type: 'button',
+        'data-wb-action': type,
+        disabled: (!enabled || busy) ? true : undefined,
+        onClick: function (ev) {
+          try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
+          try { onAction(type, {}); } catch (_) {}
+        },
+        style: Object.assign({ marginRight: 6 }, extraStyle || {}),
+        children: label
+      }, 'act' + type);
+    };
+    const inputEl = jsx('input', {
+      'data-wb-input': '1',
+      type: 'text',
+      value: inputVal,
+      placeholder: '用一句话描述要做什么（如：调换姓名和工时两列）',
+      onChange: function (ev) { try { onInput(ev && ev.target ? ev.target.value : ''); } catch (_) {} },
+      onKeyDown: function (ev) {
+        try { if (ev && ev.key === 'Enter') { ev.preventDefault(); onAction('understand', {}); } } catch (_) {}
+      },
+      style: { width: '100%', boxSizing: 'border-box', marginBottom: 6 }
+    }, 'wbinput');
+    const btnRow = jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }, children: [
+      mkAction('understand', '理解', true),
+      mkAction('preview', '预览', canPreview),
+      mkAction('confirm', '确认执行', canConfirm),
+      mkAction('solidify', '固化为按钮', canSolidify)
+    ] }, 'btnrow');
+    children.push(jsxs('div', { 'data-wb-newrecipe': '1', style: { marginBottom: 10 }, children: [inputEl, btnRow] }, 'newrecipe'));
+    // 状态提示（note）：把引擎/宿主给的提示如实显示。
+    if (hostState && typeof hostState.note === 'string' && hostState.note) {
+      children.push(jsx('div', {
+        'data-wb-note': '1',
+        style: { fontSize: 12, marginBottom: 8, color: hostState.noteTone === 'warn' ? '#b06000' : (hostState.noteTone === 'ok' ? '#0a7' : '#555') },
+        children: hostState.note
+      }, 'wbn'));
+    }
+  }
   // 票 #44 AC3：操作失败/校验不通过时如实显示失败项（不崩）。
   const failNote = (hostState && typeof hostState.note === 'string' && hostState.note) ? hostState.note : '';
   const invalidErrors = (preview && preview.invalid && Array.isArray(preview.errors)) ? preview.errors : null;
@@ -407,7 +458,7 @@ function usePanelData(React, address) {
       setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false, clickedAt: Date.now(), note: String((e && e.message) || e) });
     }
   }
-  return { data: slot.data, error: slot.error, state: slot, override: override, applyButtonPreview: applyButtonPreview };
+  return { data: slot.data, error: slot.error, state: slot, override: override, applyButtonPreview: applyButtonPreview, setOverride: setOverride };
 }
 
 function registerWorkbenchPanel(ctx) {
@@ -447,7 +498,7 @@ function registerWorkbenchPanel(ctx) {
         { name: 'sidebar.right.pane.tab', key: TAB_ID, inject: function () { return {}; } },
         function WorkbenchPanelBody(props) {
           // slot body 必须是 React 组件、返回 React 元素（返回普通对象会触发 React error #31）。
-          // 票 #41：从 slot props 的 useTabInfo（uni ver 直接用 props.useTabInfo()，非 props.hooks）
+          // 票 #41：从 slot props 的 useTabInfo（univer 直接用 props.useTabInfo()，非 props.hooks）
           // 取 tab.contentId（文件地址）→ parseFileAddress → {sessionId, path}，轮询 Host 路由
           // 拿真实 preview，再渲染成 React 元素。
           var React = null;
@@ -462,7 +513,26 @@ function registerWorkbenchPanel(ctx) {
           } catch (_) { address = undefined; }
           var vm = null;
           var panelData = null;
-          if (React && typeof React.useState === 'function') {
+          // 票 #47：面板内新建配方的本地状态——输入文本、Host 返回的动作状态、忙碌标志。
+          // 注意：hooks 只能在 React 渲染上下文里调用。护栏测试会直接 spec.body({}) 调本函数
+          // （非渲染），此时 useState 会抛错；用 try/catch 兜底成无状态默认值，保证仍返回
+          // 合法 React 元素（不返回普通对象、不崩），真实渲染时 hooks 正常生效。
+          var inputText = '', setInputText = function () {};
+          var actionState = null, setActionState = function () {};
+          var actionBusy = false, setActionBusy = function () {};
+          var hooksOk = false;
+          try {
+            if (React && typeof React.useState === 'function') {
+              var inputTuple = React.useState('');
+              inputText = inputTuple[0]; setInputText = inputTuple[1];
+              var actTuple = React.useState(null);
+              actionState = actTuple[0]; setActionState = actTuple[1];
+              var busyTuple = React.useState(false);
+              actionBusy = busyTuple[0]; setActionBusy = busyTuple[1];
+              hooksOk = true;
+            }
+          } catch (_) { hooksOk = false; }
+          if (hooksOk) {
             try {
               panelData = usePanelData(React, address);
               // Host 返回 { columns, rowCount, preview, isDefaultDraft, registryButtons, buttons }；
@@ -479,9 +549,32 @@ function registerWorkbenchPanel(ctx) {
               }
             } catch (_) { vm = null; panelData = null; }
           }
+          // 票 #47：把动作（understand/preview/confirm/solidify）发给 Host /workbench-api/action，
+          // 拿回新的完整状态（stage/draft/preview/buttons/note）覆盖显示。这是面板内新建配方的核心。
+          var runAction = function (type, extra) {
+            if (!address || !address.path) return;
+            try {
+              setActionBusy(true);
+              var origin = (typeof window !== 'undefined' && window.location && window.location.origin) || '';
+              var act = Object.assign({ type: type }, extra || {});
+              // solidify 时把当前输入框文字作为按钮名（用户可后续重命名）。
+              if (type === 'solidify' && !act.name) act.name = (inputText || '').trim() || '我的配方';
+              var body = JSON.stringify({
+                file: address.path,
+                sessionId: address.sessionId || undefined,
+                action: act
+              });
+              fetch(origin + '/workbench-api/action', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'content-type': 'application/json' },
+                body: body
+              }).then(function (r) { return r.json(); })
+                .then(function (j) { setActionState(j || null); setActionBusy(false); })
+                .catch(function (e) { setActionState({ error: String((e && e.message) || e), stage: (actionState && actionState.stage) || 'IDLE' }); setActionBusy(false); });
+            } catch (e) { setActionState({ error: String((e && e.message) || e) }); setActionBusy(false); }
+          };
           // 票 #44：点击按钮 → 请 Host 用引擎按该按钮配方重算 preview，覆盖预览卡（刷新）。
-          // 需要拿到该按钮的声明式配方（kind+params，无代码）一起发给 Host；从当前 vm 的
-          // buttons/registryButtons 里按 id 查回。
           var onClick = function (id) {
             try {
               if (panelData && typeof panelData.applyButtonPreview === 'function') {
@@ -492,27 +585,48 @@ function registerWorkbenchPanel(ctx) {
               }
             } catch (_) {}
           };
-          // 票 #44：若点击产生了覆盖层预览，就用它替换预览段（刷新成操作后的影响）。
           var effective = Object.assign({}, vm || {});
-          if (panelData && panelData.override) {
+          // 票 #47：动作状态优先——一旦用户在面板里新建/推进配方，以 Host 动作返回的状态为准。
+          if (actionState && !actionState.error) {
+            effective.preview = actionState.preview || null;
+            effective.stage = actionState.stage || 'IDLE';
+            effective.isDefaultDraft = false;
+            effective.buttons = actionState.buttons || (vm && vm.buttons) || [];
+            effective.registryButtons = actionState.registryButtons || (vm && vm.registryButtons) || [];
+            effective.note = actionState.note || '';
+            effective.noteTone = actionState.noteTone || 'info';
+            if (actionState.writtenOk) {
+              effective.clickedAt = Date.now();
+              effective.clickedName = '确认执行（已写入磁盘 ' + actionState.writtenCells + ' 格）';
+            } else if (actionState.writtenOk === false) {
+              effective.note = (effective.note ? effective.note + ' ' : '') + '写盘失败：' + (actionState.writeError || '未知错误');
+              effective.noteTone = 'warn';
+            }
+          } else if (actionState && actionState.error) {
+            effective.note = '操作失败：' + actionState.error;
+            effective.noteTone = 'warn';
+          } else if (panelData && panelData.override) {
+            // 票 #44 兼容：点预置/固化按钮的覆盖层预览。
             effective.preview = panelData.override.preview || null;
             effective.isDefaultDraft = false;
-            // 票 #46：点击后仍标明「当前预览的是哪份配方」，不让提示行无声消失。
-            // override.buttonId → 从按钮库查回名字；查不到回退按钮 id。
             var ovBtnId = panelData.override.buttonId;
             var ovAll = (vm && vm.buttons ? vm.buttons : []).concat(vm && vm.registryButtons ? vm.registryButtons : []);
             var ovName = ovBtnId;
             for (var k = 0; k < ovAll.length; k++) { if (ovAll[k] && ovAll[k].id === ovBtnId) { ovName = ovAll[k].name || ovBtnId; break; } }
             effective.recipeLabel = ovName;
-            // 票 #46：把点击时间与按钮名带进卡片，渲出「✓ 已按…重算」可见反馈。
             effective.clickedAt = panelData.override.clickedAt || null;
             effective.clickedName = ovName;
             if (panelData.override.note) effective.note = panelData.override.note;
           } else if (vm && vm.isDefaultDraft) {
-            // 未点击、且是自动派生的默认配方：给出配方标签（与卡片标签一致）。
             effective.recipeLabel = '默认配方（调换前两列）';
           }
-          return renderWorkbenchPanel(Object.assign({}, effective, { onButtonClick: onClick }));
+          return renderWorkbenchPanel(Object.assign({}, effective, {
+            onButtonClick: onClick,
+            inputText: inputText,
+            onInput: function (v) { try { setInputText(v); } catch (_) {} },
+            onAction: runAction,
+            actionBusy: actionBusy
+          }));
         }
       );
       return d;

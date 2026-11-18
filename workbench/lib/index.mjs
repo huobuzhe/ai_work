@@ -45,7 +45,10 @@ export function apply(ctx) {
         const sessions = get('sessions');
         if (!webServer || typeof webServer.register !== 'function') return;
         // 延迟 require：宿主入口是 ESM，CJS 桥用模块顶部 createRequire 造的 req 载入。
-        const { makeStateHandler, makeButtonHandler } = req('./panel-bridge.js');
+        const { makeStateHandler, makeButtonHandler, makeActionHandler } = req('./panel-bridge.js');
+        // 票 #47：会话状态库（per-file 引擎 state）——新建配方的 5 步管线靠它跨请求累积。
+        const { createSessionStore } = req('./panel-session.js');
+        const store = createSessionStore();
         // resolveFile：把 client 传来的 session-relative 相对路径据 sessionId 解析成绝对路径。
         // 契约照抄 univer resolveAuthorizedFile（lib/index.js:12763-12773）：
         //   cwd = sessions.get(SessionId(sessionId))?.header.cwd。
@@ -65,17 +68,28 @@ export function apply(ctx) {
         const handler = makeStateHandler({ resolveFile });
         // 票 #44：按钮点击 → 引擎重算 preview（Host 侧）。同前缀下按 pathname 分派到不同 handler。
         const buttonHandler = makeButtonHandler({ resolveFile });
+        // 票 #47：面板内新建配方——理解/预览/确认/固化 每一步作为 action 发到这里，走引擎状态机。
+        const actionHandler = makeActionHandler({ resolveFile, store });
         injected.effect(() => webServer.register({
           kind: 'prefix',
           path: '/workbench-api',
           handler: (request, response) => {
             // DSH webServer prefix handler 收到原始 http req/res。读完 body 后统一以 JSON 回。
-            request.on('data', () => {});
+            const chunks = [];
+            request.on('data', (c) => { chunks.push(c); });
             request.on('end', () => {
               const urlPath = String((request.url || '')).split('?')[0];
-              // 只认 /preview 走按钮重算；其余（/state 等）走原状态管道。
-              const active = /\/preview\/?$/.test(urlPath) ? buttonHandler : handler;
-              const result = active({ method: request.method, url: request.url });
+              const reqObj = {
+                method: request.method,
+                url: request.url,
+                body: chunks.length ? Buffer.concat(chunks).toString('utf8') : ''
+              };
+              // 分派：/action 走状态机；/preview 走按钮重算；其余（/state）走原状态管道。
+              let active;
+              if (/\/action\/?$/.test(urlPath)) active = actionHandler;
+              else if (/\/preview\/?$/.test(urlPath)) active = buttonHandler;
+              else active = handler;
+              const result = active(reqObj);
               response.statusCode = result.status;
               response.setHeader('content-type', 'application/json; charset=utf-8');
               response.end(JSON.stringify(result.body));
