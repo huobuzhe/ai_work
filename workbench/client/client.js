@@ -265,7 +265,11 @@ function renderWorkbenchPanel(hostState) {
     }
   }
   // 票 #44 AC3：操作失败/校验不通过时如实显示失败项（不崩）。
-  const failNote = (hostState && typeof hostState.note === 'string' && hostState.note) ? hostState.note : '';
+  // 票 #51：说明性/成功类 note（noteTone=ok/info）已在 data-wb-note 正常显示，**不再**重复塞进
+  // 红色错误框；只有 warning/error 类 note 或 preview 非法时才进错误框，避免同一条提示出现两次。
+  const noteTone = (hostState && hostState.noteTone) || 'info';
+  const failNote = (hostState && typeof hostState.note === 'string' && hostState.note
+    && (noteTone === 'warn' || noteTone === 'error')) ? hostState.note : '';
   const invalidErrors = (preview && preview.invalid && Array.isArray(preview.errors)) ? preview.errors : null;
   if ((preview && preview.invalid) || failNote) {
     const errLines = [];
