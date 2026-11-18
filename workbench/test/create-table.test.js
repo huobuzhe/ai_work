@@ -104,6 +104,36 @@ test('#52 AC-C5 makeCreateHandler 重名不覆盖（追加序号）', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// ---- seam A (blank 空白表) ----
+test('#52b AC-A5 buildCreateSpec blank：逗号分隔列名，首列作主键', () => {
+  const r = buildCreateSpec(TEMPLATES, { mode: 'blank', columns: '姓名，工时，职位' });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.structure.primaryKey, '姓名');
+  assert.deepStrictEqual(Object.keys(r.structure.columns), ['姓名', '工时', '职位']);
+  assert.strictEqual(r.structure.name, '新建表格');
+});
+
+test('#52b AC-A6 buildCreateSpec blank：空列名 → errors；可指定 primaryKey', () => {
+  assert.strictEqual(buildCreateSpec(TEMPLATES, { mode: 'blank', columns: '   ' }).ok, false);
+  const r = buildCreateSpec(TEMPLATES, { mode: 'blank', columns: '工号 姓名', primaryKey: '姓名', name: '员工表' });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.structure.primaryKey, '姓名');
+  assert.strictEqual(r.structure.name, '员工表');
+});
+
+test('#52b AC-C6 makeCreateHandler blank 建表 200 + 列头正确', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-create-'));
+  const h = makeCreateHandler({
+    loadTemplates: () => TEMPLATES,
+    resolveDir: () => dir,
+    createTable: (file, structure) => { fs.writeFileSync(file, 'x'); return { ok: true }; }
+  });
+  const r = h({ method: 'POST', url: '/workbench-api/create', body: JSON.stringify({ mode: 'blank', columns: '姓名,工时', name: '空白测试' }) });
+  assert.strictEqual(r.status, 200);
+  assert.ok(/空白测试\.xlsx$/.test(r.body.file));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // ---- python create 真实建表 ----
 test('#52 AC-D1 defaultCreateTable 真实建空表 + read-values 复核列头', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-create-'));

@@ -448,7 +448,9 @@ function makeCreateHandler(deps) {
     const spec = require('./panel-state').buildCreateSpec(templates, {
       mode: params.mode || 'template',
       template: params.template,
-      name: params.name
+      name: params.name,
+      columns: params.columns,
+      primaryKey: params.primaryKey
     });
     if (!spec.ok) return { status: 400, body: { error: '结构不合格', errors: spec.errors } };
     let dir;

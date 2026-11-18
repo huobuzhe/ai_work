@@ -85,14 +85,33 @@ module.exports = { buildPanelState, buildButtonPreview, buildCreateSpec };
  * 纯逻辑：不读文件、不碰 python，便于单测。
  *
  * @param {object[]} templates 模板清单（来自 load-templates 契约的 templates 数组）
- * @param {{mode?:string, template?:string, name?:string}} req
+ * @param {{mode?:string, template?:string, name?:string, columns?:string, primaryKey?:string}} req
  */
 function buildCreateSpec(templates, req) {
   req = req || {};
   const list = Array.isArray(templates) ? templates : [];
   const mode = req.mode || 'template';
+  // 空白表模式：用户直接给列名清单（逗号/空格/顿号分隔），首列作主键（可用 primaryKey 指定）。
+  if (mode === 'blank') {
+    const raw = String(req.columns || '').trim();
+    if (!raw) return { ok: false, errors: [{ field: 'columns', reason: '空白表至少需要一个列名' }] };
+    const names = raw.split(/[\s,，、;；]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+    if (names.length === 0) return { ok: false, errors: [{ field: 'columns', reason: '空白表至少需要一个列名' }] };
+    // 去重（保留首现顺序）
+    const seen = {}; const uniq = [];
+    names.forEach(function (n) { if (!seen[n]) { seen[n] = 1; uniq.push(n); } });
+    const pk = (req.primaryKey && String(req.primaryKey).trim()) || uniq[0];
+    if (uniq.indexOf(pk) < 0) return { ok: false, errors: [{ field: 'primaryKey', reason: '主键列必须在列名清单里：' + pk }] };
+    const columns = {}; uniq.forEach(function (n) { columns[n] = 'text'; });
+    const name = (req.name && String(req.name).trim()) || '新建表格';
+    const built = E.createTable({ mode: 'template', manifest: { schemaVersion: 1, name: name, primaryKey: pk, columns: columns } });
+    if (!built || built.ok === false) {
+      return { ok: false, errors: (built && built.errors) || [{ field: 'columns', reason: '列名清单非法' }] };
+    }
+    return { ok: true, structure: { primaryKey: pk, columns: columns, name: name } };
+  }
   if (mode !== 'template') {
-    return { ok: false, errors: [{ field: 'mode', reason: '本入口只支持 template（其它入口见引擎 createTable）' }] };
+    return { ok: false, errors: [{ field: 'mode', reason: '支持 template / blank（upload、description 见引擎 createTable）' }] };
   }
   const wanted = req.template;
   if (!wanted) return { ok: false, errors: [{ field: 'template', reason: '缺少 template（模板名或文件名）' }] };

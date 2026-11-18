@@ -381,24 +381,55 @@ function renderWorkbenchPanel(hostState) {
   // 票 #52：从模板新建表格——列出仓内模板，每个一个「新建」按钮。
   // 仅在宿主提供 onCreate 且给了 templates 时渲染（向后兼容：旧调用不渲染）。
   const onCreate = hostState && typeof hostState.onCreate === 'function' ? hostState.onCreate : null;
+  const onCreateBlank = hostState && typeof hostState.onCreateBlank === 'function' ? hostState.onCreateBlank : null;
   const templates = hostState && Array.isArray(hostState.templates) ? hostState.templates : [];
-  if (onCreate && templates.length > 0) {
-    const tplBtns = templates.map(function (t, i) {
-      const tname = (t && (t.name || t.file)) || ('模板' + i);
-      return jsx('button', {
+  const blankName = (hostState && hostState.blankName) || '';
+  const blankColumns = (hostState && hostState.blankColumns) || '';
+  if (onCreate || onCreateBlank) {
+    const ntChildren = [jsx('div', { style: { fontSize: 12, opacity: 0.75, marginBottom: 4 }, children: '新建表格' }, 'nth')];
+    if (onCreate && templates.length > 0) {
+      const tplBtns = templates.map(function (t, i) {
+        const tname = (t && (t.name || t.file)) || ('模板' + i);
+        return jsx('button', {
+          type: 'button',
+          'data-wb-newtable-btn': tname,
+          title: '按模板「' + tname + '」新建一张空表',
+          onClick: function (ev) {
+            try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
+            try { onCreate(tname); } catch (_) {}
+          },
+          style: { marginRight: 6, marginBottom: 4 },
+          children: '新建「' + tname + '」'
+        }, 'ntb' + i);
+      });
+      ntChildren.push(jsx('div', { style: { fontSize: 11, opacity: 0.6, margin: '2px 0' }, children: '从模板' }, 'ntlbl'));
+      ntChildren.push(jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: tplBtns }, 'ntrow'));
+    }
+    if (onCreateBlank) {
+      // 空白表：表格名 + 列名清单（逗号分隔，首列作主键）+ 新建按钮。直接服务「新建 XLSX 工作表」。
+      const btn = jsx('button', {
         type: 'button',
-        'data-wb-newtable-btn': tname,
-        title: '按模板「' + tname + '」新建一张空表',
+        'data-wb-newblank-btn': '1',
         onClick: function (ev) {
           try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
-          try { onCreate(tname); } catch (_) {}
+          try { onCreateBlank(blankName, blankColumns); } catch (_) {}
         },
-        style: { marginRight: 6, marginBottom: 4 },
-        children: '新建「' + tname + '」'
-      }, 'ntb' + i);
-    });
-    const ntChildren = [jsx('div', { style: { fontSize: 12, opacity: 0.75, marginBottom: 4 }, children: '新建表格（从模板）' }, 'nth')];
-    ntChildren.push(jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: tplBtns }, 'ntrow'));
+        style: { marginLeft: 6 },
+        children: '新建空白表'
+      }, 'ntblankbtn');
+      const nameInput = jsx('input', {
+        type: 'text', 'data-wb-newblank-name': '1', placeholder: '表格名（可空）', value: blankName,
+        onChange: function (ev) { try { hostState.onBlankName && hostState.onBlankName(ev.target.value); } catch (_) {} },
+        style: { width: 90, marginRight: 4 }
+      }, 'ntbn');
+      const colInput = jsx('input', {
+        type: 'text', 'data-wb-newblank-columns': '1', placeholder: '列名，逗号分隔（首列作主键）', value: blankColumns,
+        onChange: function (ev) { try { hostState.onBlankColumns && hostState.onBlankColumns(ev.target.value); } catch (_) {} },
+        style: { width: 160 }
+      }, 'ntbc');
+      ntChildren.push(jsx('div', { style: { fontSize: 11, opacity: 0.6, margin: '6px 0 2px' }, children: '空白表' }, 'ntblbl'));
+      ntChildren.push(jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }, children: [nameInput, colInput, btn] }, 'ntblankrow'));
+    }
     if (hostState && hostState.createdNotice) {
       ntChildren.push(jsx('div', { 'data-wb-created': '1', style: { color: '#0a7', fontSize: 12, marginTop: 4 }, children: hostState.createdNotice }, 'ntok'));
     }
@@ -687,12 +718,18 @@ function registerWorkbenchPanel(ctx) {
           // 非面板可驱动；用户从文件树打开）。
           var templates = [], setTemplates = function () {};
           var createdNotice = '', setCreatedNotice = function () {};
+          var blankName = '', setBlankName = function () {};
+          var blankColumns = '', setBlankColumns = function () {};
           if (hooksOk) {
             try {
               var tplTuple = React.useState([]);
               templates = tplTuple[0]; setTemplates = tplTuple[1];
               var noticeTuple = React.useState('');
               createdNotice = noticeTuple[0]; setCreatedNotice = noticeTuple[1];
+              var bnTuple = React.useState('');
+              blankName = bnTuple[0]; setBlankName = bnTuple[1];
+              var bcTuple = React.useState('');
+              blankColumns = bcTuple[0]; setBlankColumns = bcTuple[1];
               React.useEffect(function () {
                 var alive = true;
                 try {
@@ -706,7 +743,7 @@ function registerWorkbenchPanel(ctx) {
               }, []);
             } catch (_) {}
           }
-          var onCreate = function (templateName) {
+          var doCreate = function (payload, okName) {
             if (!address || !address.path) return;
             try {
               var origin1 = (typeof window !== 'undefined' && window.location && window.location.origin) || '';
@@ -714,14 +751,21 @@ function registerWorkbenchPanel(ctx) {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({ mode: 'template', template: templateName, sessionId: address.sessionId || undefined })
+                body: JSON.stringify(Object.assign({ sessionId: address.sessionId || undefined }, payload))
               }).then(function (r) { return r.json(); })
                 .then(function (j) {
-                  if (j && j.file) setCreatedNotice('✓ 已创建：' + (j.name || templateName) + ' → ' + j.file);
-                  else setCreatedNotice('新建失败：' + ((j && j.error) || '未知错误'));
+                  if (j && j.file) setCreatedNotice('✓ 已创建：' + (j.name || okName) + ' → ' + j.file);
+                  else setCreatedNotice('新建失败：' + ((j && j.error) || (j && j.errors && j.errors[0] && j.errors[0].reason) || '未知错误'));
                 })
                 .catch(function (e) { setCreatedNotice('新建失败：' + ((e && e.message) || e)); });
             } catch (e) { setCreatedNotice('新建失败：' + ((e && e.message) || e)); }
+          };
+          var onCreate = function (templateName) {
+            doCreate({ mode: 'template', template: templateName }, templateName);
+          };
+          var onCreateBlank = function (name, columns) {
+            if (!String(columns || '').trim()) { setCreatedNotice('新建失败：请填写列名（逗号分隔）'); return; }
+            doCreate({ mode: 'blank', name: (name || '').trim() || undefined, columns: columns }, '新建表格');
           };
           return renderWorkbenchPanel(Object.assign({}, effective, {
             onButtonClick: onClick,
@@ -732,6 +776,11 @@ function registerWorkbenchPanel(ctx) {
             actionBusy: actionBusy,
             templates: templates,
             onCreate: onCreate,
+            onCreateBlank: onCreateBlank,
+            blankName: blankName,
+            blankColumns: blankColumns,
+            onBlankName: function (v) { try { setBlankName(v); } catch (_) {} },
+            onBlankColumns: function (v) { try { setBlankColumns(v); } catch (_) {} },
             createdNotice: createdNotice
           }));
         }
