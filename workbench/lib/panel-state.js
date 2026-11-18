@@ -70,7 +70,52 @@ function buildPanelState(parsed) {
   };
 }
 
-module.exports = { buildPanelState, buildButtonPreview };
+module.exports = { buildPanelState, buildButtonPreview, buildCreateSpec };
+
+/**
+ * 票 #52 seam A（Host 纯函数）：「从模板新建表格」的结构合成。
+ * 给定仓内模板清单（templates 数组，每项 {name, primaryKey, columns, file?}）与一个请求
+ * {mode, template, name}，产出一张待建空表的结构 {primaryKey, columns}（走引擎 createTable 单一来源）。
+ *
+ * - mode 缺省 'template'。
+ * - template 可以是模板名（name）或模板文件名（file），二选一匹配。
+ * - name 缺省用模板名。
+ * 返回：{ ok:true, structure:{primaryKey,columns,name} } 或
+ *       { ok:false, errors:[{field,reason}] }（模板找不到 / 清单非法 / mode 不支持）。
+ * 纯逻辑：不读文件、不碰 python，便于单测。
+ *
+ * @param {object[]} templates 模板清单（来自 load-templates 契约的 templates 数组）
+ * @param {{mode?:string, template?:string, name?:string}} req
+ */
+function buildCreateSpec(templates, req) {
+  req = req || {};
+  const list = Array.isArray(templates) ? templates : [];
+  const mode = req.mode || 'template';
+  if (mode !== 'template') {
+    return { ok: false, errors: [{ field: 'mode', reason: '本入口只支持 template（其它入口见引擎 createTable）' }] };
+  }
+  const wanted = req.template;
+  if (!wanted) return { ok: false, errors: [{ field: 'template', reason: '缺少 template（模板名或文件名）' }] };
+  const tpl = list.filter(function (t) { return t && (t.name === wanted || t.file === wanted); })[0];
+  if (!tpl) return { ok: false, errors: [{ field: 'template', reason: '找不到模板：' + wanted }] };
+  const name = (req.name && String(req.name).trim()) || tpl.name;
+  // 结构走引擎单一来源 createTable({mode:'template', manifest})。
+  const manifest = { schemaVersion: 1, name: name, primaryKey: tpl.primaryKey, columns: tpl.columns };
+  const built = E.createTable({ mode: 'template', manifest: manifest });
+  if (!built || built.ok === false) {
+    return { ok: false, errors: (built && built.errors) || [{ field: 'template', reason: '模板结构非法' }] };
+  }
+  return {
+    ok: true,
+    structure: {
+      primaryKey: built.structure.primaryKey,
+      // 注意：E.createTable 返回的 structure.columns 是「列名数组」，但 python 桥的 create
+      // 需要「列名→类型」字典（按 dict 顺序写表头）。这里回填模板原始 columns 字典。
+      columns: tpl.columns,
+      name: name
+    }
+  };
+}
 
 /**
  * 票 #44 seam：按钮点击驱动引擎 → 预览卡刷新（Host 纯函数）。

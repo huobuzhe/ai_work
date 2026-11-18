@@ -9,12 +9,12 @@ const path = require('node:path');
 
 function makeReactShim() {
   let instance = null;
-  function resetInstance() { instance = { hooks: [], idx: 0, effects: [], mounted: false, cleanup: null }; }
+  function resetInstance() { instance = { hooks: [], idx: 0, effects: [], mounted: false, cleanups: [] }; }
   function beginRender() { if (!instance) resetInstance(); instance.idx = 0; }
   function finishRender() {
     if (!instance.mounted) {
       instance.mounted = true;
-      for (const e of instance.effects) { try { const c = e(); if (typeof c === 'function') instance.cleanup = c; } catch (_) {} }
+      for (const e of instance.effects) { try { const c = e(); if (typeof c === 'function') instance.cleanups.push(c); } catch (_) {} }
     }
   }
   function useState(init) {
@@ -26,7 +26,7 @@ function makeReactShim() {
   function useEffect(fn) { instance.effects.push(fn); }
   function jsx(type, props, key) { return { $$typeof: Symbol.for('react.element'), type, key: key == null ? null : key, props: props || {} }; }
   function jsxs(type, props, key) { return jsx(type, props, key); }
-  function runCleanups() { if (instance && typeof instance.cleanup === 'function') { try { instance.cleanup(); } catch (_) {} instance.cleanup = null; } }
+  function runCleanups() { if (instance && Array.isArray(instance.cleanups)) { for (const c of instance.cleanups) { try { c(); } catch (_) {} } instance.cleanups = []; } }
   return { React: { useState, useEffect, createElement: jsx }, jsx, jsxs, reset: () => { runCleanups(); instance = null; }, beginRender, finishRender, runCleanups };
 }
 

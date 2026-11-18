@@ -92,6 +92,29 @@ def apply(path, cells_json):
         ws.cell(row=ri, column=ci, value=c['after'])
     wb.save(path); print('OK')
 
+def create(path, structure_json):
+    """按结构清单建一张空 xlsx（票 #52「从模板新建表格」）。
+    structure_json: {primaryKey, columns:{列名:类型}, name?, mode?}。
+    行为：写出表头（primaryKey 置首、其余列按清单顺序），无数据行。
+    纯 IO，结构合法性由 lib/engine.js 的 createTable/validateManifest 保证（桥不判业务）。
+    """
+    from openpyxl import Workbook
+    with open(structure_json, encoding='utf-8') as f:
+        structure = json.load(f)
+    pk = structure.get('primaryKey') or '姓名'
+    cols = structure.get('columns') or {}
+    # 列序：主键置首，其余保持清单原序（不重复主键）
+    header = [pk] + [c for c in cols.keys() if c != pk]
+    wb = Workbook(); ws = wb.active
+    title = structure.get('name') or 'Sheet1'
+    try:
+        ws.title = str(title)[:31]
+    except Exception:
+        ws.title = 'Sheet1'
+    ws.append(header)
+    wb.save(path)
+    print('OK')
+
 def probe(path):
     """上传文件字节探测（纯 IO，判定逻辑在 lib/engine.js 的 checkUpload）。
     输出 {filename, ext, isZip, openable, encrypted, hasMacro}。
@@ -141,5 +164,6 @@ if __name__ == '__main__':
     elif cmd == 'read-values': read_values(sys.argv[2])
     elif cmd == 'read-csv': read_csv(sys.argv[2])
     elif cmd == 'apply': apply(sys.argv[2], sys.argv[3])
+    elif cmd == 'create': create(sys.argv[2], sys.argv[3])
     elif cmd == 'probe': probe(sys.argv[2])
     else: raise SystemExit('unknown command: ' + cmd)

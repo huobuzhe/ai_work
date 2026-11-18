@@ -45,7 +45,7 @@ export function apply(ctx) {
         const sessions = get('sessions');
         if (!webServer || typeof webServer.register !== 'function') return;
         // 延迟 require：宿主入口是 ESM，CJS 桥用模块顶部 createRequire 造的 req 载入。
-        const { makeStateHandler, makeButtonHandler, makeActionHandler } = req('./panel-bridge.js');
+        const { makeStateHandler, makeButtonHandler, makeActionHandler, makeTemplatesHandler, makeCreateHandler } = req('./panel-bridge.js');
         // 票 #47：会话状态库（per-file 引擎 state）——新建配方的 5 步管线靠它跨请求累积。
         const { createSessionStore } = req('./panel-session.js');
         const store = createSessionStore();
@@ -70,6 +70,17 @@ export function apply(ctx) {
         const buttonHandler = makeButtonHandler({ resolveFile });
         // 票 #47：面板内新建配方——理解/预览/确认/固化 每一步作为 action 发到这里，走引擎状态机。
         const actionHandler = makeActionHandler({ resolveFile, store });
+        // 票 #52：从模板新建表格——列模板 + 建空表。目标目录据 sessionId 的 cwd 解析。
+        const resolveDir = (sessionId, dir) => {
+          if (dir) return pathMod.resolve(dir);
+          if (!sessionId) throw new Error('需要 sessionId 才能确定目标目录');
+          const session = sessions && typeof sessions.get === 'function' ? sessions.get(SessionId(sessionId)) : undefined;
+          const cwd = session && session.header ? session.header.cwd : undefined;
+          if (!cwd) throw new Error('会话不可用或没有工作区：' + sessionId);
+          return pathMod.resolve(cwd);
+        };
+        const templatesHandler = makeTemplatesHandler({});
+        const createHandler = makeCreateHandler({ resolveDir });
         injected.effect(() => webServer.register({
           kind: 'prefix',
           path: '/workbench-api',
@@ -84,9 +95,11 @@ export function apply(ctx) {
                 url: request.url,
                 body: chunks.length ? Buffer.concat(chunks).toString('utf8') : ''
               };
-              // 分派：/action 走状态机；/preview 走按钮重算；其余（/state）走原状态管道。
+              // 分派：/action 走状态机；/preview 走按钮重算；/templates 列模板；/create 建表；其余（/state）走原状态管道。
               let active;
-              if (/\/action\/?$/.test(urlPath)) active = actionHandler;
+              if (/\/templates\/?$/.test(urlPath)) active = templatesHandler;
+              else if (/\/create\/?$/.test(urlPath)) active = createHandler;
+              else if (/\/action\/?$/.test(urlPath)) active = actionHandler;
               else if (/\/preview\/?$/.test(urlPath)) active = buttonHandler;
               else active = handler;
               const result = active(reqObj);
