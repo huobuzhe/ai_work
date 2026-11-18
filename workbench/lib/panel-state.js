@@ -19,14 +19,21 @@ function buildPanelState(parsed) {
   const rows = (parsed.rows || []).map(function (r) { return Object.assign({}, r); });
   let draft = parsed.draft || null;
 
-  // 无草稿时：若表有 ≥2 列，自动派生一个「默认配方」= 调换前两列（swap）。
+  // 无草稿时：若表有 ≥2 列，自动派生一个「默认配方」= 调换「末两列」（swap）。
   // 目的：打开一张有数据的表，面板立刻显示真实的「影响 N 行」，而不是空占位。
   // 这是**真实**可执行的配方（两列一定存在、作用于全部行），不是假造的计数；
-  // 用 isDefault 标记，面板可标注「（默认配方：调换前两列）」，用户后续可换成别的。
+  // 用 isDefault 标记，面板可标注「（默认配方：调换后两列）」，用户后续可换成别的。
+  //
+  // 票 #50：默认配方改调换**末两列**而非前两列——第一列通常是主键（如「姓名」），
+  // 调换主键列会把行的身份标识本身改掉，重跑/二次执行时按主键定位会错位、甚至写坏数据
+  // （E2E 实测验证过：连续执行两次「调换前两列」出现 80/80 这种脏值）。避开主键更安全、
+  // 也更贴近「调换两个数据列」的真实诉求。只有恰好 2 列（无独立主键可避）时才退回调换这两列。
   let isDefault = false;
   if (!draft && columns.length >= 2) {
     try {
-      draft = E.buildDraft('swap', null, { 字段A: columns[0], 字段B: columns[1], scope: 'all', 条件: '' });
+      const a = columns.length >= 3 ? columns[columns.length - 2] : columns[0];
+      const b = columns.length >= 3 ? columns[columns.length - 1] : columns[1];
+      draft = E.buildDraft('swap', null, { 字段A: a, 字段B: b, scope: 'all', 条件: '' });
       isDefault = true;
     } catch (_) { draft = null; isDefault = false; }
   }
@@ -49,7 +56,7 @@ function buildPanelState(parsed) {
   if (isDefault && draft) {
     buttons.push({
       id: '__default__',
-      name: '默认配方（调换前两列）',
+      name: '默认配方（调换后两列）',
       kind: 'swap',
       source: 'default',
       params: Object.assign({}, draft.params || {})

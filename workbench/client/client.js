@@ -293,7 +293,7 @@ function renderWorkbenchPanel(hostState) {
     // 优先用 hostState.recipeLabel（点击/派生时由上层显式给出）；否则在默认配方场景回退为默认标签。
     const recipeLabel = (hostState && typeof hostState.recipeLabel === 'string' && hostState.recipeLabel)
       ? hostState.recipeLabel
-      : ((hostState && hostState.isDefaultDraft) ? '默认配方（调换前两列）· 可更换' : '');
+      : ((hostState && hostState.isDefaultDraft) ? '默认配方（调换后两列）· 可更换' : '');
     if (recipeLabel) {
       lineEls.unshift(jsx('div', { 'data-workbench-recipe': '1', style: { opacity: 0.75, fontSize: 12, marginBottom: 4 }, children: '当前配方：' + recipeLabel }, 'recipe'));
     }
@@ -648,7 +648,7 @@ function registerWorkbenchPanel(ctx) {
             effective.clickedName = ovName;
             if (panelData.override.note) effective.note = panelData.override.note;
           } else if (vm && vm.isDefaultDraft) {
-            effective.recipeLabel = '默认配方（调换前两列）';
+            effective.recipeLabel = '默认配方（调换后两列）';
           }
           // 票 #48：按钮管理动作（运行/重命名/删除）→ 映射到引擎动作类型，复用 runAction 打到 Host。
           var onButtonAction = function (op, id, extra) {

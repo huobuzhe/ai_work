@@ -30,8 +30,9 @@ test('#45 seam A：无草稿且 ≥2 列时，buildPanelState 返回一个 sourc
   assert.ok(defBtn, '应有 source=default 的默认配方按钮');
   assert.equal(defBtn.kind, 'swap', '默认配方按钮 kind=swap');
   assert.ok(defBtn.id, '按钮应有 id');
-  assert.equal(defBtn.params['字段A'], '姓名', 'params 带第一列');
-  assert.equal(defBtn.params['字段B'], '部门', 'params 带第二列');
+  // 票 #50：默认配方调换**末两列**（避开主键列），4 列表时即「工时/时薪」。
+  assert.equal(defBtn.params['字段A'], '工时', 'params 带倒数第二列');
+  assert.equal(defBtn.params['字段B'], '时薪', 'params 带最后一列');
   // 名字里能看出是默认配方（供面板显示）
   assert.match(defBtn.name, /默认|调换/, '按钮名应能看出是默认配方');
 });
@@ -67,6 +68,6 @@ test('#45 seam A：把默认按钮交给 buildButtonPreview 能按它重算（�
     defBtn.id
   );
   assert.ok(result && result.preview, '默认按钮应能重算出 preview');
-  assert.equal(result.preview.affectedRows, 2, '默认按钮 swap 前两列影响 2 行');
+  assert.equal(result.preview.affectedRows, 2, '默认按钮 swap 末两列影响 2 行');
   assert.match(result.preview.summary, /影响 2 行 \/ 共 2 行/);
 });
