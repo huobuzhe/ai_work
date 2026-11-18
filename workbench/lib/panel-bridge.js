@@ -89,6 +89,18 @@ function makeStateHandler(deps) {
   const readTable = deps.readTable || defaultReadTable;
   const resolveDraft = deps.resolveDraft || function () { return null; };
   const resolveFile = deps.resolveFile || function (file /*, sessionId */) { return file; };
+  // 票 #52：预置按钮（registryButtons）来源；缺省从仓内 registry/ 读（结构性校验）。
+  // 允许注入以便测试，且只加载一次（跨表通用）。
+  let _presets = null;
+  function presets() {
+    if (_presets === null) {
+      try {
+        if (typeof deps.loadRegistry === 'function') _presets = deps.loadRegistry() || [];
+        else _presets = require('./panel-session').defaultLoadRegistry(deps.registryDir) || [];
+      } catch (_) { _presets = []; }
+    }
+    return _presets;
+  }
   return function handler(req) {
     const method = (req && req.method) || 'GET';
     if (method !== 'GET') return { status: 405, body: { error: '只支持 GET' } };
@@ -120,7 +132,7 @@ function makeStateHandler(deps) {
       return { status: 500, body: { error: '读表失败：' + ((e && e.message) || e) } };
     }
     const draft = resolveDraft(absPath);
-    const vm = buildPanelState({ columns: table.columns, rows: table.rows, draft: draft });
+    const vm = buildPanelState({ columns: table.columns, rows: table.rows, draft: draft, registryButtons: presets() });
     return {
       status: 200,
       body: {

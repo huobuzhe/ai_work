@@ -44,10 +44,37 @@ function defaultSaveButtons(fileAbs, buttons) {
 // 引擎里会改固化按钮集合/内容的动作类型（这些之后要落盘）。
 const BUTTON_MUTATING = ['SOLIDIFY', 'DELETE_BUTTON', 'RENAME_BUTTON', 'SET_BUTTON_PARAMS'];
 
+// 票 #52：把仓内预置按钮注册表（registry/*.json）加载成完整声明式按钮，供面板按钮库统一入口。
+// 走 #16 的 host seed 契约：读目录 → E.loadRegistry（结构性封闭校验）→ accepted 即 registryButtons。
+// 目录不存在/读取失败一律返回空数组、绝不抛错（预置按钮缺失不影响主管线）。只读、无网络、无凭据。
+function defaultLoadRegistry(registryDir) {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = registryDir || path.join(__dirname, '..', 'registry');
+    if (!fs.existsSync(dir)) return [];
+    const files = fs.readdirSync(dir).filter(function (f) { return /\.json$/.test(f); }).sort();
+    const entries = [];
+    for (let i = 0; i < files.length; i++) {
+      try { entries.push(JSON.parse(fs.readFileSync(path.join(dir, files[i]), 'utf8'))); } catch (_) { /* 单文件坏了跳过 */ }
+    }
+    const result = E.loadRegistry(entries, null); // 结构性校验：不绑死具体表
+    return Array.isArray(result.accepted) ? result.accepted : [];
+  } catch (_) { return []; }
+}
+
 function createSessionStore(opts) {
   opts = opts || {};
   const loadButtons = opts.loadButtons || defaultLoadButtons;
   const saveButtons = opts.saveButtons || defaultSaveButtons;
+  const loadRegistry = opts.loadRegistry || function () { return defaultLoadRegistry(opts.registryDir); };
+  let registryCache = null; // 预置按钮只加载一次，所有文件共用（跨表通用）
+  function presets() {
+    if (registryCache === null) {
+      try { registryCache = loadRegistry() || []; } catch (_) { registryCache = []; }
+    }
+    return registryCache;
+  }
   const states = Object.create(null); // fileAbs -> engine state
 
   function key(file) { return String(file || ''); }
@@ -57,6 +84,14 @@ function createSessionStore(opts) {
     const columns = (table && table.columns) ? table.columns.slice() : [];
     const rows = (table && table.rows) ? table.rows.map(function (r) { return Object.assign({}, r); }) : [];
     let st = E.initial({ columns: columns, rows: rows, sources: (table && table.sources) || undefined });
+    // 票 #52：把仓内预置按钮（registry/*.json，跨表通用）水合进 registryButtons，
+    // 令面板按钮库「预置 + 固化」统一入口（#16 的 host seed 契约在此接线）。
+    try {
+      const presetList = presets();
+      if (presetList.length) {
+        st = E.hydrateRegistry(st, presetList);
+      }
+    } catch (_) { /* 预置加载失败不影响主管线 */ }
     // 票 #49：首次见到该文件时，把持久化的固化按钮水合进来（缺省没有就保持空）。
     try {
       const persisted = loadButtons(file);
@@ -145,4 +180,4 @@ function createSessionStore(opts) {
   return { baseState, applyAction, view, reset };
 }
 
-module.exports = { createSessionStore, defaultLoadButtons, defaultSaveButtons, SIDECAR_SUFFIX };
+module.exports = { createSessionStore, defaultLoadButtons, defaultSaveButtons, defaultLoadRegistry, SIDECAR_SUFFIX };

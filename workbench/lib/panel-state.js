@@ -39,7 +39,9 @@ function buildPanelState(parsed) {
   }
 
   // 用真实引擎建 state 并算 preview（不手搓）。
-  const base = E.initial({ columns: columns, rows: rows });
+  // 票 #52：把调用方传入的预置按钮（registryButtons，预处理来源）交给 initial() 水合，
+  // 面板按钮库才能「预置 + 固化」统一入口（此前恒为 []，3 个预置按钮从不出现）。
+  const base = E.initial({ columns: columns, rows: rows, registryButtons: parsed.registryButtons || undefined });
   const state = Object.assign({}, base, {
     stage: draft ? 'PREVIEWED' : 'IDLE',
     draft: draft,
