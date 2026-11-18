@@ -232,10 +232,36 @@ function renderWorkbenchPanel(hostState) {
     if (typeof preview.affectedRows === 'number') lines.push('影响 ' + preview.affectedRows + ' 行 / 共 ' + (preview.totalRows == null ? '?' : preview.totalRows) + ' 行');
     lines.push('作用范围：' + (preview.scopeLabel || preview.scope || '全部'));
     const lineEls = lines.map(function (t, i) { return jsx('div', { children: t }, 'l' + i); });
-    // 默认配方提示：打开有数据的表时，Host 自动派生「调换前两列」以便立刻看到影响行数；
-    // 标明这是默认建议，用户可换成别的配方。
-    if (hostState && hostState.isDefaultDraft) {
-      lineEls.unshift(jsx('div', { 'data-workbench-default': '1', style: { opacity: 0.7, fontSize: 12, marginBottom: 4 }, children: '默认配方（调换前两列）· 可更换' }, 'defdraft'));
+    // 票 #46：始终标明「当前预览的是哪份配方」，点击按钮后也不消失。
+    // 优先用 hostState.recipeLabel（点击/派生时由上层显式给出）；否则在默认配方场景回退为默认标签。
+    const recipeLabel = (hostState && typeof hostState.recipeLabel === 'string' && hostState.recipeLabel)
+      ? hostState.recipeLabel
+      : ((hostState && hostState.isDefaultDraft) ? '默认配方（调换前两列）· 可更换' : '');
+    if (recipeLabel) {
+      lineEls.unshift(jsx('div', { 'data-workbench-recipe': '1', style: { opacity: 0.75, fontSize: 12, marginBottom: 4 }, children: '当前配方：' + recipeLabel }, 'recipe'));
+    }
+    // 票 #46：把「会改哪些格子」的逐格 before → after 明细真正渲染出来（用户 m02849：
+    // 只给行数看不出会变啥）。上限 20 格，超出给「还有 N 格」提示，避免面板过长。
+    const cells = (preview && Array.isArray(preview.cells)) ? preview.cells : [];
+    if (cells.length > 0) {
+      const CAP = 20;
+      const shown = cells.slice(0, CAP);
+      const cellEls = shown.map(function (c, i) {
+        const arrow = String(c.before) + ' → ' + String(c.after);
+        return jsx('div', {
+          'data-workbench-cell': (c.row == null ? '' : c.row) + '/' + (c.col == null ? '' : c.col),
+          style: { fontFamily: 'monospace', fontSize: 12, whiteSpace: 'nowrap' },
+          children: (c.row == null ? '' : ('第' + c.row + '行 ')) + (c.col == null ? '' : (c.col + '：')) + arrow
+        }, 'cell' + i);
+      });
+      if (cells.length > CAP) {
+        cellEls.push(jsx('div', { style: { opacity: 0.7, fontSize: 12 }, children: '还有 ' + (cells.length - CAP) + ' 个单元格会变……' }, 'cellmore'));
+      }
+      children.push(jsxs('div', {
+        'data-workbench-cells': String(cells.length),
+        style: { marginBottom: 8, maxHeight: 180, overflowY: 'auto' },
+        children: cellEls
+      }, 'cellbox'));
     }
     children.push(jsxs('div', { 'data-workbench-preview': '1', style: { marginBottom: 8 }, children: lineEls }, 'pv'));
   } else {
@@ -456,7 +482,17 @@ function registerWorkbenchPanel(ctx) {
           if (panelData && panelData.override) {
             effective.preview = panelData.override.preview || null;
             effective.isDefaultDraft = false;
+            // 票 #46：点击后仍标明「当前预览的是哪份配方」，不让提示行无声消失。
+            // override.buttonId → 从按钮库查回名字；查不到回退按钮 id。
+            var ovBtnId = panelData.override.buttonId;
+            var ovAll = (vm && vm.buttons ? vm.buttons : []).concat(vm && vm.registryButtons ? vm.registryButtons : []);
+            var ovName = ovBtnId;
+            for (var k = 0; k < ovAll.length; k++) { if (ovAll[k] && ovAll[k].id === ovBtnId) { ovName = ovAll[k].name || ovBtnId; break; } }
+            effective.recipeLabel = ovName;
             if (panelData.override.note) effective.note = panelData.override.note;
+          } else if (vm && vm.isDefaultDraft) {
+            // 未点击、且是自动派生的默认配方：给出配方标签（与卡片标签一致）。
+            effective.recipeLabel = '默认配方（调换前两列）';
           }
           return renderWorkbenchPanel(Object.assign({}, effective, { onButtonClick: onClick }));
         }
