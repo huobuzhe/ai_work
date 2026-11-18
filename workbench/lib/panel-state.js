@@ -42,7 +42,19 @@ function buildPanelState(parsed) {
   // 用户固化按钮（buttons）原样带出（声明式、无可执行代码），client 侧 projectButtonLibrary
   // 会投影成可点按钮。点击**不驱动引擎**（本票只做 UI 可点 + 事件通道）。
   const registryButtons = (base.registryButtons || []).slice();
-  const buttons = (base.buttons || []).map(function (b) { return Object.assign({}, b); });
+  // 票 #45：带上调用方传入的用户固化按钮（host 权威源），再追加默认配方按钮。
+  const buttons = (parsed.buttons || base.buttons || []).map(function (b) { return Object.assign({}, b); });
+  // 票 #45：把自动派生的默认配方（调换前两列）也做成一个可点按钮，让新表无需先固化配方
+  // 就能走通「点击→重算→预览刷新」闭环。id 用保留前缀 __default__，避开固化的 b* 空间。
+  if (isDefault && draft) {
+    buttons.push({
+      id: '__default__',
+      name: '默认配方（调换前两列）',
+      kind: 'swap',
+      source: 'default',
+      params: Object.assign({}, draft.params || {})
+    });
+  }
   return {
     stage: state.stage, draft: state.draft, preview: state.preview, isDefault: isDefault,
     registryButtons: registryButtons, buttons: buttons
