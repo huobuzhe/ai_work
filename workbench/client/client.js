@@ -246,6 +246,12 @@ function renderWorkbenchPanel(hostState) {
     if (recipeLabel) {
       lineEls.unshift(jsx('div', { 'data-workbench-recipe': '1', style: { opacity: 0.75, fontSize: 12, marginBottom: 4 }, children: '当前配方：' + recipeLabel }, 'recipe'));
     }
+    // 票 #46：点击反馈行——点了按钮后一定可见地反映「已按某配方重算」，
+    // 即使重算结果与当前完全相同，也不再像「点按钮没反应」。
+    if (hostState && hostState.clickedAt) {
+      var cName = hostState.clickedName || '';
+      lineEls.unshift(jsx('div', { 'data-workbench-clicked': '1', style: { color: '#0a7', fontSize: 12, marginBottom: 4 }, children: '✓ 已按「' + (cName || '当前配方') + '」重算预览' }, 'clicked'));
+    }
     // 票 #46：把「会改哪些格子」的逐格 before → after 明细真正渲染出来（用户 m02849：
     // 只给行数看不出会变啥）。上限 20 格，超出给「还有 N 格」提示，避免面板过长。
     const cells = (preview && Array.isArray(preview.cells)) ? preview.cells : [];
@@ -386,16 +392,19 @@ function usePanelData(React, address) {
         + '&button=' + encodeURIComponent(JSON.stringify(button));
       fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); })
         .then(function (j) {
+          // 票 #46：带上 clickedAt 时间戳 → 预览卡显示「已按…重算」可见反馈，
+          // 即使重算结果与当前完全相同，用户也能看到点击确实生效（不再「没反应」）。
+          var stamp = Date.now();
           if (j && j.preview) {
-            setOverride({ preview: j.preview, buttonId: buttonId, isDefaultDraft: false });
+            setOverride({ preview: j.preview, buttonId: buttonId, isDefaultDraft: false, clickedAt: stamp });
           } else {
-            setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false,
+            setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false, clickedAt: stamp,
               note: (j && j.error) ? String(j.error) : '操作失败' });
           }
         })
-        .catch(function (e) { setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false, note: String((e && e.message) || e) }); });
+        .catch(function (e) { setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false, clickedAt: Date.now(), note: String((e && e.message) || e) }); });
     } catch (e) {
-      setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false, note: String((e && e.message) || e) });
+      setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false, clickedAt: Date.now(), note: String((e && e.message) || e) });
     }
   }
   return { data: slot.data, error: slot.error, state: slot, override: override, applyButtonPreview: applyButtonPreview };
@@ -495,6 +504,9 @@ function registerWorkbenchPanel(ctx) {
             var ovName = ovBtnId;
             for (var k = 0; k < ovAll.length; k++) { if (ovAll[k] && ovAll[k].id === ovBtnId) { ovName = ovAll[k].name || ovBtnId; break; } }
             effective.recipeLabel = ovName;
+            // 票 #46：把点击时间与按钮名带进卡片，渲出「✓ 已按…重算」可见反馈。
+            effective.clickedAt = panelData.override.clickedAt || null;
+            effective.clickedName = ovName;
             if (panelData.override.note) effective.note = panelData.override.note;
           } else if (vm && vm.isDefaultDraft) {
             // 未点击、且是自动派生的默认配方：给出配方标签（与卡片标签一致）。

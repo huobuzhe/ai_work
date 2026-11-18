@@ -75,3 +75,21 @@ test('seam B：点击按钮后（override 覆盖）仍保留配方标签，不�
   assert.match(html, /data-workbench-recipe/);
   assert.match(html, /默认配方（调换前两列）/);
 });
+
+test('seam B：点击后渲染「✓ 已按…重算」可见反馈（即使结果相同也有反应）', (t) => {
+  const h = loadClientRender();
+  if (!h) { t.skip('react 不可解析，跳过渲染 seam'); return; }
+  const p = parsed();
+  const draft = E.buildDraft('swap', null, { 字段A: '姓名', 字段B: '工时', scope: 'all', 条件: '' });
+  const vm = H.buildPanelState({ columns: p.columns, rows: p.rows, draft: draft });
+  const clicked = Object.assign({}, vm, {
+    isDefaultDraft: false,
+    recipeLabel: '默认配方（调换前两列）',
+    clickedAt: Date.now(),
+    clickedName: '默认配方（调换前两列）'
+  });
+  const html = h.Server.renderToStaticMarkup(h.api.renderWorkbenchPanel(clicked));
+  assert.match(html, /data-workbench-clicked/, '应渲染点击反馈标记');
+  assert.match(html, /已按/, '含「已按…重算」文字');
+  assert.match(html, /默认配方（调换前两列）/, '反馈里带上按钮名');
+});
