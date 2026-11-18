@@ -330,8 +330,12 @@ function renderWorkbenchPanel(hostState) {
     // 没有回调时安全退化为空操作，绝不抛错。
     const onButtonClick = hostState && typeof hostState.onButtonClick === 'function'
       ? hostState.onButtonClick : null;
+    // 票 #48：按钮管理——每个按钮旁挂「▶运行 / 重命名 / 删除」控件，经 onButtonAction 汇报。
+    // 仅在宿主提供 onButtonAction 时渲染（旧调用保持纯点击语义，向后兼容）。
+    const onButtonAction = hostState && typeof hostState.onButtonAction === 'function'
+      ? hostState.onButtonAction : null;
     const btns = library.buttons.map(function (b, i) {
-      return jsx('button', {
+      const clickEl = jsx('button', {
         type: 'button',
         'data-workbench-button': b.id,
         'data-button-kind': b.kind || '',
@@ -341,6 +345,32 @@ function renderWorkbenchPanel(hostState) {
         },
         children: b.name
       }, 'btn' + i);
+      if (!onButtonAction) return clickEl;
+      const mgmt = jsx('span', {
+        'data-workbench-btn-mgmt': b.id,
+        style: { display: 'inline-flex', gap: 4, marginLeft: 4 },
+        children: [
+          jsx('button', {
+            type: 'button', 'data-wb-btn-run': b.id, title: '一键运行（参数未改直接执行并写入磁盘）',
+            onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { onButtonAction('run', b.id); } catch (_) {} },
+            children: '▶运行'
+          }, 'run' + i),
+          jsx('button', {
+            type: 'button', 'data-wb-btn-rename': b.id, title: '重命名',
+            onClick: function (ev) {
+              try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {}
+              try { var nn = (typeof window !== 'undefined' && window.prompt) ? window.prompt('新的按钮名', b.name) : null; if (nn != null && String(nn).trim()) onButtonAction('rename', b.id, { name: String(nn).trim() }); } catch (_) {}
+            },
+            children: '重命名'
+          }, 'ren' + i),
+          jsx('button', {
+            type: 'button', 'data-wb-btn-delete': b.id, title: '删除',
+            onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { onButtonAction('delete', b.id); } catch (_) {} },
+            children: '删除'
+          }, 'del' + i)
+        ]
+      }, 'mgmt' + i);
+      return jsx('span', { 'data-workbench-button-row': b.id, style: { display: 'inline-flex', alignItems: 'center', marginRight: 8, marginBottom: 4 }, children: [clickEl, mgmt] }, 'row' + i);
     });
     children.push(jsxs('div', { 'data-workbench-library': String(library.total), style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: btns }, 'lib'));
   }
@@ -614,8 +644,17 @@ function registerWorkbenchPanel(ctx) {
           } else if (vm && vm.isDefaultDraft) {
             effective.recipeLabel = '默认配方（调换前两列）';
           }
+          // 票 #48：按钮管理动作（运行/重命名/删除）→ 映射到引擎动作类型，复用 runAction 打到 Host。
+          var onButtonAction = function (op, id, extra) {
+            try {
+              if (op === 'run') runAction('RUN_BUTTON', { id: id });
+              else if (op === 'rename') runAction('RENAME_BUTTON', { id: id, name: (extra && extra.name) || '' });
+              else if (op === 'delete') runAction('DELETE_BUTTON', { id: id });
+            } catch (_) {}
+          };
           return renderWorkbenchPanel(Object.assign({}, effective, {
             onButtonClick: onClick,
+            onButtonAction: onButtonAction,
             inputText: inputText,
             onInput: function (v) { try { setInputText(v); } catch (_) {} },
             onAction: runAction,

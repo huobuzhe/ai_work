@@ -295,9 +295,13 @@ function makeActionHandler(deps) {
     } catch (e) {
       return { status: 500, body: { error: '执行动作失败：' + ((e && e.message) || e) } };
     }
-    // CONFIRM 真正落到磁盘：stage 从非 EXECUTED 变到 EXECUTED 的那一次，把 cells 写出。
+    // CONFIRM / RUN_BUTTON 真正落到磁盘：stage 从非 EXECUTED 变到 EXECUTED 的那一次，把 cells 写出。
+    // 票 #48：RUN_BUTTON（一键运行已固化的按钮）与 CONFIRM 同属「执行」语义，参数未改时引擎直接
+    // 一步到 EXECUTED（不经过 PREVIEWED），此前只有 CONFIRM 写盘 → 一键运行改的是内存、没落盘，
+    // 用户看到「已执行」但复开文件没变。这里把 RUN_BUTTON 也纳入写回。
     const wrote = {};
-    if (action.type === 'CONFIRM' && vm.stage === 'EXECUTED' && beforeStage !== 'EXECUTED' && vm.preview && vm.preview.cells) {
+    const isExecute = (action.type === 'CONFIRM' || action.type === 'RUN_BUTTON');
+    if (isExecute && vm.stage === 'EXECUTED' && beforeStage !== 'EXECUTED' && vm.preview && vm.preview.cells) {
       try {
         const r = applyTable(absPath, vm.preview.cells);
         wrote.writtenOk = true;
