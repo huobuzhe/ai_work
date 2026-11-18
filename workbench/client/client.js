@@ -170,11 +170,152 @@ function projectOne(b) {
   };
 }
 
+/**
+ * cordis 客户端插件体：DSH Web 模块系统把 bundle 的 module.exports 当作 cordis 插件，
+ * 由 unwrapExports → registry.plugin 解析；必须导出 `apply`（函数）——否则宿主
+ * 抛 `invalid plugin, expect function or object with an "apply" method, received object`。
+ * 之前的 tracer bullet 只导出了 registerWorkbenchPanel 等工具函数、没有 apply，
+ * 导致「装进 profile 后打开 xlsx 即崩溃（无 tab）」。见票：工作台挂载排障。
+ */
+const inject = ['slots'];
+
+/**
+ * 把工作台视图模型渲染成真实 React 元素（slot body 契约要求返回 React 元素，不能返回普通对象）。
+ * React 由宿主模块系统的 require 提供（与 univer / ui-approval 等同：require('react') +
+ * require('react/jsx-runtime')）。用 jsx-runtime 的 jsx() 直接构造，无需 JSX 编译。
+ * 诚实边界：本 tracer bullet 只渲染「可读摘要」，完整交互 UI 留待后续票；
+ * 但必须是合法 React 树、永不抛错（任何异常回退到一段说明文本）。
+ */
+function renderWorkbenchPanel(hostState) {
+  // 关键：react/jsx-runtime 的 jsx(type, props, key) 第三个参数是 **key**，不是 children！
+  // children 必须放到 props.children；多个子节点要用 jsxs()（而不是 jsx）。
+  // 之前把 children 数组当作第三参（key）传入，导致每个 div 都没有子节点 → 面板整块空白。
+  let jsx, jsxs;
+  let reactDiag = 'na';
+  try {
+    const rt = require('react/jsx-runtime');
+    jsx = rt.jsx; jsxs = rt.jsxs;
+    reactDiag = 'jsx=' + (typeof jsx) + '/jsxs=' + (typeof jsxs);
+  } catch (e) { jsx = jsxs = null; reactDiag = 'require-threw:' + ((e && e.message) || e); }
+  if (typeof jsx !== 'function') {
+    // 极端兜底：拿不到 jsx 时返回一个字符串（React 可渲染文本节点），绝不返回普通对象。
+    return '表格工作台(jsx 不可用:' + reactDiag + ')';
+  }
+  let preview = null;
+  let library = null;
+  try { preview = projectPreviewCard(hostState); } catch (_) { preview = null; }
+  try { library = projectButtonLibrary(hostState); } catch (_) { library = null; }
+
+  const children = [];
+  children.push(jsx('div', { style: { fontWeight: 600, marginBottom: 8 }, children: '表格工作台' }, 'hdg'));
+  if (preview) {
+    const lines = [];
+    if (preview.explanation) lines.push('解释：' + preview.explanation);
+    if (typeof preview.affectedRows === 'number') lines.push('影响 ' + preview.affectedRows + ' 行 / 共 ' + (preview.totalRows == null ? '?' : preview.totalRows) + ' 行');
+    lines.push('作用范围：' + (preview.scopeLabel || preview.scope || '全部'));
+    const lineEls = lines.map(function (t, i) { return jsx('div', { children: t }, 'l' + i); });
+    // 默认配方提示：打开有数据的表时，Host 自动派生「调换前两列」以便立刻看到影响行数；
+    // 标明这是默认建议，用户可换成别的配方。
+    if (hostState && hostState.isDefaultDraft) {
+      lineEls.unshift(jsx('div', { 'data-workbench-default': '1', style: { opacity: 0.7, fontSize: 12, marginBottom: 4 }, children: '默认配方（调换前两列）· 可更换' }, 'defdraft'));
+    }
+    children.push(jsxs('div', { 'data-workbench-preview': '1', style: { marginBottom: 8 }, children: lineEls }, 'pv'));
+  } else {
+    children.push(jsx('div', { 'data-workbench-preview': 'empty', style: { opacity: 0.7 }, children: '暂无预览。' }, 'pvempty'));
+  }
+  if (library && library.total > 0) {
+    children.push(jsx('div', { 'data-workbench-library': String(library.total), children: '按钮库：' + library.total + ' 个' }, 'lib'));
+  }
+  return jsxs('div', { 'data-workbench-panel': '1', style: { padding: 12, fontFamily: 'inherit', fontSize: 13 }, children: children });
+}
+
+function apply(ctx) {
+  // 硬约束：本插件任何内部错误都**绝不能**让整个 web boot 失败（否则宿主弹「启动失败」
+  // 对话框、点「禁用第三方插件」还会连锁改写 profile，形成崩溃循环）。
+  // 因此这里捕获所有异常、记入 error 级 console（会被写进下一次 crash 报告便于排查），
+  // 但**不再 rethrow**——最坏情况退化为「没有工作台 tab」，而不是「整个应用起不来」。
+  try {
+    return registerWorkbenchPanel(ctx);
+  } catch (e) {
+    try { console.error('[workbench] apply threw (degraded to no-tab, boot unaffected):', (e && e.stack) || e); } catch (_) {}
+    return undefined;
+  }
+}
+
+/**
+ * 票 #41：解析 dsh-resource://file 文件地址 → {scope, sessionId, path}。
+ * 契约照抄 univer-office client.js:22726-22754 parseFileAddress：
+ *   dsh-resource://file/session/<sid>/<relpath...>  → {scope:'session', sessionId, path:'<relpath>'}
+ *   dsh-resource://file/absolute/<drive>/<...>       → {scope:'absolute', path:'C:/...'}
+ * 解析不出返回 undefined（面板显示占位，不崩）。
+ */
+var FILE_ADDRESS_PREFIX = 'dsh-resource://file/';
+function parseFileAddress(address) {
+  try {
+    if (!address || address.indexOf(FILE_ADDRESS_PREFIX) !== 0) return undefined;
+    var qi = address.search(/[?#]/);
+    var body = address.slice(FILE_ADDRESS_PREFIX.length, qi === -1 ? undefined : qi);
+    var parts = body.split('/');
+    var scope = parts[0];
+    var rest = parts.slice(1);
+    if (scope === 'session') {
+      var id = rest[0];
+      var segments = rest.slice(1);
+      if (!id || segments.length === 0) return undefined;
+      return { scope: scope, sessionId: decodeURIComponent(id), path: segments.map(decodeURIComponent).join('/') };
+    }
+    if (scope === 'absolute') {
+      var segs = rest.map(decodeURIComponent);
+      if (segs.length === 0 || segs[0] === '') return undefined;
+      return { scope: scope, path: segs.join('/') };
+    }
+    return undefined;
+  } catch (e) { return undefined; }
+}
+
+/**
+ * 票 #41：从 Host 路由取该 tab 的真实面板数据（{columns,rowCount,preview}）。
+ * 用 React.useState + useEffect 轮询（与 univer useUniverStates 同构，间隔 900ms）。
+ * 请求 shape 照抄 univer：/workbench-api/state?file=<address.path>&sessionId=<address.sessionId>，
+ * Host 侧据 sessionId 取 cwd 解析成绝对路径再读表。任何网络异常都吞掉，面板显示占位不崩。
+ */
+function usePanelData(React, address) {
+  var file = address && address.path;
+  var sessionId = address && address.sessionId;
+  var key = (file || '') + '|' + (sessionId || '');
+  var stateTuple = React.useState({ data: null, error: null });
+  var slot = stateTuple[0], setSlot = stateTuple[1];
+  React.useEffect(function () {
+    if (!file) { setSlot({ data: null, error: null }); return undefined; }
+    var alive = true;
+    function load() {
+      try {
+        var origin = (typeof window !== 'undefined' && window.location && window.location.origin) || '';
+        var url = origin + '/workbench-api/state?file=' + encodeURIComponent(file)
+          + (sessionId ? '&sessionId=' + encodeURIComponent(sessionId) : '');
+        fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); })
+          .then(function (j) { if (alive) setSlot({ data: j, error: null }); })
+          .catch(function (e) { if (alive) setSlot({ data: null, error: String((e && e.message) || e) }); });
+      } catch (e) { if (alive) setSlot({ data: null, error: String((e && e.message) || e) }); }
+    }
+    load();
+    var timer = setInterval(load, 900);
+    return function () { alive = false; if (timer) clearInterval(timer); };
+  }, [key]);
+  return slot;
+}
+
 function registerWorkbenchPanel(ctx) {
   // 阶段 1：注册 tab 类型（priority=extension，外部包公开路径；keepMounted 常驻）
-  ctx.inject(['sidebarRightTabs'], function (nativeCtx) {
-    nativeCtx.effect(function () {
-      nativeCtx.sidebarRightTabs.register({
+  // 契约照抄 dsh-univer-office lib/client.js:23371-23373 与 better-sidebar
+  // client-registry.js:30123-30130：用 ctx.inject([...], cb) 等 sidebarRightTabs 就绪，
+  // 经 injected.get("sidebarRightTabs") 取值（不要直接点 nativeCtx.sidebarRightTabs），
+  // 取不到就安全返回不抛错。
+  ctx.inject(['sidebarRightTabs'], function (injected) {
+    const tabs = injected.get ? injected.get('sidebarRightTabs') : injected.sidebarRightTabs;
+    if (tabs === void 0) return;
+    injected.effect(function () {
+      const dispose = tabs.register({
         id: TAB_ID,
         kind: TAB_KIND,
         patterns: ['*.xlsx', '*.xls', '*.csv'],
@@ -182,23 +323,64 @@ function registerWorkbenchPanel(ctx) {
         keepMounted: true,
         title: function () { return '表格工作台'; }
       });
+      return dispose;
     }, 'workbench: sidebar tab type');
   });
 
-  // 阶段 2：面板 body 注册到 sidebar.right.pane.tab，key 等于 tab id
-  ctx.slots.register({ name: 'sidebar.right.pane.tab', key: TAB_ID }, function WorkbenchPanelBody(hostState) {
-    // 工作台自渲染视图：把 Host 投影进来的状态映射成「预览卡 + 按钮库」两块视图模型。
-    // 票 #15：所有按钮统一在面板呈现（AC4），按钮库与预览卡来自同一份 Host 权威状态。
-    return {
-      preview: projectPreviewCard(hostState),
-      buttonLibrary: projectButtonLibrary(hostState)
-    };
-  });
+  // 阶段 2：面板 body 注册到 sidebar.right.pane.tab，key 等于 tab id。
+  // 契约照抄 better-sidebar client-registry.js:30144-30152 / univer client.js:23421-23431：
+  // 必须用 ctx.slots.inject(SLOT, () => ctx.slots.register({name,key,inject}, Body))
+  // 包一层，而不是在 apply 里裸调 ctx.slots.register——裸调会在 slot 未就绪时抛错，
+  // 使整个 fiber 进入 failed（宿主报 "dsh-workbench: failed"，无 tab）。
+  ctx.effect(function () {
+    return ctx.slots.inject('sidebar.right.pane.tab', function () {
+      const d = ctx.slots.register(
+        // 票 #41：inject 只提供额外上下文，**不能覆盖** slot 自己声明的 hooks
+        // （sidebar.right.pane.tab 的 slot 定义声明 inject:{hooks:{tabInfo}}，body 靠它拿到
+        // props.useTabInfo）。若这里返回 {hooks:{}} 会把 tabInfo 挤掉 → props.useTabInfo 变
+        // undefined → 拿不到 tab.contentId → 永远「暂无预览」。故对齐 univer 返回空对象。
+        { name: 'sidebar.right.pane.tab', key: TAB_ID, inject: function () { return {}; } },
+        function WorkbenchPanelBody(props) {
+          // slot body 必须是 React 组件、返回 React 元素（返回普通对象会触发 React error #31）。
+          // 票 #41：从 slot props 的 useTabInfo（uni ver 直接用 props.useTabInfo()，非 props.hooks）
+          // 取 tab.contentId（文件地址）→ parseFileAddress → {sessionId, path}，轮询 Host 路由
+          // 拿真实 preview，再渲染成 React 元素。
+          var React = null;
+          try { React = require('react'); } catch (_) { React = null; }
+          var address = undefined;
+          try {
+            var useTabInfo = props && props.useTabInfo;
+            if (typeof useTabInfo === 'function') {
+              var ti = useTabInfo();
+              address = parseFileAddress(ti && ti.tab ? ti.tab.contentId : undefined);
+            }
+          } catch (_) { address = undefined; }
+          var vm = null;
+          if (React && typeof React.useState === 'function') {
+            try {
+              var slotData = usePanelData(React, address);
+              // Host 返回 { columns, rowCount, preview, isDefaultDraft }；包装成 renderWorkbenchPanel
+              // 认得的视图模型（preview 为空则面板显示「暂无预览」）。
+              if (slotData && slotData.data) {
+                vm = {
+                  preview: slotData.data.preview || null,
+                  stage: slotData.data.preview ? 'PREVIEWED' : 'IDLE',
+                  isDefaultDraft: !!slotData.data.isDefaultDraft
+                };
+              }
+            } catch (_) { vm = null; }
+          }
+          return renderWorkbenchPanel(vm || {});
+        }
+      );
+      return d;
+    });
+  }, 'workbench: panel body');
 
   return { tabId: TAB_ID, kind: TAB_KIND, projectPreviewCard, projectButtonLibrary };
 }
 
-module.exports = { registerWorkbenchPanel, projectPreviewCard, projectButtonLibrary, TAB_ID, TAB_KIND };
+module.exports = { apply, inject, registerWorkbenchPanel, projectPreviewCard, projectButtonLibrary, renderWorkbenchPanel, parseFileAddress, TAB_ID, TAB_KIND };
 
     return module.exports;
   }

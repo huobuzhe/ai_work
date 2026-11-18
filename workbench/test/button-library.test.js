@@ -169,19 +169,30 @@ function loadBundle() {
   return captured;
 }
 
-test('AC4 面板 body 把按钮库一并投影（所有按钮统一在面板呈现）', () => {
+test('AC4 面板把按钮库一并投影（所有按钮统一在面板呈现）', () => {
+  // 票 #41：body 契约已改为「返回 React 元素」，不再返回 {preview,buttonLibrary} 普通对象
+  //（返回普通对象会触发 React error #31）。按钮库仍由 projectButtonLibrary 投影，面板
+  // renderWorkbenchPanel 会把它渲染进面板。这里直接验投影 + 投影包含固化按钮。
   const def = loadBundle();
   const mod = { exports: {} };
   const exported = def.factory(function () { throw new Error('no external require'); }, mod.exports, mod);
-  const calls = { tabs: [], slots: [] };
-  const nativeCtx = { effect: function (fn) { fn(); }, sidebarRightTabs: { register: function (spec) { calls.tabs.push(spec); } } };
-  const ctx = { inject: function (names, fn) { fn(nativeCtx); }, slots: { register: function (spec, body) { calls.slots.push({ spec, body }); } } };
-  exported.registerWorkbenchPanel(ctx);
   const s = E.reduce(executedExtract(mkState()), { type: 'SOLIDIFY', name: '补邮箱' });
-  const vmodel = calls.slots[0].body(s);
-  assert.ok(vmodel.buttonLibrary, 'body 返回对象须含 buttonLibrary');
-  assert.equal(vmodel.buttonLibrary.total, 1);
-  assert.equal(vmodel.buttonLibrary.buttons[0].name, '补邮箱');
+  const lib = exported.projectButtonLibrary(s);
+  assert.equal(lib.total, 1);
+  assert.equal(lib.buttons[0].name, '补邮箱');
+
+  // 面板 body 仍注册成功（body 是函数，渲染时不崩——不发 fetch 时退化为占位/数据渲染）
+  const calls = { tabs: [], slots: [], effects: [] };
+  const sidebarRightTabs = { register: function (spec) { calls.tabs.push(spec); return function () {}; } };
+  const services = { sidebarRightTabs, slots: { inject: function (n, cb) { return cb(); }, register: function (spec, body) { calls.slots.push({ spec, body }); return function () {}; } } };
+  const ctx = {
+    effect: function (fn) { return fn(); },
+    inject: function (names, fn) { return fn({ get: function (n) { return services[n]; }, effect: ctx.effect, slots: services.slots }); },
+    slots: services.slots,
+    get: function (n) { return services[n]; }
+  };
+  exported.registerWorkbenchPanel(ctx);
+  assert.equal(typeof calls.slots[0].body, 'function', '面板 body 是函数');
 });
 
 // AC5 边界 ------------------------------------------------------------------

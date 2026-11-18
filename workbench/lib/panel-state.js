@@ -1,0 +1,44 @@
+'use strict';
+/**
+ * 票 #41 seam A（Host 纯函数）：把「已解析的表格数据 + 一份草稿配方」合成面板真正要显示的
+ * 视图模型（含真实 preview）。
+ *
+ * 设计要点（用户拍板 m01709）：数据管道走 Host 侧——宿主半算好 preview 推给面板，
+ * client 不 require 引擎。本模块是宿主半的那份「算 preview」的纯逻辑，吃已解析数据，
+ * 不碰 python / 文件系统 / 网络，便于单测（seam A 吃解析后数据）。
+ *
+ * 输入形状：{ columns: string[], rows: object[], draft: <引擎草稿> }
+ * 输出形状：{ stage, draft, preview }  —— preview 为引擎 preview() 的真实产出（可再经
+ *   client 的 projectPreviewCard 投影成六段视图）。
+ */
+const E = require('./engine');
+
+function buildPanelState(parsed) {
+  parsed = parsed || {};
+  const columns = (parsed.columns || []).slice();
+  const rows = (parsed.rows || []).map(function (r) { return Object.assign({}, r); });
+  let draft = parsed.draft || null;
+
+  // 无草稿时：若表有 ≥2 列，自动派生一个「默认配方」= 调换前两列（swap）。
+  // 目的：打开一张有数据的表，面板立刻显示真实的「影响 N 行」，而不是空占位。
+  // 这是**真实**可执行的配方（两列一定存在、作用于全部行），不是假造的计数；
+  // 用 isDefault 标记，面板可标注「（默认配方：调换前两列）」，用户后续可换成别的。
+  let isDefault = false;
+  if (!draft && columns.length >= 2) {
+    try {
+      draft = E.buildDraft('swap', null, { 字段A: columns[0], 字段B: columns[1], scope: 'all', 条件: '' });
+      isDefault = true;
+    } catch (_) { draft = null; isDefault = false; }
+  }
+
+  // 用真实引擎建 state 并算 preview（不手搓）。
+  const base = E.initial({ columns: columns, rows: rows });
+  const state = Object.assign({}, base, {
+    stage: draft ? 'PREVIEWED' : 'IDLE',
+    draft: draft,
+    preview: draft ? E.preview(base, draft) : null
+  });
+  return { stage: state.stage, draft: state.draft, preview: state.preview, isDefault: isDefault };
+}
+
+module.exports = { buildPanelState };

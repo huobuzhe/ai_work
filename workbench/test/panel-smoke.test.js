@@ -44,15 +44,29 @@ test('factory 导出的注册函数经 sidebarRightTabs + slots 契约挂载常�
   const register = exported.registerWorkbenchPanel || (mod.exports && mod.exports.registerWorkbenchPanel);
   assert.equal(typeof register, 'function', '必须导出 registerWorkbenchPanel');
 
-  const calls = { injects: [], effects: [], tabs: [], slots: [] };
-  const nativeCtx = {
-    effect: function (fn, label) { calls.effects.push(label); fn(); },
-    sidebarRightTabs: { register: function (spec) { calls.tabs.push(spec); } }
-  };
-  const ctx = {
-    inject: function (names, fn) { calls.injects.push(names); fn(nativeCtx); },
-    slots: { register: function (spec, body) { calls.slots.push({ spec, body }); } }
-  };
+  const calls = { injects: [], effects: [], tabs: [], slots: [], slotInjects: [] };
+  // 忠实模拟 cordis ctx：effect(fn) 立即执行并返回 disposer；
+  // slots.inject(name, cb) 立即 cb()；plugins 经 injected.get(name) 取值。
+  function makeCtx() {
+    const sidebarRightTabs = { register: function (spec) { calls.tabs.push(spec); return function () {}; } };
+    const services = { sidebarRightTabs };
+    const slots = {
+      inject: function (name, cb) { calls.slotInjects.push(name); return cb(); },
+      register: function (spec, body) { calls.slots.push({ spec, body }); return function () {}; }
+    };
+    services.slots = slots;
+    const ctx = {
+      effect: function (fn, label) { calls.effects.push(label); const d = fn(); return typeof d === 'function' ? d : function () {}; },
+      inject: function (names, fn) {
+        calls.injects.push(names);
+        return fn({ get: function (n) { return services[n]; }, effect: ctx.effect, slots });
+      },
+      slots,
+      get: function (n) { return services[n]; }
+    };
+    return ctx;
+  }
+  const ctx = makeCtx();
   const result = register(ctx);
 
   // 阶段 1：注入 sidebarRightTabs，且带 keepMounted 常驻
