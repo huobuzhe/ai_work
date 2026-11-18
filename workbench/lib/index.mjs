@@ -34,4 +34,15 @@ export function apply(ctx) {
   }
 }
 
-export default { name, apply };
+// 刻意**不写** `export default { name, apply }`。
+//
+// 原因（踩坑记录，2026-11-18）：
+//   宿主用 cordis-plugin-loader 的 import 载入 bundle，再过 unwrapExports()：
+//     exports = exports.default ?? exports; if (!exports.__esModule) return exports; ...
+//   若本文件同时有具名导出 name/apply **和** `export default { name, apply }`，
+//   经宿主的自定义 internal import（会做转译）后，unwrapExports 可能取到那个
+//   default 普通对象；一旦该对象在宿主转译路径下被标记/处理成非插件形状，就会抛
+//   'invalid plugin, expect function or object with an "apply" method, received object'。
+//   已确认可用（正在被本宿主加载）的 dsh-pocket / dsh-pet 都**只有具名导出**、
+//   没有 export default。故此处对齐它们：只留具名导出，让 unwrapExports(ns) 直接
+//   拿到 ns 本身（有 apply 函数）→ resolve() 通过。

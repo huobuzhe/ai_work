@@ -18,14 +18,13 @@ const pkg = require(path.join(PKG_DIR, 'package.json'));
 
 test('package.json main 指向宿主入口 lib/index.mjs（不再指向引擎）', () => {
   assert.equal(pkg.main, 'lib/index.mjs');
-  // 关键：cordis 加载器用 exports["."] 的 import 条件解析插件模块——
-  // 必须解析到宿主入口（带 name+apply），不能是引擎（CJS、无 apply）。
-  // 这是曾经「装进 profile 却没有 tab」的根因："." 曾指向 engine.js。
-  assert.equal(pkg.exports['.'].import, './lib/index.mjs');
+  // 关键：cordis 加载器用 exports["."] 解析插件模块——必须解析到宿主入口
+  // （带 name+apply），不能是引擎（CJS、无 apply）。这是「装进 profile 却没 tab」的根因。
+  // 形状对齐正在被本宿主加载的 dsh-pocket：只有一个 default 条件指向 ESM 入口，
+  // 不再拆 import/require（曾经拆成 import→index.mjs 仍触发宿主转译路径下的
+  // 'invalid plugin ... received object' 崩溃，见 lib/index.mjs 内注释）。
   assert.equal(pkg.exports['.'].default, './lib/index.mjs');
-  // require 条件仍指向引擎，保证 CJS 消费方（require('dsh-workbench')）不破。
-  assert.equal(pkg.exports['.'].require, './lib/engine.js');
-  // 引擎另有独立子路径（测试/脚本可 require('dsh-workbench/engine')）。
+  // 引擎走独立子路径（测试/脚本一律 require('../lib/engine') 直连，不依赖 "."）。
   assert.equal(pkg.exports['./engine'], './lib/engine.js');
   assert.equal(pkg.exports['./host'], './lib/index.mjs');
   assert.equal(pkg.exports['./client'], './client/client.js');
@@ -37,11 +36,15 @@ test('宿主入口导出具名 name 与 apply 函数', async () => {
   assert.equal(typeof mod.apply, 'function');
 });
 
-test('宿主入口同时提供默认导出 { name, apply }', async () => {
+test('宿主入口只用具名导出 name/apply，不写 export default（对齐 dsh-pocket）', async () => {
   const mod = await import('file://' + ENTRY);
-  assert.ok(mod.default, '应有 default 导出');
-  assert.equal(mod.default.name, 'dsh-workbench');
-  assert.equal(typeof mod.default.apply, 'function');
+  // 刻意不出 default：带的 default 普通对象会经宿主 unwrapExports 的
+  // `exports.default ?? exports` 被选中，在某些转译路径下丢掉 apply 形状，
+  // 触发 'invalid plugin ... received object' 崩溃。只留具名导出最稳。
+  assert.equal(mod.default, undefined, '不应有 default 导出（否则宿主 unwrapExports 会误取）');
+  // 具名导出仍在，unwrapExports(namespace) 直接得 namespace 本身 → 有 apply。
+  assert.equal(mod.name, 'dsh-workbench');
+  assert.equal(typeof mod.apply, 'function');
 });
 
 test('apply(ctx) 挂 effect 不抛错；无 ctx 也不抛错（防御）', async () => {

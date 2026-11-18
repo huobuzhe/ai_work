@@ -7,8 +7,6 @@
   "main": "lib/index.mjs",
   "exports": {
     ".": {
-      "import": "./lib/index.mjs",
-      "require": "./lib/engine.js",
       "default": "./lib/index.mjs"
     },
     "./engine": "./lib/engine.js",
