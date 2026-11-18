@@ -122,6 +122,7 @@ function projectPreviewCard(state) {
     swapBanner: sections.impact.swapBanner,
     cells: sections.impact.cells,
     invalid: !ok,
+    errors: sections.validation.errors,
     sections: sections
   };
 }
@@ -206,6 +207,25 @@ function renderWorkbenchPanel(hostState) {
 
   const children = [];
   children.push(jsx('div', { style: { fontWeight: 600, marginBottom: 8 }, children: '表格工作台' }, 'hdg'));
+  // 票 #44 AC3：操作失败/校验不通过时如实显示失败项（不崩）。
+  const failNote = (hostState && typeof hostState.note === 'string' && hostState.note) ? hostState.note : '';
+  const invalidErrors = (preview && preview.invalid && Array.isArray(preview.errors)) ? preview.errors : null;
+  if ((preview && preview.invalid) || failNote) {
+    const errLines = [];
+    if (failNote) errLines.push(failNote);
+    if (invalidErrors) {
+      for (let i = 0; i < invalidErrors.length; i++) {
+        const e = invalidErrors[i];
+        errLines.push(typeof e === 'string' ? e : (e && (e.message || e.msg || JSON.stringify(e))) || String(e));
+      }
+    }
+    if (errLines.length === 0) errLines.push('操作失败');
+    children.push(jsxs('div', {
+      'data-workbench-error': '1',
+      style: { color: '#b00020', marginBottom: 8 },
+      children: errLines.map(function (t, i) { return jsx('div', { children: t }, 'err' + i); })
+    }, 'errbox'));
+  }
   if (preview) {
     const lines = [];
     if (preview.explanation) lines.push('解释：' + preview.explanation);
@@ -300,6 +320,11 @@ function usePanelData(React, address) {
   var key = (file || '') + '|' + (sessionId || '');
   var stateTuple = React.useState({ data: null, error: null });
   var slot = stateTuple[0], setSlot = stateTuple[1];
+  // 票 #44：点击按钮后 Host 重算出的「操作后预览」覆盖层（确认前仅替换预览，不改源数据）。
+  // 一次点击 → fetch /workbench-api/preview → 拿到新 preview 暂存；再次轮询 /state 时清掉，
+  // 回到实时状态（避免覆盖层永远压住实时数据）。
+  var overrideTuple = React.useState(null);
+  var override = overrideTuple[0], setOverride = overrideTuple[1];
   React.useEffect(function () {
     if (!file) { setSlot({ data: null, error: null }); return undefined; }
     var alive = true;
@@ -317,7 +342,31 @@ function usePanelData(React, address) {
     var timer = setInterval(load, 900);
     return function () { alive = false; if (timer) clearInterval(timer); };
   }, [key]);
-  return slot;
+  // 票 #44：点击按钮 → 请 Host 用引擎按该按钮配方重算 preview，成功后覆盖预览层。
+  // 失败（读表/校验/网络）不崩：把错误写进覆盖层，面板照常显示（AC3 如实显示失败项）。
+  function applyButtonPreview(buttonId, button) {
+    if (!file || !button) return;
+    try {
+      var origin = (typeof window !== 'undefined' && window.location && window.location.origin) || '';
+      var url = origin + '/workbench-api/preview?file=' + encodeURIComponent(file)
+        + (sessionId ? '&sessionId=' + encodeURIComponent(sessionId) : '')
+        + '&buttonId=' + encodeURIComponent(buttonId)
+        + '&button=' + encodeURIComponent(JSON.stringify(button));
+      fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); })
+        .then(function (j) {
+          if (j && j.preview) {
+            setOverride({ preview: j.preview, buttonId: buttonId, isDefaultDraft: false });
+          } else {
+            setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false,
+              note: (j && j.error) ? String(j.error) : '操作失败' });
+          }
+        })
+        .catch(function (e) { setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false, note: String((e && e.message) || e) }); });
+    } catch (e) {
+      setOverride({ preview: null, buttonId: buttonId, isDefaultDraft: false, note: String((e && e.message) || e) });
+    }
+  }
+  return { data: slot.data, error: slot.error, state: slot, override: override, applyButtonPreview: applyButtonPreview };
 }
 
 function registerWorkbenchPanel(ctx) {
@@ -371,33 +420,45 @@ function registerWorkbenchPanel(ctx) {
             }
           } catch (_) { address = undefined; }
           var vm = null;
+          var panelData = null;
           if (React && typeof React.useState === 'function') {
             try {
-              var slotData = usePanelData(React, address);
+              panelData = usePanelData(React, address);
               // Host 返回 { columns, rowCount, preview, isDefaultDraft, registryButtons, buttons }；
               // 包装成 renderWorkbenchPanel 认得的视图模型（preview 为空则显示「暂无预览」）。
-              if (slotData && slotData.data) {
+              if (panelData && panelData.data) {
                 vm = {
-                  preview: slotData.data.preview || null,
-                  stage: slotData.data.preview ? 'PREVIEWED' : 'IDLE',
-                  isDefaultDraft: !!slotData.data.isDefaultDraft,
+                  preview: panelData.data.preview || null,
+                  stage: panelData.data.preview ? 'PREVIEWED' : 'IDLE',
+                  isDefaultDraft: !!panelData.data.isDefaultDraft,
                   // 票 #43：按钮库原样带出，renderWorkbenchPanel 会投影成可点按钮。
-                  registryButtons: slotData.data.registryButtons || [],
-                  buttons: slotData.data.buttons || []
+                  registryButtons: panelData.data.registryButtons || [],
+                  buttons: panelData.data.buttons || []
                 };
               }
-            } catch (_) { vm = null; }
+            } catch (_) { vm = null; panelData = null; }
           }
-          // 票 #43：点击事件通道——本票只做 UI 可点 + 触发回调（不改引擎状态、不执行）。
-          // 回调暂为记录型空操作；#44 再接「点击驱动引擎刷新预览」。（不依赖 window，纯记录。）
+          // 票 #44：点击按钮 → 请 Host 用引擎按该按钮配方重算 preview，覆盖预览卡（刷新）。
+          // 需要拿到该按钮的声明式配方（kind+params，无代码）一起发给 Host；从当前 vm 的
+          // buttons/registryButtons 里按 id 查回。
           var onClick = function (id) {
             try {
-              if (typeof console !== 'undefined' && console && typeof console.log === 'function') {
-                console.log('[workbench] button clicked:', id);
+              if (panelData && typeof panelData.applyButtonPreview === 'function') {
+                var all = (vm && vm.buttons ? vm.buttons : []).concat(vm && vm.registryButtons ? vm.registryButtons : []);
+                var btn = null;
+                for (var i = 0; i < all.length; i++) { if (all[i] && all[i].id === id) { btn = all[i]; break; } }
+                if (btn) panelData.applyButtonPreview(id, btn);
               }
             } catch (_) {}
           };
-          return renderWorkbenchPanel(Object.assign({}, vm || {}, { onButtonClick: onClick }));
+          // 票 #44：若点击产生了覆盖层预览，就用它替换预览段（刷新成操作后的影响）。
+          var effective = Object.assign({}, vm || {});
+          if (panelData && panelData.override) {
+            effective.preview = panelData.override.preview || null;
+            effective.isDefaultDraft = false;
+            if (panelData.override.note) effective.note = panelData.override.note;
+          }
+          return renderWorkbenchPanel(Object.assign({}, effective, { onButtonClick: onClick }));
         }
       );
       return d;

@@ -49,4 +49,35 @@ function buildPanelState(parsed) {
   };
 }
 
-module.exports = { buildPanelState };
+module.exports = { buildPanelState, buildButtonPreview };
+
+/**
+ * 票 #44 seam：按钮点击驱动引擎 → 预览卡刷新（Host 纯函数）。
+ * 给定「已解析表格数据 + 按钮库」和某个 buttonId，按该按钮的配方（kind+params）用引擎
+ * buildDraft → preview，产出「该按钮操作会怎样」的真实影响预览。**只算预览、不执行**——
+ * 不调 applyCells、不写回 rows（确认前表格不动）；也不修改传入的 parsed（深拷一份再算）。
+ * 校验不通过时如实返回 invalid preview（带 errors），不崩；buttonId 找不到返回 null。
+ *
+ * @param {{columns:string[], rows:object[], sources?:object, buttons?:object[], registryButtons?:object[]}} parsed
+ * @param {string} buttonId
+ * @returns {{stage:string, preview:object, draft:object} | null}
+ */
+function buildButtonPreview(parsed, buttonId) {
+  parsed = parsed || {};
+  const buttons = (parsed.buttons || []).concat(parsed.registryButtons || []);
+  const b = buttons.filter(function (x) { return x && x.id === buttonId; })[0];
+  if (!b) return null;
+  // 用引擎按按钮配方重建草稿（按钮是声明式配方：kind + params + steps，无代码）。
+  let draft;
+  try {
+    draft = E.buildDraft(b.kind, null, Object.assign({}, b.params || {}));
+  } catch (_) {
+    draft = { kind: b.kind, params: Object.assign({}, b.params || {}) };
+  }
+  // 深拷数据再建 state，绝不写回调用方（确认前表格不动 / 不改入参）。
+  const columns = (parsed.columns || []).slice();
+  const rows = (parsed.rows || []).map(function (r) { return Object.assign({}, r); });
+  const base = E.initial({ columns: columns, rows: rows, sources: parsed.sources });
+  const pv = E.preview(base, draft);
+  return { stage: 'PREVIEWED', preview: pv, draft: draft };
+}

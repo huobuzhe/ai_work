@@ -15,7 +15,7 @@
  *   → 405 非 GET
  */
 const path = require('path');
-const { buildPanelState } = require('./panel-state');
+const { buildPanelState, buildButtonPreview } = require('./panel-state');
 
 /**
  * 默认读表器：spawn python xlsx_bridge.py read-values <file>，解析其 stdout JSON。
@@ -105,4 +105,83 @@ function makeStateHandler(deps) {
   };
 }
 
-module.exports = { makeStateHandler, defaultReadTable };
+/**
+ * 票 #44：生成 /workbench-api/preview 的 handler（纯函数，便于测试）。
+ * 语义：client 点击某按钮 → 带上 file/sessionId 与按钮的**声明式配方**（button，JSON 编码）
+ * 请求 Host → Host 重读该表 → 用引擎按该按钮配方重算 preview → 返回新的影响预览。
+ * 引擎只在 Host 侧调用（延续 #41 管道），client 不 require 引擎；确认前只算预览、不写入。
+ *
+ * 路由：GET /workbench-api/preview?file=&sessionId=&buttonId=&button=<urlencoded JSON>
+ *   → 200 { file, columns, rowCount, buttonId, stage, preview }
+ *   → 400 缺 file / button 或 button JSON 非法
+ *   → 404 按钮 id 不匹配
+ *   → 405 非 GET
+ *   → 500 读表失败
+ *
+ * @param {{readTable?:Function, resolveFile?:Function}} deps
+ * @returns {(req:{method:string,url:string}) => {status:number, body:object}}
+ */
+function makeButtonHandler(deps) {
+  deps = deps || {};
+  const readTable = deps.readTable || defaultReadTable;
+  const resolveFile = deps.resolveFile || function (file /*, sessionId */) { return file; };
+  return function handler(req) {
+    const method = (req && req.method) || 'GET';
+    if (method !== 'GET') return { status: 405, body: { error: '只支持 GET' } };
+    let urlStr = (req && req.url) || '';
+    const qi = urlStr.indexOf('?');
+    const query = qi === -1 ? '' : urlStr.slice(qi + 1);
+    const params = {};
+    query.split('&').forEach(function (kv) {
+      if (!kv) return;
+      const i = kv.indexOf('=');
+      const k = i === -1 ? kv : kv.slice(0, i);
+      const v = i === -1 ? '' : kv.slice(i + 1);
+      params[decodeURIComponent(k)] = decodeURIComponent(v);
+    });
+    const file = params.file;
+    const sessionId = params.sessionId;
+    const buttonId = params.buttonId;
+    if (!file) return { status: 400, body: { error: '缺少 file 参数' } };
+    if (!params.button) return { status: 400, body: { error: '缺少 button 参数（按钮配方 JSON）' } };
+    let button;
+    try {
+      button = JSON.parse(params.button);
+    } catch (e) {
+      return { status: 400, body: { error: 'button 参数 JSON 非法：' + ((e && e.message) || e) } };
+    }
+    if (!button || !button.id || (buttonId && button.id !== buttonId)) {
+      return { status: 404, body: { error: '按钮 id 不匹配或缺失' } };
+    }
+    let absPath;
+    try {
+      absPath = resolveFile(file, sessionId);
+    } catch (e) {
+      return { status: 400, body: { error: '无法解析文件路径：' + ((e && e.message) || e) } };
+    }
+    let table;
+    try {
+      table = readTable(absPath);
+    } catch (e) {
+      return { status: 500, body: { error: '读表失败：' + ((e && e.message) || e) } };
+    }
+    const vm = buildButtonPreview(
+      { columns: table.columns, rows: table.rows, sources: table.sources, buttons: [button], registryButtons: [] },
+      button.id
+    );
+    if (!vm) return { status: 404, body: { error: '该按钮无法产出预览（id=' + button.id + '）' } };
+    return {
+      status: 200,
+      body: {
+        file: absPath,
+        columns: (table.columns || []).slice(),
+        rowCount: (table.rows || []).length,
+        buttonId: button.id,
+        stage: vm.stage,
+        preview: vm.preview
+      }
+    };
+  };
+}
+
+module.exports = { makeStateHandler, makeButtonHandler, defaultReadTable };

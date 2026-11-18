@@ -45,7 +45,7 @@ export function apply(ctx) {
         const sessions = get('sessions');
         if (!webServer || typeof webServer.register !== 'function') return;
         // 延迟 require：宿主入口是 ESM，CJS 桥用模块顶部 createRequire 造的 req 载入。
-        const { makeStateHandler } = req('./panel-bridge.js');
+        const { makeStateHandler, makeButtonHandler } = req('./panel-bridge.js');
         // resolveFile：把 client 传来的 session-relative 相对路径据 sessionId 解析成绝对路径。
         // 契约照抄 univer resolveAuthorizedFile（lib/index.js:12763-12773）：
         //   cwd = sessions.get(SessionId(sessionId))?.header.cwd。
@@ -63,6 +63,8 @@ export function apply(ctx) {
           return pathMod.resolve(cwd, file);
         };
         const handler = makeStateHandler({ resolveFile });
+        // 票 #44：按钮点击 → 引擎重算 preview（Host 侧）。同前缀下按 pathname 分派到不同 handler。
+        const buttonHandler = makeButtonHandler({ resolveFile });
         injected.effect(() => webServer.register({
           kind: 'prefix',
           path: '/workbench-api',
@@ -70,13 +72,16 @@ export function apply(ctx) {
             // DSH webServer prefix handler 收到原始 http req/res。读完 body 后统一以 JSON 回。
             request.on('data', () => {});
             request.on('end', () => {
-              const result = handler({ method: request.method, url: request.url });
+              const urlPath = String((request.url || '')).split('?')[0];
+              // 只认 /preview 走按钮重算；其余（/state 等）走原状态管道。
+              const active = /\/preview\/?$/.test(urlPath) ? buttonHandler : handler;
+              const result = active({ method: request.method, url: request.url });
               response.statusCode = result.status;
               response.setHeader('content-type', 'application/json; charset=utf-8');
               response.end(JSON.stringify(result.body));
             });
           }
-        }), 'workbench: /workbench-api state route');
+        }), 'workbench: /workbench-api routes');
       } catch (e) {
         try { console.error('[workbench] host route registration failed (boot unaffected):', (e && e.stack) || e); } catch (_) {}
       }
