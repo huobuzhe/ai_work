@@ -6,9 +6,48 @@
 // 设计：每个文件（绝对路径）维护一份引擎 state（含 input/draft/stage/buttons）。
 // applyAction(file, table, action) 用该文件的当前 state 调 E.reduce，持久化新 state，返回视图模型。
 // 纯函数式：store 是工厂，状态放内存 Map；测试可注入空 table、不碰真实文件。
+//
+// 票 #49：固化按钮的持久化——用户「新加按钮」后重启不该丢。默认把某文件的固化按钮（buttons，
+// 不含预置 registryButtons）落到同目录的 `.workbench-buttons.json` sidecar：文件缺失/损坏都安全
+// 退化为「没有持久按钮」，绝不抛错。读写在 loadButtons/saveButtons 两个可注入的钩子里，
+// 测试可注入内存实现、不碰真实文件系统。
 const E = require('./engine');
 
-function createSessionStore() {
+const SIDECAR_SUFFIX = '.workbench-buttons.json';
+
+// 默认读/写器：读写同目录 sidecar。失败一律吞掉（读失败→null；写失败→false），不影响主管线。
+function defaultLoadButtons(fileAbs) {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.dirname(fileAbs);
+    const base = path.basename(fileAbs);
+    const sidecar = path.join(dir, base + SIDECAR_SUFFIX);
+    if (!fs.existsSync(sidecar)) return null;
+    const raw = fs.readFileSync(sidecar, 'utf8');
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : null;
+  } catch (_) { return null; }
+}
+function defaultSaveButtons(fileAbs, buttons) {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const dir = path.dirname(fileAbs);
+    const base = path.basename(fileAbs);
+    const sidecar = path.join(dir, base + SIDECAR_SUFFIX);
+    fs.writeFileSync(sidecar, JSON.stringify(buttons || [], null, 2), 'utf8');
+    return true;
+  } catch (_) { return false; }
+}
+
+// 引擎里会改固化按钮集合/内容的动作类型（这些之后要落盘）。
+const BUTTON_MUTATING = ['SOLIDIFY', 'DELETE_BUTTON', 'RENAME_BUTTON', 'SET_BUTTON_PARAMS'];
+
+function createSessionStore(opts) {
+  opts = opts || {};
+  const loadButtons = opts.loadButtons || defaultLoadButtons;
+  const saveButtons = opts.saveButtons || defaultSaveButtons;
   const states = Object.create(null); // fileAbs -> engine state
 
   function key(file) { return String(file || ''); }
@@ -17,7 +56,14 @@ function createSessionStore() {
     if (states[key(file)]) return states[key(file)];
     const columns = (table && table.columns) ? table.columns.slice() : [];
     const rows = (table && table.rows) ? table.rows.map(function (r) { return Object.assign({}, r); }) : [];
-    const st = E.initial({ columns: columns, rows: rows, sources: (table && table.sources) || undefined });
+    let st = E.initial({ columns: columns, rows: rows, sources: (table && table.sources) || undefined });
+    // 票 #49：首次见到该文件时，把持久化的固化按钮水合进来（缺省没有就保持空）。
+    try {
+      const persisted = loadButtons(file);
+      if (Array.isArray(persisted) && persisted.length) {
+        st = Object.assign({}, st, { buttons: persisted.map(function (b) { return Object.assign({}, b); }) });
+      }
+    } catch (_) { /* 持久化失败不影响主管线 */ }
     states[key(file)] = st;
     return st;
   }
@@ -64,6 +110,10 @@ function createSessionStore() {
       if (fixed !== next.draft) next = Object.assign({}, next, { draft: fixed });
     }
     states[key(file)] = next;
+    // 票 #49：固化按钮变动后落盘（sidecar），令「新加/改名/删除按钮」重启后仍在。
+    if (BUTTON_MUTATING.indexOf(act.type) !== -1 && next && next.stage !== undefined) {
+      try { saveButtons(file, (next.buttons || []).map(function (b) { return Object.assign({}, b); })); } catch (_) {}
+    }
     return toView(file, next);
   }
 
@@ -95,4 +145,4 @@ function createSessionStore() {
   return { baseState, applyAction, view, reset };
 }
 
-module.exports = { createSessionStore };
+module.exports = { createSessionStore, defaultLoadButtons, defaultSaveButtons, SIDECAR_SUFFIX };
