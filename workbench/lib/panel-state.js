@@ -38,7 +38,15 @@ function buildPanelState(parsed) {
     draft: draft,
     preview: draft ? E.preview(base, draft) : null
   });
-  return { stage: state.stage, draft: state.draft, preview: state.preview, isDefault: isDefault };
+  // 票 #43：把「按钮库」声明式投影也一并交给面板——预置按钮（registryButtons）与
+  // 用户固化按钮（buttons）原样带出（声明式、无可执行代码），client 侧 projectButtonLibrary
+  // 会投影成可点按钮。点击**不驱动引擎**（本票只做 UI 可点 + 事件通道）。
+  const registryButtons = (base.registryButtons || []).slice();
+  const buttons = (base.buttons || []).map(function (b) { return Object.assign({}, b); });
+  return {
+    stage: state.stage, draft: state.draft, preview: state.preview, isDefault: isDefault,
+    registryButtons: registryButtons, buttons: buttons
+  };
 }
 
 module.exports = { buildPanelState };

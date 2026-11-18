@@ -96,7 +96,10 @@ function makeStateHandler(deps) {
         columns: (table.columns || []).slice(),
         rowCount: (table.rows || []).length,
         preview: vm.preview,
-        isDefaultDraft: !!vm.isDefault
+        isDefaultDraft: !!vm.isDefault,
+        // 票 #43：按钮库（声明式）一并回传，供面板渲染成可点按钮。
+        registryButtons: vm.registryButtons || [],
+        buttons: vm.buttons || []
       }
     };
   };

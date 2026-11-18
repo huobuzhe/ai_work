@@ -198,7 +198,11 @@ function renderWorkbenchPanel(hostState) {
   let preview = null;
   let library = null;
   try { preview = projectPreviewCard(hostState); } catch (_) { preview = null; }
-  try { library = projectButtonLibrary(hostState); } catch (_) { library = null; }
+  try {
+    // 票 #43：若视图模型已带预投影好的 buttonLibrary（Host/上层已算好），直接用它；
+    // 否则从 state 现投影（兼容旧调用）。
+    library = (hostState && hostState.buttonLibrary) || projectButtonLibrary(hostState);
+  } catch (_) { library = null; }
 
   const children = [];
   children.push(jsx('div', { style: { fontWeight: 600, marginBottom: 8 }, children: '表格工作台' }, 'hdg'));
@@ -218,7 +222,24 @@ function renderWorkbenchPanel(hostState) {
     children.push(jsx('div', { 'data-workbench-preview': 'empty', style: { opacity: 0.7 }, children: '暂无预览。' }, 'pvempty'));
   }
   if (library && library.total > 0) {
-    children.push(jsx('div', { 'data-workbench-library': String(library.total), children: '按钮库：' + library.total + ' 个' }, 'lib'));
+    // 票 #43：按钮库渲染成真正可点击的 <button>，每个按钮绑定 onClick。
+    // 点击只触发事件通道 hostState.onButtonClick(按钮id)（不改引擎状态、不执行）；
+    // 没有回调时安全退化为空操作，绝不抛错。
+    const onButtonClick = hostState && typeof hostState.onButtonClick === 'function'
+      ? hostState.onButtonClick : null;
+    const btns = library.buttons.map(function (b, i) {
+      return jsx('button', {
+        type: 'button',
+        'data-workbench-button': b.id,
+        'data-button-kind': b.kind || '',
+        onClick: function (ev) {
+          try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
+          try { if (onButtonClick) onButtonClick(b.id); } catch (_) {}
+        },
+        children: b.name
+      }, 'btn' + i);
+    });
+    children.push(jsxs('div', { 'data-workbench-library': String(library.total), style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: btns }, 'lib'));
   }
   return jsxs('div', { 'data-workbench-panel': '1', style: { padding: 12, fontFamily: 'inherit', fontSize: 13 }, children: children });
 }
@@ -353,18 +374,30 @@ function registerWorkbenchPanel(ctx) {
           if (React && typeof React.useState === 'function') {
             try {
               var slotData = usePanelData(React, address);
-              // Host 返回 { columns, rowCount, preview, isDefaultDraft }；包装成 renderWorkbenchPanel
-              // 认得的视图模型（preview 为空则面板显示「暂无预览」）。
+              // Host 返回 { columns, rowCount, preview, isDefaultDraft, registryButtons, buttons }；
+              // 包装成 renderWorkbenchPanel 认得的视图模型（preview 为空则显示「暂无预览」）。
               if (slotData && slotData.data) {
                 vm = {
                   preview: slotData.data.preview || null,
                   stage: slotData.data.preview ? 'PREVIEWED' : 'IDLE',
-                  isDefaultDraft: !!slotData.data.isDefaultDraft
+                  isDefaultDraft: !!slotData.data.isDefaultDraft,
+                  // 票 #43：按钮库原样带出，renderWorkbenchPanel 会投影成可点按钮。
+                  registryButtons: slotData.data.registryButtons || [],
+                  buttons: slotData.data.buttons || []
                 };
               }
             } catch (_) { vm = null; }
           }
-          return renderWorkbenchPanel(vm || {});
+          // 票 #43：点击事件通道——本票只做 UI 可点 + 触发回调（不改引擎状态、不执行）。
+          // 回调暂为记录型空操作；#44 再接「点击驱动引擎刷新预览」。（不依赖 window，纯记录。）
+          var onClick = function (id) {
+            try {
+              if (typeof console !== 'undefined' && console && typeof console.log === 'function') {
+                console.log('[workbench] button clicked:', id);
+              }
+            } catch (_) {}
+          };
+          return renderWorkbenchPanel(Object.assign({}, vm || {}, { onButtonClick: onClick }));
         }
       );
       return d;
