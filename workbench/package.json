@@ -6,7 +6,11 @@
   "type": "commonjs",
   "main": "lib/index.mjs",
   "exports": {
-    ".": "./lib/engine.js",
+    ".": {
+      "import": "./lib/index.mjs",
+      "require": "./lib/engine.js",
+      "default": "./lib/index.mjs"
+    },
     "./engine": "./lib/engine.js",
     "./host": "./lib/index.mjs",
     "./client": "./client/client.js",

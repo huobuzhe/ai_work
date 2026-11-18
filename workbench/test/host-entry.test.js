@@ -18,10 +18,17 @@ const pkg = require(path.join(PKG_DIR, 'package.json'));
 
 test('package.json main 指向宿主入口 lib/index.mjs（不再指向引擎）', () => {
   assert.equal(pkg.main, 'lib/index.mjs');
-  // 引擎仍可经 exports 两路访问（向后兼容，测试大量依赖）
-  assert.equal(pkg.exports['.'], './lib/engine.js');
+  // 关键：cordis 加载器用 exports["."] 的 import 条件解析插件模块——
+  // 必须解析到宿主入口（带 name+apply），不能是引擎（CJS、无 apply）。
+  // 这是曾经「装进 profile 却没有 tab」的根因："." 曾指向 engine.js。
+  assert.equal(pkg.exports['.'].import, './lib/index.mjs');
+  assert.equal(pkg.exports['.'].default, './lib/index.mjs');
+  // require 条件仍指向引擎，保证 CJS 消费方（require('dsh-workbench')）不破。
+  assert.equal(pkg.exports['.'].require, './lib/engine.js');
+  // 引擎另有独立子路径（测试/脚本可 require('dsh-workbench/engine')）。
   assert.equal(pkg.exports['./engine'], './lib/engine.js');
   assert.equal(pkg.exports['./host'], './lib/index.mjs');
+  assert.equal(pkg.exports['./client'], './client/client.js');
 });
 
 test('宿主入口导出具名 name 与 apply 函数', async () => {
