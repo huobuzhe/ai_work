@@ -360,11 +360,14 @@ function renderWorkbenchPanel(hostState) {
       const head = jsxs('tr', { children: pvCols.map(function (col, ci) { return jsx('th', { style: thStyle, children: String(col) }, 'h' + ci); }) }, 'hrow');
       const bodyRows = shownRows.map(function (r, ri) {
         const tds = pvCols.map(function (col, ci) {
-          // 用户 m06880：执行后只显示「改过后的最终表格」——直接取当前行实际值（pvRows 已是落盘后的行），
-          // 不带箭头、不高亮（因为箭头/高亮是「即将改」的语义，执行完就没有「即将」了）。
+          // 用户 m06880：执行后显示「改过后的最终表格」，受影响格**保留黄色高亮**（标明改了哪些），
+          // 但去掉「before → after」箭头，只显示落盘后的最终值。
           if (executed) {
             const cur = (r && r[col] != null) ? r[col] : '';
-            return jsx('td', { style: tdStyle, children: (cur != null) ? String(cur) : '' }, 'c' + ri + '_' + ci);
+            const wasChanged = !!cellMap[ri + '|' + col];
+            const styleExec = wasChanged ? tdChanged : tdStyle;
+            const props = wasChanged ? { 'data-wb-changed': String(ri) + '|' + col, style: styleExec, children: (cur != null) ? String(cur) : '' } : { style: styleExec, children: (cur != null) ? String(cur) : '' };
+            return jsx('td', props, 'c' + ri + '_' + ci);
           }
           const ch = cellMap[ri + '|' + col];
           if (ch) {
@@ -831,9 +834,12 @@ function registerWorkbenchPanel(ctx) {
               // Host 返回 { columns, rowCount, preview, isDefaultDraft, registryButtons, buttons }；
               // 包装成 renderWorkbenchPanel 认得的视图模型（preview 为空则显示「暂无预览」）。
               if (panelData && panelData.data) {
+                // Host /state 返回 { columns, rowCount, preview, isDefaultDraft, registryButtons, buttons, table, stage }。
+                // 用户 m06880：stage 用 Host 真值（不再由 preview 有无臆测为 PREVIEWED），并带 table 供 IDLE 显示原表。
                 vm = {
                   preview: panelData.data.preview || null,
-                  stage: panelData.data.preview ? 'PREVIEWED' : 'IDLE',
+                  stage: panelData.data.stage || (panelData.data.preview ? 'PREVIEWED' : 'IDLE'),
+                  table: panelData.data.table || null,
                   isDefaultDraft: !!panelData.data.isDefaultDraft,
                   // 票 #43：按钮库原样带出，renderWorkbenchPanel 会投影成可点按钮。
                   registryButtons: panelData.data.registryButtons || [],

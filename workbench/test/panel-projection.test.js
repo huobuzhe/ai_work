@@ -367,10 +367,11 @@ function execHostState() {
   };
 }
 
-test('三态表格：EXECUTED 显示最终值（无箭头），受影响格不高亮', () => {
+test('三态表格：EXECUTED 显示最终值 + 受影响格保留黄色高亮（但无箭头）', () => {
   const tree = shimRender(execHostState());
   assert.ok(findEl(tree, 'data-workbench-table', '1'), 'EXECUTED 应渲染表格');
-  assert.ok(!findEl(tree, 'data-wb-changed', '0|工时'), 'EXECUTED 不应再高亮「即将改」格');
+  // 用户 m06880：执行后受影响格仍要高亮（标黄），因此 data-wb-changed 应仍在。
+  assert.ok(findEl(tree, 'data-wb-changed', '0|工时'), 'EXECUTED 受影响格应保留黄色高亮（data-wb-changed）');
 });
 
 test('三态表格：EXECUTED 渲染文本不含箭头 →（最终值直接展示）', () => {
