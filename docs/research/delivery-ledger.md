@@ -1,6 +1,6 @@
 # 交付账本（Delivery Ledger）
 
-> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段，2026-11-19 补记「第二波 #41–#54 + #55」段。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
+> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段，2026-11-19 补记「第二波 #41–#54 + #55」段，2026-11-19 补记「#45 source=default 投影修复 + GUI 闭环验证」。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
 > 用途：两个 effort 收官后的最终清单与唯一 backlog，供后续会话/接手人直接查阅，不必重跑清点。
 
 ## 全局状态
@@ -130,7 +130,7 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 | [#41](https://github.com/huobuzhe/ai_work/issues/41) | Host 侧真实数据管道 + 默认配方让面板显示真实影响行数 | `ffeeb5f` | CLOSED |
 | [#42](https://github.com/huobuzhe/ai_work/issues/42) / [#43](https://github.com/huobuzhe/ai_work/issues/43) | slot body 必须返回带 children 的 React 元素护栏 / 按钮库渲染成可点按钮 + 事件通道 | `5447e7e` | CLOSED |
 | [#44](https://github.com/huobuzhe/ai_work/issues/44) | 按钮点击驱动引擎重算 preview → 预览卡刷新（+ client 侧回归 `2edc590`） | `9084f0c` | CLOSED |
-| [#45](https://github.com/huobuzhe/ai_work/issues/45) | 自动派生的默认配方做成 `source=default` 可点按钮（新表也能走通点击闭环） | `65beb2f` | CLOSED |
+| [#45](https://github.com/huobuzhe/ai_work/issues/45) | 自动派生的默认配方做成 `source=default` 可点按钮（新表也能走通点击闭环）；后续 `7ebaa19` 修投影 `projectOne` 保留 `source=default`（不再塌成 user） | `65beb2f`/`7ebaa19` | CLOSED |
 | [#46](https://github.com/huobuzhe/ai_work/issues/46) | 面板内新建配方完整 5 步管线 + 逐格 before→after 明细 + 重算反馈 | `20ae5d5`/`5c5d5c9`/`69688a9` | CLOSED |
 | [#47](https://github.com/huobuzhe/ai_work/issues/47) | 按钮管理（运行/重命名/删除）+ 一键运行真正写回磁盘 | `d56deae` | CLOSED |
 | [#48](https://github.com/huobuzhe/ai_work/issues/48) | 固化按钮持久化到同目录 sidecar，重启不丢 | `dbba3f1` | CLOSED |
@@ -144,7 +144,11 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 **#55 上传建表（无对应 GitHub 票，仅代码注释标注）**：`workbench/lib/panel-state.js::buildCreateSpec` 的 `mode: 'upload'` 分支（字典列 + 数据行 → `E.createTable({mode:'upload',manifest,rows})` 双重封闭校验）、`panel-bridge.js` 透传 `rows`、`xlsx_bridge.py create()` 逐行写数据行。此前面板层零测试（绿灯假象，引擎层有测）。2026-11-19 补 7 例（`workbench/test/create-table.test.js` #55 系列）：seam A 字典列/字符串列默认 text/空列清单/主键不在列清单/主键重复空行经 `validateRows` 拦截；seam C rows 透传；python 真实建表写数据行 + read-values 复核。commit `0474513`。
 
-**测试基线（2026-11-19）**：`npm test` 426 tests / 405 pass / 0 fail / 21 skipped（跳过均「react 不可解析」环境跳过）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。
+**#45 投影修复 + 面板闭环验证（2026-11-19 补记，commit `7ebaa19`）**：
+- **投影漂移修复**：`workbench/client/index.js::projectOne` 原 `source: b.source === 'preset' ? 'preset' : 'user'` 把引擎真值 `source='default'`（#45 自动派生的默认配方按钮）塌成 `'user'`，与 #45 AC「source 标为 default」不符（按钮本身在 `total:1` 里、能点、只是标错）。修为保留 `default`：`source: b.source === 'preset' ? 'preset' : (b.source === 'default' ? 'default' : 'user')`。重跑 `npm run build:client` 重建 `client/client.js`。在 `test/panel-projection.test.js` 加漂移防护测试：`H.buildPanelState(4列有数据)` → `projectButtonLibrary` → filter `source==='default'` 得到 `id=__default__`/`kind=swap`/`total=1`。
+- **面板闭环验证（无头等价演练）**：真实 GUI `http://127.0.0.1:62840` 返回 401（需 tokenized URL，无法直接驱动浏览器 DOM），改用真实引擎 + `client/index.js` 投影 + `panel-bridge` 的端到端演练覆盖面板代码路径：①预览卡六段齐全、影响 2/2 行；②默认按钮 `__default__`/swap 工时↔时薪，点击重算 ok（影响 2 行/共 2 行、4 个单元格将变）；③建表 #53（`buildCreateSpec` blank）→ `defaultCreateTable` 真实建 xlsx ok；④上传建表 #55（2 数据行）真实写盘 ok。演练脚本用后即删。
+
+**测试基线（2026-11-19，含 `7ebaa19`）**：`npm test` 427 tests / 406 pass / 0 fail / 21 skipped（跳过均「react 不可解析」环境跳过，+1 为 #45 source 漂移防护测试）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。
 
 ## 边界与已知瑕疵（接手须知）
 
