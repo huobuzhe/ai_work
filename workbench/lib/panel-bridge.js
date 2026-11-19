@@ -294,6 +294,11 @@ function makeStateHandler(deps) {
       }
     } catch (_) { /* 非致命 */ }
     const vm = buildPanelState({ columns: table.columns, rows: table.rows, draft: draft, registryButtons: presets() });
+    // 用户 m06880：IDLE（还没动作）也要能显示原始表格；执行后要能显示改后表格且知道 stage。
+    // 这里额外回传 整表 table{columns,rows} 与 stage。rows 直接给（面板渲染原始表格用）。
+    const sess = deps.store && typeof deps.store.view === 'function'
+      ? (function () { try { return deps.store.view(absPath, table); } catch (_) { return null; } })()
+      : null;
     return {
       status: 200,
       body: {
@@ -304,7 +309,10 @@ function makeStateHandler(deps) {
         isDefaultDraft: !!vm.isDefault,
         // 票 #43：按钮库（声明式）一并回传，供面板渲染成可点按钮。
         registryButtons: vm.registryButtons || [],
-        buttons: vm.buttons || []
+        buttons: vm.buttons || [],
+        // 新增：整表 + stage（供面板渲染原始/执行后表格；无 store 时 stage 回落 IDLE）
+        table: { columns: (table.columns || []).slice(), rows: (table.rows || []).slice() },
+        stage: (sess && sess.stage) || 'IDLE'
       }
     };
   };

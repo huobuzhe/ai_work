@@ -271,12 +271,12 @@ function createSessionStore(opts) {
   function toView(file, st) {
     const buttons = (st.buttons || []).map(function (b) { return Object.assign({}, b); });
     const registryButtons = (st.registryButtons || []).map(function (b) { return Object.assign({}, b); });
+    const columns = (st.columns || []).slice();
+    const rows = (st.rows || []).slice();
     // 表格化预览支持：把整张表（columns + rows）以及「应用变更后」的 afterRows 一并给出，
     // 令面板渲染成真正的表格网格（修改前/修改后），不再逐格「第X行 列：a → b」文本。
     let preview = st.preview || null;
     if (preview) {
-      const columns = (st.columns || []).slice();
-      const rows = (st.rows || []).slice();
       // 由 preview.cells 的 rowIndex + col 组装 afterRows（浅拷贝每行，只覆盖受影响格）。
       let afterRows = null;
       try {
@@ -291,11 +291,14 @@ function createSessionStore(opts) {
       } catch (_) { afterRows = null; }
       preview = Object.assign({}, preview, { columns: columns, rows: rows, afterRows: afterRows });
     }
+    // 用户 m06880：一打开（还没动作/IDLE）就要看到原始表格。无条件带上当前表 table{columns,rows}，
+    // 供 client 在无预览时渲染原表。
     return {
       stage: st.stage || 'IDLE',
       input: st.input || '',
       draft: st.draft || null,
       preview: preview,
+      table: { columns: columns, rows: rows },
       note: st.note || '',
       noteTone: st.noteTone || 'info',
       buttons: buttons,

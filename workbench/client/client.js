@@ -322,7 +322,10 @@ function renderWorkbenchPanel(hostState) {
       children: errLines.map(function (t, i) { return jsx('div', { children: t }, 'err' + i); })
     }, 'errbox'));
   }
-  if (preview) {
+  // 用户 m06880：一打开（stage=IDLE，还没点任何动作）时，只显示原始表格，不显示默认草稿的「即将改」预览。
+  // 一旦 UNDERSTOOD/PREVIEWED/EXECUTED 才进入预览分支。default 草稿在 IDLE 会自带 preview，需按 stage 拦掉。
+  const stageNow = (hostState && hostState.stage) || 'IDLE';
+  if (preview && stageNow !== 'IDLE') {
     const lines = [];
     if (preview.explanation) lines.push('解释：' + preview.explanation);
     if (typeof preview.affectedRows === 'number') lines.push('影响 ' + preview.affectedRows + ' 行 / 共 ' + (preview.totalRows == null ? '?' : preview.totalRows) + ' 行');
@@ -349,6 +352,8 @@ function renderWorkbenchPanel(hostState) {
     const pvCols = Array.isArray(impact.columns) ? impact.columns : [];
     const pvRows = Array.isArray(impact.rows) ? impact.rows : [];
     const pvAfter = Array.isArray(impact.afterRows) ? impact.afterRows : null;
+    // 用户 m06880：执行后（EXECUTED）只显示改过后的最终表格，去掉「a → b」箭头。
+    const executed = (hostState && hostState.stage === 'EXECUTED');
     if (pvCols.length > 0 && pvRows.length > 0) {
       // 受影响格索引：rowIndex + '|' + col → cell
       const cellMap = {};
@@ -361,6 +366,12 @@ function renderWorkbenchPanel(hostState) {
       const head = jsxs('tr', { children: pvCols.map(function (col, ci) { return jsx('th', { style: thStyle, children: String(col) }, 'h' + ci); }) }, 'hrow');
       const bodyRows = shownRows.map(function (r, ri) {
         const tds = pvCols.map(function (col, ci) {
+          // 用户 m06880：执行后只显示「改过后的最终表格」——直接取当前行实际值（pvRows 已是落盘后的行），
+          // 不带箭头、不高亮（因为箭头/高亮是「即将改」的语义，执行完就没有「即将」了）。
+          if (executed) {
+            const cur = (r && r[col] != null) ? r[col] : '';
+            return jsx('td', { style: tdStyle, children: (cur != null) ? String(cur) : '' }, 'c' + ri + '_' + ci);
+          }
           const ch = cellMap[ri + '|' + col];
           if (ch) {
             const afterVal = (pvAfter && pvAfter[ri] && pvAfter[ri][col] !== undefined) ? pvAfter[ri][col] : ch.after;
@@ -370,7 +381,8 @@ function renderWorkbenchPanel(hostState) {
               children: String(ch.before) + ' → ' + String(afterVal)
             }, 'c' + ri + '_' + ci);
           }
-          return jsx('td', { style: tdStyle, children: (r && r[col] != null) ? String(r[col]) : '' }, 'c' + ri + '_' + ci);
+          const plain = (r && r[col] != null) ? r[col] : '';
+          return jsx('td', { style: tdStyle, children: (plain != null) ? String(plain) : '' }, 'c' + ri + '_' + ci);
         });
         return jsx('tr', { children: tds }, 'r' + ri);
       });
@@ -379,9 +391,6 @@ function renderWorkbenchPanel(hostState) {
         style: { borderCollapse: 'collapse', fontSize: 12, width: '100%' },
         children: [jsx('thead', { children: head }, 'thead'), jsx('tbody', { children: bodyRows }, 'tbody')]
       }, 'impacttable');
-      if (pvRows.length > CAP) {
-        bodyRows.push(jsx('div', { style: { opacity: 0.7, fontSize: 12 }, children: '还有 ' + (pvRows.length - CAP) + ' 行……' }, 'rowmore'));
-      }
       children.push(jsxs('div', {
         'data-workbench-cells': String(cells.length),
         style: { marginBottom: 8, maxHeight: 220, overflow: 'auto', border: '1px solid #eee' },
@@ -410,7 +419,28 @@ function renderWorkbenchPanel(hostState) {
     }
     children.push(jsxs('div', { 'data-workbench-preview': '1', style: { marginBottom: 8 }, children: lineEls }, 'pv'));
   } else {
-    children.push(jsx('div', { 'data-workbench-preview': 'empty', style: { opacity: 0.7 }, children: '暂无预览。' }, 'pvempty'));
+    // 用户 m06880：还没动作/IDLE 时，直接显示原始表格（不再只显示「暂无预览」）。
+    const tbl = (hostState && hostState.table) ? hostState.table : null;
+    let rendered = false;
+    if (tbl && Array.isArray(tbl.columns) && tbl.columns.length > 0 && Array.isArray(tbl.rows) && tbl.rows.length > 0) {
+      const thStyle = { border: '1px solid #d0d0d0', padding: '3px 6px', background: '#f4f4f4', fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' };
+      const tdStyle = { border: '1px solid #e2e2e2', padding: '3px 6px', fontSize: 12, whiteSpace: 'nowrap' };
+      const head = jsxs('tr', { children: tbl.columns.map(function (col, ci) { return jsx('th', { style: thStyle, children: String(col) }, 'h' + ci); }) }, 'hrow');
+      const bodyRows = tbl.rows.slice(0, 50).map(function (r, ri) {
+        const tds = tbl.columns.map(function (col, ci) {
+          return jsx('td', { style: tdStyle, children: (r && r[col] != null) ? String(r[col]) : '' }, 'c' + ri + '_' + ci);
+        });
+        return jsx('tr', { children: tds }, 'r' + ri);
+      });
+      children.push(jsxs('div', { 'data-workbench-orig-table': '1', style: { marginBottom: 8, maxHeight: 220, overflow: 'auto', border: '1px solid #eee' }, children: [
+        jsxs('div', { style: { fontSize: 11, opacity: 0.65, margin: '2px 4px' }, children: '原始表格（尚未操作）' }, 'origlbl'),
+        jsxs('table', { 'data-workbench-table': 'orig', style: { borderCollapse: 'collapse', fontSize: 12, width: '100%' }, children: [
+          jsx('thead', { children: head }, 'thead'), jsx('tbody', { children: bodyRows }, 'tbody')
+        ] }, 'origtable')
+      ] }, 'origbox'));
+      rendered = true;
+    }
+    children.push(jsx('div', { 'data-workbench-preview': 'empty', style: { opacity: 0.7 }, children: rendered ? '' : '暂无预览。' }, 'pvempty'));
   }
   if (library && library.total > 0) {
     // 票 #43：按钮库渲染成真正可点击的 <button>，每个按钮绑定 onClick。

@@ -332,3 +332,66 @@ test('表格化预览：renderWorkbenchPanel 渲染出真表格 data-workbench-t
   const table = findEl(tree, 'data-workbench-table', '1');
   assert.ok(table, '影响预览应渲染成真表格 data-workbench-table（不是逐格文字 div）');
 });
+
+// ---------- 用户 m06880：IDLE 显示原始表格 / 执行后显示最终表格且去箭头 ----------
+// 注意：projectPreviewCard 读的是 hostState.preview 上的「扁平字段」（cells/columns/rows/afterRows），
+// 不是 preview.sections（那是它的输出）。所以 fixture 用扁平字段。
+function flatPreview(base) {
+  return Object.assign({
+    explanation: '对调两列', summary: '影响', affectedRows: 1, totalRows: 1, invalid: false,
+    errors: [], issues: [], scope: 'all', condition: '', scopeLabel: '全部',
+    paramSpec: [], adapter: 'local', adapterLabel: '本地', formulaCapabilities: {}, disabled: false, capabilityBlockers: []
+  }, base);
+}
+
+// ① IDLE（stage==='IDLE'）：即便默认草稿自带 preview，也只渲染原始表格 data-workbench-orig-table，不显示「即将改」预览。
+test('三态表格：IDLE 只显示原始表格（data-workbench-orig-table），不显示预览箭头', () => {
+  const cols = ['姓名', '部门', '工时', '时薪'];
+  const rows = [{ 姓名: '阿岚', 部门: '销售', 工时: 160, 时薪: 80 }];
+  const fakePreview = flatPreview({ columns: cols, rows: rows, afterRows: rows, cells: [] });
+  const tree = shimRender({ stage: 'IDLE', isDefaultDraft: true, preview: fakePreview, table: { columns: cols, rows: rows }, onAction: function () {} });
+  assert.ok(findEl(tree, 'data-workbench-orig-table', '1'), 'IDLE 应渲染原始表格 data-workbench-orig-table');
+  assert.ok(!findEl(tree, 'data-wb-changed', '0|工时'), 'IDLE 不应显示「即将改」的高亮箭头格');
+});
+
+// ② / ③ EXECUTED：只显示改后最终值（无箭头），受影响格不高亮。
+function execHostState() {
+  const cols = ['姓名', '部门', '工时', '时薪'];
+  const rows = [{ 姓名: '阿岚', 部门: '销售', 工时: '80', 时薪: '160' }];
+  return {
+    stage: 'EXECUTED',
+    table: { columns: cols, rows: rows },
+    preview: flatPreview({ columns: cols, rows: rows, afterRows: rows,
+      cells: [{ row: '阿岚', col: '工时', before: '160', after: '80', rowIndex: 0, source: 'swap' }] }),
+    onAction: function () {}
+  };
+}
+
+test('三态表格：EXECUTED 显示最终值（无箭头），受影响格不高亮', () => {
+  const tree = shimRender(execHostState());
+  assert.ok(findEl(tree, 'data-workbench-table', '1'), 'EXECUTED 应渲染表格');
+  assert.ok(!findEl(tree, 'data-wb-changed', '0|工时'), 'EXECUTED 不应再高亮「即将改」格');
+});
+
+test('三态表格：EXECUTED 渲染文本不含箭头 →（最终值直接展示）', () => {
+  const tree = shimRender(execHostState());
+  const texts = [];
+  (function walk(n) {
+    if (!n) return;
+    if (Array.isArray(n)) { n.forEach(walk); return; }
+    if (typeof n !== 'object') return;
+    if (n.$$typeof === Symbol.for('react.element') && (n.type === 'td' || n.type === 'th')) {
+      (function collect(x) {
+        if (x == null) return;
+        if (typeof x === 'string' || typeof x === 'number') { texts.push(String(x)); return; }
+        if (Array.isArray(x)) { x.forEach(collect); return; }
+        collect(x.props && x.props.children);
+      })(n.props && n.props.children);
+      return;
+    }
+    walk(n.props && n.props.children);
+  })(tree);
+  assert.ok(texts.length > 0, '应有表格单元格文本');
+  assert.ok(!texts.some(function (t) { return t.indexOf('→') !== -1; }), 'EXECUTED 单元格不应含箭头 →');
+  assert.ok(texts.indexOf('80') !== -1 && texts.indexOf('160') !== -1, 'EXECUTED 应显示最终值 80 / 160');
+});
