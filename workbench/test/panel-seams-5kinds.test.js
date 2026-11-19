@@ -91,7 +91,7 @@ test('一键动作 QUICK：五动作在真实表上都能直接出合法预览�
 
 // 语义落点回归：QUICK 不能盲目取前两列（那会把 swap 换到 姓名/部门、把 conditional/function/extract
 // 落到 姓名 列覆盖主键）。带「备注」列 + 数字列（工时/时薪）的真实表上，验证每个动作改的是「对的列」。
-test('一键动作 QUICK：语义落点正确（换数字列/写到备注列，不覆盖主键）', (t) => {
+test('一键动作 QUICK：语义落点正确（换数字列/新列应发，不覆盖主键）', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-quick-sem-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   let file;
@@ -116,10 +116,11 @@ test('一键动作 QUICK：语义落点正确（换数字列/写到备注列，�
   let v = act(h, file, { type: 'quick', kind: 'swap' });
   let cols = changedCols(v).sort();
   assert.deepEqual(cols, ['工时', '时薪'].sort(), 'swap 应对调 工时↔时薪，实际改 ' + cols.join(','));
-  // function：写到 备注 列（不覆盖姓名/工时/时薪）
+  // function：写到「新列 应发」（不覆盖姓名/工时/时薪/备注；用户 m07024 要求别用备注列撑变形）
   v = act(h, file, { type: 'quick', kind: 'function' });
   cols = changedCols(v);
-  assert.ok(cols.indexOf('备注') !== -1 && cols.indexOf('姓名') === -1, 'function 应写到备注列、不碰姓名，实际 ' + cols.join(','));
+  assert.ok(cols.indexOf('应发') !== -1 && cols.indexOf('姓名') === -1 && cols.indexOf('备注') === -1,
+    'function 应写到新列「应发」、不碰姓名/备注，实际 ' + cols.join(','));
 });
 
 test('缺口A 修复：defaultReadTable 把同目录 CSV 读成 sources（extract 可用）', (t) => {
