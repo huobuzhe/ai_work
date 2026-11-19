@@ -1,18 +1,18 @@
 # 交付账本（Delivery Ledger）
 
-> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
+> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段，2026-11-19 补记「第二波 #41–#54 + #55」段。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
 > 用途：两个 effort 收官后的最终清单与唯一 backlog，供后续会话/接手人直接查阅，不必重跑清点。
 
 ## 全局状态
 
 | 项 | 值 |
 | --- | --- |
-| issue 总数 | 40 |
-| CLOSED | 40（**全部关闭**，含 [仓库 README](https://github.com/huobuzhe/ai_work/issues/1)，2026-11-17 交付并关闭） |
+| issue 总数 | 54 |
+| CLOSED | 54（**全部关闭**，含 [仓库 README](https://github.com/huobuzhe/ai_work/issues/1)，2026-11-17 交付并关闭；#41–#54 面板波 2026-11-19 全关） |
 | OPEN | 0 |
 | 地图（wayfinder:map） | 2 张，均 CLOSED：地图 #2、地图 #29 |
 | 规格（ready-for-agent） | 3 份，均 CLOSED：规格 #8、规格 #34、[仓库 README](https://github.com/huobuzhe/ai_work/issues/1) |
-| 决策/实施票 | 35 张（5 + 20 + 4 + 6），全 CLOSED |
+| 决策/实施票 | 49 张（5 + 20 + 4 + 6 + 14 面板波 #41–#54），全 CLOSED |
 | 仓库根 README | `README.md`，commit `b44244b`（单页，5/5 人工验收全过） |
 | HEAD | 不在此追记 hash——账本写自身仓库 HEAD 会陷入自指：每次为更新它而提交都会让 hash 再过期一次。**交付基线**为三批归档提交 `d8038ee`/`77ed693`/`4091c91`（固定、不再变）；此后当前 HEAD 一律以 `git log` / `git rev-parse HEAD` 为准。工作树无已跟踪改动。 |
 | 验收 | `npm test` 全绿（**计数以 `npm test` 实际输出为准，不在此写死**，见 README 反腐化纪律）；`engineMatchesFile: true`；`valuesMatch: true`；两票之外每票两轴 code-review 0 hard |
@@ -115,6 +115,37 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **界面预览面板** `workbench/preview/index.html`（生成脚本 `workbench/scripts/build-preview.js`，npm `build:preview`）：用真实 `lib/engine.js` + `client/index.js` 投影，把「预览卡六段 + 按钮库」渲染成自包含静态 HTML（零外部依赖、6 张示例卡）。解决「面板本体只能挂宿主、无独立可视化」的盲区；双击即可看面板长相。
 - **补客户端面板测试** `workbench/test/panel-projection.test.js`（10 例）：逐段钉住 `projectPreviewCard` 六段投影、校验失败卡、飞书禁用卡、`projectButtonLibrary` 双来源合并/空态/向后兼容——补齐 `panel-smoke.test.js` 仅覆盖「注册 + 一个 happy path」的盲区。
 
+## 交付后增量（第二波：面板接入宿主 + 面板内真实交互，#41–#54，2026-11-19 补记）
+
+> 交付基线之后，工作台从「引擎 + 测试」演进成「能挂进 DSH 宿主、面板内可真实点击操作」的插件。本节把 #41–#54 这 14 票（全部 CLOSED）+ #55 上传建表补测补进账本。
+
+**宿主挂载三坑已解**（详见 `docs/usage-guide.md`「宿主挂载排障」节）：
+- 坑 A：`exports["."]` 曾指向 CJS 引擎 `lib/engine.js`（无 apply）→ 宿主当非插件静默跳过 → 无 tab。修：exports 指宿主入口。
+- 坑 B：`lib/index.mjs` 曾同时 `export default` + 具名导出 → 宿主 ESM 转译下的 `unwrapExports` 取到 default 普通对象丢 apply → 崩溃「invalid plugin, expect function or object with an apply method, received object」。修（commit `ebf1012`）：删 `export default`、只留具名 `name`/`apply`，`exports["."]` 收敛为单一 `{default: "./lib/index.mjs"}`，对齐已验证可加载的 dsh-pocket / dsh-pet。
+- 坑 C：打开 0 字节空 `11.xlsx` 报「无法打开此表格」——是空文件（BadZipFile），与插件无关；有效文件是 `新建 XLSX 工作表.xlsx`。
+- 坑 D：崩溃时点「禁用第三方插件」会把 `dsh-workbench` 从 profile bundles 移除，需写回 `dependencies["dsh-workbench"]="link:F:/ai_work/workbench"` + `dsh.profile.bundles`。
+
+| 票 | 主题 | commit | 状态 |
+| --- | --- | --- | --- |
+| [#41](https://github.com/huobuzhe/ai_work/issues/41) | Host 侧真实数据管道 + 默认配方让面板显示真实影响行数 | `ffeeb5f` | CLOSED |
+| [#42](https://github.com/huobuzhe/ai_work/issues/42) / [#43](https://github.com/huobuzhe/ai_work/issues/43) | slot body 必须返回带 children 的 React 元素护栏 / 按钮库渲染成可点按钮 + 事件通道 | `5447e7e` | CLOSED |
+| [#44](https://github.com/huobuzhe/ai_work/issues/44) | 按钮点击驱动引擎重算 preview → 预览卡刷新（+ client 侧回归 `2edc590`） | `9084f0c` | CLOSED |
+| [#45](https://github.com/huobuzhe/ai_work/issues/45) | 自动派生的默认配方做成 `source=default` 可点按钮（新表也能走通点击闭环） | `65beb2f` | CLOSED |
+| [#46](https://github.com/huobuzhe/ai_work/issues/46) | 面板内新建配方完整 5 步管线 + 逐格 before→after 明细 + 重算反馈 | `20ae5d5`/`5c5d5c9`/`69688a9` | CLOSED |
+| [#47](https://github.com/huobuzhe/ai_work/issues/47) | 按钮管理（运行/重命名/删除）+ 一键运行真正写回磁盘 | `d56deae` | CLOSED |
+| [#48](https://github.com/huobuzhe/ai_work/issues/48) | 固化按钮持久化到同目录 sidecar，重启不丢 | `dbba3f1` | CLOSED |
+| [#49](https://github.com/huobuzhe/ai_work/issues/49) | 默认配方改调换末两列，避开主键列防二次执行写坏数据 | `ad409e5` | CLOSED |
+| [#50](https://github.com/huobuzhe/ai_work/issues/50) | 成功/说明类 note 不再重复塞进红色错误框 | `dc4cf82` | CLOSED |
+| [#51](https://github.com/huobuzhe/ai_work/issues/51) | 面板按钮库水合仓内预置按钮（补齐 #16 host seed 契约） | `24a584c` | CLOSED |
+| [#52](https://github.com/huobuzhe/ai_work/issues/52) | 面板内从模板新建表格：/templates 列模板 + /create 建空 xlsx 并回地址 | `ba48f53` | CLOSED |
+| [#53](https://github.com/huobuzhe/ai_work/issues/53) | 面板内新建空白表：列名清单直接建空 xlsx（服务「新建 XLSX 工作表」需求） | `65db7dc` | CLOSED |
+| [#54](https://github.com/huobuzhe/ai_work/issues/54) | 面板按钮「改参数」入口（SET_BUTTON_PARAMS 接线）+ store 实例级状态隔离修复 | `3dfe9f2` | CLOSED |
+| （#55 无票） | 上传建表面板分支（`buildCreateSpec` mode=upload + rows 透传 + xlsx_bridge 写数据行）补测试 | `0474513` | 见下 |
+
+**#55 上传建表（无对应 GitHub 票，仅代码注释标注）**：`workbench/lib/panel-state.js::buildCreateSpec` 的 `mode: 'upload'` 分支（字典列 + 数据行 → `E.createTable({mode:'upload',manifest,rows})` 双重封闭校验）、`panel-bridge.js` 透传 `rows`、`xlsx_bridge.py create()` 逐行写数据行。此前面板层零测试（绿灯假象，引擎层有测）。2026-11-19 补 7 例（`workbench/test/create-table.test.js` #55 系列）：seam A 字典列/字符串列默认 text/空列清单/主键不在列清单/主键重复空行经 `validateRows` 拦截；seam C rows 透传；python 真实建表写数据行 + read-values 复核。commit `0474513`。
+
+**测试基线（2026-11-19）**：`npm test` 426 tests / 405 pass / 0 fail / 21 skipped（跳过均「react 不可解析」环境跳过）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
@@ -131,9 +162,10 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 1. 容器票 #2/#29/#8/#34 **及 #1** 全 CLOSED；
 2. #9–#28 全 CLOSED；
 3. #35–#40 全 CLOSED；
-4. 地图 #2 的 Decisions so far 含 #3–#7 + #8 指针；
-5. 地图 #29 含 #30–#33 指针；
-6. 规格 #8 进度含 #9–#28 指针（#27 因 gist 交叉引用计数 4 次属正常）；
-7. 规格 #34 含 #35–#40 指针、7 区块 + 44 story；
-8. 交付基线 = 三批归档提交 `d8038ee`/`77ed693`/`4091c91`（固定锚点，不随账本自身提交变化）；当前 HEAD 以 `git log` / `git rev-parse HEAD` 为准，工作树无已跟踪 diff；
-9. `npm test` 全绿（计数以实际输出为准，不写死），`engineMatchesFile: true`，`valuesMatch: true`。
+4. #41–#54 全 CLOSED（面板接入宿主 + 面板内真实交互波）；
+5. 地图 #2 的 Decisions so far 含 #3–#7 + #8 指针；
+6. 地图 #29 含 #30–#33 指针；
+7. 规格 #8 进度含 #9–#28 + #45 指针（#27 因 gist 交叉引用计数 4 次属正常）；
+8. 规格 #34 含 #35–#40 指针、7 区块 + 44 story；
+9. 交付基线 = 三批归档提交 `d8038ee`/`77ed693`/`4091c91`（固定锚点，不随账本自身提交变化）；当前 HEAD 以 `git log` / `git rev-parse HEAD` 为准，工作树无已跟踪 diff；
+10. `npm test` 全绿（计数以实际输出为准，不写死），`engineMatchesFile: true`，`valuesMatch: true`。

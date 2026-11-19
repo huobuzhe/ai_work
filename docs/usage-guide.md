@@ -9,6 +9,7 @@
 
 - [一、先搞清楚它是什么（打开前必读）](#一先搞清楚它是什么打开前必读)
 - [二、怎么打开 —— 三种方式，从最推荐到最轻量](#二怎么打开--三种方式从最推荐到最轻量)
+  - [方式二补充：宿主挂载排障（四个已踩过的坑）](#方式二补充宿主挂载排障四个已踩过的坑)
 - [三、界面总览：面板长什么样](#三界面总览面板长什么样)
 - [四、五步主流程（每一次操作都走这五步）](#四五步主流程每一次操作都走这五步)
 - [五、四类动作逐个讲 —— 每类要填什么、会得到什么](#五四类动作逐个讲--每类要填什么会得到什么)
@@ -80,6 +81,19 @@ node scripts/build-preview.js          # 默认写回 preview/index.html
 5. 这就是面板本体。接下来按第四节五步操作。
 
 > 宿主接线关系（给二次开发者）：`registerWorkbenchPanel(ctx)` 调 `ctx.inject(['sidebarRightTabs'])` → `sidebarRightTabs.register({ id:'workbench.tab', kind:'workbench', patterns, priority:'extension', keepMounted:true, title })`，再用 `ctx.slots.register({ name:'sidebar.right.pane.tab', key:'workbench.tab' })` 把 body 挂进去。body 返回 `{ preview, buttonLibrary }` 两块给宿主渲染。
+
+#### 方式二补充：宿主挂载排障（四个已踩过的坑）
+
+把工作台当 bundle 挂进 DSH 宿主时，曾连续踩到四个坑。若「打开 .xlsx 后没出现工作台 tab」或「宿主一启动就崩溃」，先按此表逐条比对。四个坑的根因与修法（commit `1cf1fd1`/`02fbd50`/`ebf1012`）如下：
+
+| 坑 | 现象 | 根因 | 修法 |
+| --- | --- | --- | --- |
+| **A. 无 tab** | 打开表格后右侧栏没有「表格工作台」标签，也不报错 | `package.json` 的 `exports["."]` 指向了 CJS 引擎 `lib/engine.js`（只有引擎能力、没有 `apply` 方法）。宿主 cordis 加载器 `loader.import('dsh-workbench')` 拿到引擎对象 → `unwrapExports` 后没有 `apply` → 判定「非插件」→ **静默跳过**，不挂载也不报错 | `exports["."]` 改为指向宿主入口 `./lib/index.mjs`，并保留 `./engine`、`./host`、`./client` 子路径出口 |
+| **B. 崩溃「invalid plugin, expect function or object with an apply method, received object」** | 宿主一启动弹崩溃对话框，提示应用无法启动 | `lib/index.mjs` 里同时写了 `export default { name, apply }` **和** 具名 `export function apply`。宿主自定义 ESM 转译路径下的 `unwrapExports`（`exports = exports.default ?? exports; …`）取到的是 default 普通对象，`apply` 丢失 → registry 的 `isApplicable(o)=o && typeof o.apply==='function'` 失败 → 抛错 | **删掉 `export default`，只保留具名 `export const name` + `export function apply`**；`exports["."]` 收敛为单一 `{ "default": "./lib/index.mjs" }`——与已验证可加载的 dsh-pocket / dsh-pet 完全对齐（它们也只有具名导出、单 default 条件） |
+| **C. 「无法打开此表格」** | 打开某文件报「请检查文件格式、内容或密码保护」 | **与插件无关**：打开的是 0 字节空文件（openpyxl `BadZipFile: File is not a zip file`） | 换用真实有内容的 xlsx（例：`新建 XLSX 工作表.xlsx`，PK zip、可正常打开）。插件本身没问题 |
+| **D. 崩溃恢复后 bundle 被移除** | 崩溃对话框里点了「禁用第三方插件、备份 profile patch 并重启」后，再从哪儿都找不到工作台 | 该按钮会把 `dsh-workbench` 从宿主 profile 的 bundle 清单里**移除** | 写回两处：`~/.dsh/profiles/<profile>/package.json` 的 `dependencies` 加 `"dsh-workbench":"link:F:/ai_work/workbench"`，并把 `"dsh-workbench"` 加回 `dsh.profile.bundles` 数组；必要时重建 `node_modules/dsh-workbench` 指向本目录的 junction/symlink |
+
+> **一句话记忆**：A 是「出口指错文件」、B 是「导出形状写错」、C 是「开了空文件」、D 是「被崩溃恢复按钮踢出清单」。A、B 是代码 / 包配置问题（本仓已修，一般不会复发）；C、D 是环境 / 操作问题（重装或换文件即可）。
 
 ### 方式三（最快验证）：不进宿主，直接用命令行跑「大脑」
 
