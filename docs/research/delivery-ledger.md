@@ -174,6 +174,18 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 **测试基线（2026-11-19，#57）**：`npm test` 436 tests / 415 pass / 0 fail / 21 skipped（+4 为 #57 接缝回归，含真 LibreOffice 重算用例）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：见下方「第四波」commit（panel-bridge 接缝修复 + xlsx_bridge rowIndex 修复 + panel-seams-5kinds 测试）。
 
+## 交付后增量（第五波：面板延迟修复 + 浮窗 UI 重构 + 五动作一键化，#58，2026-11-19 补记）
+
+用户反馈两个真实体验问题：①「暂无预览要等很久、点理解很久才有反应」；②「表格工作台显示原始数据太难看，要变成浮窗——打开 Excel 时原表原样显示、只浮一个小按钮，点按钮才出浮窗面板」。
+
+- **根因（延迟）**：`defaultReadTable` 每次调用都 spawn python（startup+import openpyxl 620ms + 读主表 640ms）并 **eager 读同目录全部兄弟文件**（~5×640ms），单次≈3.2s；而 `client/index.js::usePanelData` 用 `setInterval(900)` 每 900ms 轮询 `/state`，每次动作又重读 → 面板一直在重读、点「理解」排在 3.2s 读之后。修复：`lib/panel-bridge.js` 加每文件 TTL 缓存 `_readCache`(2s)、`_sourcesCache`(10s)，拆 `defaultReadTable`(带缓存) 与 `defaultReadTableCore`(不 eager 兄弟源)，新增 `loadSourcesForExtract(file)`(惰性+缓存 10s，仅 extract 需要才加载兄弟源)，写盘成功后 `invalidateReadCache`。首读 3.2s→0.6s，缓存命中 0ms。
+- **UI 浮窗重构**：`client/index.js::renderWorkbenchPanel` 由「侧栏流式堆叠整表数据」改为只渲染 `position:fixed` 悬浮元素——右下角悬浮按钮 `data-wb-fab`（⚙，始终显示，不遮挡原表）+ 点开后右下角浮窗面板 `data-workbench-panel`（宽 380、maxHeight 72vh、可滚动）。收起态面板 `display:none` **保留在 React 树里**（不占位、不遮挡、切换无需重建）。`WorkbenchPanelBody` 加 `fabOpen` React state 控制开合；护栏测试非渲染上下文 `fabOpen` 默认 true 保证内容可断言。
+- **五动作一键化**：浮窗面板加 QUICK 快捷按钮行（提取字段/调换两列/条件改动/公式计算/按主键去重），点一下发 `QUICK`（跳过理解、直接出「解释+影响预览」），再点「确认执行」即写盘。关键修复：QUICK 在引擎 reduce 内部立刻 preview+校验，默认列名（部门/备注）落真实表必失败——`lib/panel-session.js` 新增 `preNormalizeQuickParams(kind,p,cols)`，在 reduce **之前**把 QUICK 的列名类参数按真实列预归一化；且 `lib/panel-bridge.js` 让 `QUICK + kind==='extract'` 也挂 `sources`。五动作均直达 PREVIEWED。
+
+**回归测试**：`test/panel-projection.test.js` 加 3 例浮窗外壳结构（始终有 position:fixed 悬浮按钮 / 收起态面板 display:none 且在树里 / 展开态 display:flex）；`test/panel-seams-5kinds.test.js` 加 2 例（读表 TTL 缓存命中不重复 spawn + 写盘失效拿最新值 / QUICK 五动作在真实表上均直达 PREVIEWED）。
+
+**测试基线（2026-11-19，#58）**：`npm test` 441 tests / 420 pass / 0 fail / 21 skipped；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：3b63c3d（面板延迟缓存 + 浮窗 UI + 五动作一键化）。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
