@@ -193,8 +193,10 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **#61 影响行数按行去重（`5f52068`）**：`lib/engine.js` 的 `affectedRows` 原用主键值字符串 `c.row` 做去重键 `rowSet[c.row]=true`，**重复主键会把两行塌成一行、少报影响行数**（预览显示"影响 1 行"但磁盘实变 2 行；swap 在带重复姓名的表上可用磁盘实证两行都对调、仅计数错）。修复：`rowSet` 键优先用 `rowIndex`（`'#'+c.rowIndex`，重复主键也能区分），无 `rowIndex` 时回落主键值（`'k:'+c.row`，向后兼容）。
 - **五动作实机 e2e 固化（`test/panel-multi-action.test.js`，随 `5f52068`）**：迷你 React 垫片跑**真实 `client/index.js`** + **真实 `makeActionHandler`**（真实 panel-session 状态机 + 真实引擎 + 真实 `xlsx_bridge.py` 建表/写盘/读回），对 extract/swap/conditional/function/dedupe 各驱动一遍「IDLE 原始表格 → 点一键动作出预览 → 确认执行写盘」，断言三态 DOM 结构（IDLE 有 `data-workbench-orig-table` 无箭头 / PREVIEW 有箭头 / EXECUTED 保留 `data-wb-changed` 无箭头）并逐格读盘核对；并用重复主键（两个"阿岚"）表断言 swap 影响 **4 行**（旧 bug 会少报成 3 行）。建 fixture 用真 python `create(mode=upload)`，外勤登记表.csv 供 extract。
 - **#62 浮窗 FAB/面板美化（`6f24905`）**：① FAB `data-wb-fab` 由纯色 emoji 改为**品牌蓝渐变圆钮（56×56）+ 内联 SVG 图标**（去掉跨平台不一致的 ⚙ emoji）+ 双层柔和投影 + hover 上浮微动效；② 面板 `data-workbench-panel` 改**渐变标题栏**（含状态指示点 + 圆形收起钮 ✕）、精致圆角 14/描边/大投影、内容区留白；③ 去掉正文里与标题栏重复的『表格工作台』标题（改为无障碍隐藏占位，保 `body-react-element`/`render-children`/`panel-data-pipeline`/`click-loop` 等测试仍能查到字样）。纯视觉改动，`data-*` 契约与三态渲染逻辑不变。
+- **控件统一美化（`2ad4d07`）**：理解/预览/固化为描边按钮、确认执行为主色实心（禁用灰化）；五动作快捷标签改圆角 pill 芯片（品牌蓝边 + hover）；输入框圆角描边统一；按钮库按钮/管理键（运行/改名/改参数/删除，删除红语义）与建表模板/空白表按钮与输入框统一。纯视觉。
+- **渲染异常兜底（`60a0de2`，上线健壮性）**：`WorkbenchPanelBody` 调用 `renderWorkbenchPanel` 包 `try/catch`，渲染期任何意外异常 → 返回一个红色告警悬浮钮（`data-workbench-error-fallback`，仍是合法 React 元素），保证宿主视图不因面板渲染错误而崩溃/白屏。已用强制抛错脚本验证兜底路径返回合法元素；happy path 由全量测试覆盖。至此四类宿主级崩溃防护齐备：插件加载（`ebf1012` ESM 导出对齐）、tab 注册（`ctx.effect`+`slots.inject` 包裹）、面板渲染（本次兜底）、动作处理（各 `try/catch`）。
 
-**测试基线（2026-11-19，#61/#62）**：`npm test` 453 tests / 432 pass / 0 fail / 21 skipped（+5 为五动作实机 e2e）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：`5f52068`（affectedRows + 五动作 e2e）、`6f24905`（FAB/面板美化）。
+**测试基线（2026-11-19，#61/#62）**：`npm test` 453 tests / 432 pass / 0 fail / 21 skipped（+5 为五动作实机 e2e）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：`5f52068`（affectedRows + 五动作 e2e）、`6f24905`（FAB/面板美化）、`2ad4d07`（控件统一美化）、`60a0de2`（渲染异常兜底）。
 
 ## 边界与已知瑕疵（接手须知）
 
