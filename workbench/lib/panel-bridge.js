@@ -50,6 +50,50 @@ function defaultApplyTable(file, cells) {
 }
 
 /**
+ * 默认重算器：调 bundled LibreOffice Kit 对 xlsx 就地重算，使新写入的公式格产生缓存值。
+ * 背景（接缝缺口修复，function 动作）：xlsx_bridge.py apply 只把公式字符串写进单元格、不计算；
+ * 而 defaultReadTable 用 data_only=True 读的是**缓存值**，新写公式无缓存 → 应发列读回为空。
+ * 此处在写盘后触发一次重算，令「确认执行」后面板/文件里能立刻看到算出来的值。
+ * 定位顺序沿用 scripts/acceptance-formula.js 的 locateCli 约定（env 覆盖→包内→bundled 兜底）。
+ * 重算失败不抛给调用方致命——返回 {ok:false,error}，主流程仍算「已写入磁盘」（公式在、值待重算）。
+ * @param {string} file xlsx 绝对路径（就地重算）
+ * @returns {{ok:boolean,error?:string}}
+ */
+function defaultRecalc(file) {
+  const { execFileSync } = require('child_process');
+  const fs = require('fs');
+  function locateCli() {
+    if (process.env.WORKBENCH_LO_CLI) return process.env.WORKBENCH_LO_CLI;
+    try { return require.resolve('@deepseek-ai/libreoffice-kit/lib/cli.js'); } catch (_) { /* candidates */ }
+    const rel = path.join('@deepseek-ai', 'libreoffice-kit', 'lib', 'cli.js');
+    const cands = [
+      path.join(process.cwd(), 'node_modules', rel),
+      path.join(__dirname, '..', 'node_modules', rel),
+      'F:\\deepseek_haeness_inload\\resources\\app.asar.unpacked\\dsh\\node_modules\\' + rel
+    ];
+    for (const c of cands) { if (fs.existsSync(c)) return c; }
+    return '';
+  }
+  const cli = locateCli();
+  if (!cli || !fs.existsSync(cli)) return { ok: false, error: '找不到 bundled LibreOffice Kit CLI（设置 WORKBENCH_LO_CLI）' };
+  const nodeBin = process.env.WORKBENCH_LO_NODE || process.execPath;
+  // LibreOffice Kit 的 recalculate 要求输入/输出路径不同：先算到临时文件，再替换回原文件。
+  const os = require('os');
+  const tmpOut = path.join(os.tmpdir(), 'workbench-recalc-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.xlsx');
+  try {
+    execFileSync(nodeBin, [cli, 'recalculate', '--input', file, '--output', tmpOut],
+      { encoding: 'utf8', timeout: 120000 });
+    if (!fs.existsSync(tmpOut)) return { ok: false, error: '重算未产出文件' };
+    fs.copyFileSync(tmpOut, file);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || String(e) };
+  } finally {
+    try { if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut); } catch (_) {}
+  }
+}
+
+/**
  * 默认读表器：spawn python xlsx_bridge.py read-values <file>，解析其 stdout JSON。
  * 读 data_only=True（重算缓存值），与 univer 一致地取最终可见值。
  * @param {string} file 绝对路径
@@ -70,9 +114,69 @@ function defaultReadTable(file) {
     }
     const out = (r.stdout || '').trim();
     if (!out) throw new Error('xlsx_bridge 无输出');
-    return JSON.parse(out);
+    const table = JSON.parse(out);
+    // 接缝缺口修复（extract 数据源）：把同级目录下的声明式数据源（.csv/.xlsx）一并读成
+    // sources 字典（键=文件名），供引擎 extract 的「来源文件」校验与跨表提取使用。
+    // 此前 defaultReadTable 只回 {columns,rows}、无 sources → extract 永远报
+    // 「来源文件不在声明式数据源里」。这里补上「同目录兄弟文件即数据源」的默认约定。
+    try {
+      const sources = collectSiblingSources(file);
+      if (sources && Object.keys(sources).length) table.sources = sources;
+    } catch (_) { /* 数据源加载失败不影响主表读取 */ }
+    return table;
   }
   throw lastErr || new Error('找不到可用的 python 解释器');
+}
+
+/**
+ * 收集主表同目录下的声明式数据源文件（.csv/.xlsx），读成引擎要求的结构：
+ *   sources[文件名] = { columns:[...], rows:[{列名:值}] }
+ * 约定：extract 的「来源文件」就是同目录里的这些兄弟文件（如 外勤登记表.csv）。
+ * 只读、不写；单个文件读失败则跳过（不连累其它数据源）。
+ * @param {string} mainFile 主表绝对路径
+ * @returns {Object<string,{columns:string[],rows:object[]}>}
+ */
+function collectSiblingSources(mainFile) {
+  const { spawnSync } = require('child_process');
+  const fs = require('fs');
+  const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
+  const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  function py(args) {
+    let lastErr = null;
+    for (const bin of candidates) {
+      const r = spawnSync(bin, [bridge].concat(args), { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+      if (r.error) { lastErr = r.error; continue; }
+      if (r.status !== 0) { lastErr = new Error(r.stderr || ('exit ' + r.status)); continue; }
+      const out = (r.stdout || '').trim();
+      return out ? out : '';
+    }
+    throw lastErr || new Error('找不到可用的 python 解释器');
+  }
+  const dir = path.dirname(mainFile);
+  const self = path.basename(mainFile).toLowerCase();
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch (_) { return {}; }
+  const sources = {};
+  entries.forEach(function (name) {
+    const lower = name.toLowerCase();
+    if (lower === self) return; // 跳过主表自身
+    if (!/\.(csv|xlsx|xls)$/.test(lower)) return;
+    const abs = path.join(dir, name);
+    try {
+      let parsed;
+      if (lower.endsWith('.csv')) {
+        // read_csv 只回 rows 数组；列名从首行推断。
+        const rowsOut = py(['read-csv', abs]);
+        const rows = JSON.parse(rowsOut);
+        const columns = rows.length ? Object.keys(rows[0]) : [];
+        parsed = { columns: columns, rows: rows };
+      } else {
+        parsed = JSON.parse(py(['read-values', abs]));
+      }
+      if (parsed && Array.isArray(parsed.rows)) sources[name] = parsed;
+    } catch (_) { /* 单个数据源读失败跳过 */ }
+  });
+  return sources;
 }
 
 /**
@@ -251,6 +355,8 @@ function makeActionHandler(deps) {
   const readTable = deps.readTable || defaultReadTable;
   const resolveFile = deps.resolveFile || function (file /*, sessionId */) { return file; };
   const applyTable = deps.applyTable || defaultApplyTable;
+  // 接缝缺口修复（function 动作）：写公式后就地重算，让缓存值落盘（默认调 LibreOffice Kit）。
+  const recalc = deps.recalc || defaultRecalc;
   const store = deps.store || createSessionStore();
   return function handler(req) {
     const method = (req && req.method) || 'GET';
@@ -321,6 +427,17 @@ function makeActionHandler(deps) {
         const r = applyTable(absPath, vm.preview.cells);
         wrote.writtenOk = true;
         wrote.writtenCells = (r && r.cellsWritten != null) ? r.cellsWritten : vm.preview.cells.length;
+        // 接缝缺口修复（function 动作）：若写出的单元格里有公式（after 以 = 开头），
+        // 立刻就地重算，让缓存值落盘 → 面板/文件里「应发」等列能马上看到算出来的数，
+        // 而不是空空如也（apply 只写公式字符串、不计算；read 用 data_only 读缓存值）。
+        const hasFormula = vm.preview.cells.some(function (c) {
+          return typeof c.after === 'string' && c.after.charAt(0) === '=';
+        });
+        if (hasFormula) {
+          const rec = recalc(absPath);
+          wrote.recalcOk = !!(rec && rec.ok);
+          if (rec && !rec.ok) wrote.recalcError = rec.error;
+        }
       } catch (e) {
         wrote.writtenOk = false;
         wrote.writeError = (e && e.message) || String(e);
@@ -340,13 +457,15 @@ function makeActionHandler(deps) {
         registryButtons: vm.registryButtons,
         writtenOk: wrote.writtenOk,
         writtenCells: wrote.writtenCells,
-        writeError: wrote.writeError
+        writeError: wrote.writeError,
+        recalcOk: wrote.recalcOk,
+        recalcError: wrote.recalcError
       }
     };
   };
 }
 
-module.exports = { makeStateHandler, makeButtonHandler, makeActionHandler, makeTemplatesHandler, makeCreateHandler, defaultReadTable, defaultApplyTable, defaultCreateTable, defaultLoadTemplates };
+module.exports = { makeStateHandler, makeButtonHandler, makeActionHandler, makeTemplatesHandler, makeCreateHandler, defaultReadTable, defaultApplyTable, defaultCreateTable, defaultLoadTemplates, defaultRecalc, collectSiblingSources };
 
 /**
  * 票 #52：默认模板加载器——spawn node scripts/load-templates.js，解析 stdout 的 templates 数组。

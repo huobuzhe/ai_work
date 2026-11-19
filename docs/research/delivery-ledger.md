@@ -158,9 +158,20 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **② 理解没带输入框文字（`3029a92`）**：`runAction('understand', {})` 只发动作类型、漏发 `text`；引擎 `UNDERSTAND` 用 `action.text`（缺省才退 `state.input`，而 Host 侧 `state.input` 从未被 SET_INPUT 写过）→ `understand('')` → 报"输入框是空的，先写一句话"。修复：`client/index.js::runAction` 在 `type==='understand'` 且 `act.text` 未给时附当前 `inputText`；`npm run build:client` 重建 `client/client.js`。
 - **③ swap 列名解析缺口（`42fe744`）**：`understand()` 只做 kind 关键词匹配、不解析列名，草稿默认列名（部门/备注）落到真实表上撞列 → 校验报"字段A 与 字段B 不能相同"。修复：`lib/panel-session.js::normalizeDraft` 对 `swap` 从 `draft.sentence` 按出现顺序捞出真实列名（"对调工时和时薪两列" → `字段A=工时`/`字段B=时薪`），并兜底保证 A≠B。
 
-**回归测试**：`test/panel-action.test.js` 加 4 例（小写 understand 全链、小写 confirm 落盘一次、句子列名解析、不撞列）；`test/new-recipe-loop.test.js` 加 1 条断言（understand 请求体带 `text`）。**真实端到端验证**（真实 `client/index.js` 渲染 body + 真实 `makeActionHandler`，非 stub）：输入"对调工时和时薪两列" → 理解(UNDERSTOOD) → 预览(PREVIEWED，影响 4 行) → 确认(EXECUTED，写盘 8 格)，并回读 `演示_员工工时表.xlsx` 确认工时↔时薪 4 行 8 格真实对调落盘（mtime/sha256 均变）。
+**回归测试**：`test/panel-action.test.js` 加 4 例（小写 understand 全链、小写 confirm 落盘一次、句子列名解析、不撞列）；`test/new-recipe-loop.test.js` 加 1 条断言（understand 请求体带 `text`）。**真面板真实端到端测试固化**：`test/panel-e2e-real.test.js`（`730423c`）——与其它测试不同，它不用 fetch 桩伪装成功，而是把迷你 React 垫片跑起的**真实 `client/index.js` 组件**的每个 `/workbench-api/action` 请求**原样交给真实 `makeActionHandler`**（真实 panel-session 状态机 + 真实引擎 + 真实 `xlsx_bridge.py` 建表/写盘/读回），断言"输入→理解→预览→确认"全链走通且逐格核对 swap 对调落盘。已做**变异验证**：临时破坏①大写归一化或②understand 带文字任一修复，测试即 `pass 0 / fail 1`，证明能真抓 bug（这正是此前纯 Host 单测 + fetch 桩漏检的盲区）。**真实端到端验证**（真实 `client/index.js` 渲染 body + 真实 `makeActionHandler`，非 stub）：输入"对调工时和时薪两列" → 理解(UNDERSTOOD) → 预览(PREVIEWED，影响 4 行) → 确认(EXECUTED，写盘 8 格)，并回读 `演示_员工工时表.xlsx` 确认工时↔时薪 4 行 8 格真实对调落盘（mtime/sha256 均变）。
 
-**测试基线（2026-11-19，含 `3029a92`）**：`npm test` 431 tests / 410 pass / 0 fail / 21 skipped（跳过均「react 不可解析」环境跳过，+5 为 #56 回归）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：`42fe744`（①③）、`3029a92`（②）。
+**测试基线（2026-11-19，含 `730423c`）**：`npm test` 432 tests / 411 pass / 0 fail / 21 skipped（跳过均「react 不可解析」环境跳过，+6 为 #56 回归，其中 1 为真面板真实端到端）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：`42fe744`（①③）、`3029a92`（②）、`730423c`（真面板端到端测试）。
+
+## 交付后增量（第四波：五动作真实面板 e2e 复核 + 两处接缝缺口修复，#57，2026-11-19 补记）
+
+对 extract/swap/conditional/function/dedupe 五动作各在真实面板路径（真实 `makeActionHandler` + 真实 `defaultReadTable`/`defaultApplyTable`/`defaultRecalc`，真 python 桥 + 真 LibreOffice Kit）跑一遍 understand→preview→confirm，发现 swap/conditional/dedupe 完全正常，extract/function 各暴露一处**真实接缝缺口**（引擎算法本身无错，缺口在「Host 侧 I/O 接线」）：
+
+- **缺口 A — extract 在真实面板不可用（来源文件永远校验失败）**：`lib/panel-bridge.js::defaultReadTable` 此前只回 `{columns,rows}`、**不产出 `sources`**；而 `lib/index.mjs:68/72` 建 handler 时未覆盖 `readTable` → 引擎 `extract` 的跨表检查（`lib/engine.js:737` `state.sources[来源文件]` 必须存在）永远报「来源文件不在声明式数据源里」。修复：新增 `collectSiblingSources(file)`，`defaultReadTable` 把主表**同目录**下的 `.csv`/`.xlsx` 兄弟文件读成 `sources[文件名]={columns,rows}`（默认约定：extract 的「来源文件」即同目录兄弟文件，如 `外勤登记表.csv`）。
+- **缺口 B — function 确认后数值读回为空（未重算）**：`xlsx_bridge.py apply` 只把公式字符串（`=B2*C2`）写进单元格、**不计算**；而 `defaultReadTable`/`read-values` 用 `data_only=True` 读**缓存值**，新写公式无缓存 → 「应发」列读回为空（看似没算，实际公式已正确落盘）。`acceptance:formula` 能过是因为它**额外**调了 bundled LibreOffice Kit 重算，真实面板 confirm 走 `defaultApplyTable` 少了这一步。修复：新增 `defaultRecalc(file)`（调 bundled LibreOffice Kit `recalculate`，因 Kit 要求输入/输出路径不同，先算到临时文件再 `copyFileSync` 回写），`makeActionHandler` 在**写出的单元格含公式**（`after` 以 `=` 开头）时就地重算；`recalcOk`/`recalcError` 随响应回传。
+
+**回归测试**：`test/panel-seams-5kinds.test.js`（3 例，真 python 桥 + 真 LibreOffice）——① defaultReadTable 把同目录 CSV 读成 sources 且 extract 全链写盘正确；② function 预览产物为公式字符串、confirm 后 `recalcOk:true` 且应发读回=工时×时薪；③ swap 等纯值动作不触发重算。
+
+**测试基线（2026-11-19，#57）**：`npm test` 435 tests / 414 pass / 0 fail / 21 skipped（+3 为 #57 接缝回归，含真 LibreOffice 重算用例）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：见下方「第四波」commit（panel-bridge 接缝修复 + panel-seams-5kinds 测试）。
 
 ## 边界与已知瑕疵（接手须知）
 
