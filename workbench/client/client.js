@@ -50,6 +50,18 @@ const ACTION_FORMS = [
   { kind: 'fill', label: '空值填充', fields: [
     { key: '目标列', type: 'column', def: '备注' },
     { key: '填充值', type: 'text', def: '待补' }
+  ] },
+  { kind: 'trim', label: '去首尾空格', fields: [
+    { key: '目标列', type: 'column', def: '姓名' }
+  ] },
+  { kind: 'case', label: '英文大小写', fields: [
+    { key: '目标列', type: 'column', def: '' },
+    { key: '模式', type: 'enum', options: ['upper', 'lower'], def: 'upper' }
+  ] },
+  { kind: 'affix', label: '加前缀后缀', fields: [
+    { key: '目标列', type: 'column', def: '' },
+    { key: '位置', type: 'enum', options: ['prefix', 'suffix'], def: 'prefix' },
+    { key: '文本', type: 'text', def: '#' }
   ] }
 ];
 
@@ -177,7 +189,7 @@ function projectPreviewCard(state) {
 // kind → 中文短名（预览卡第①段展示用）。为保持 client 不依赖引擎而手工镜像 KINDS.short；
 // 新增/改名 kind 时须同步此处（已如实记录为 low 漂移风险，非第二套校验逻辑）。
 function labelOfKind(kind) {
-  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充' };
+  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充', trim: '去首尾空格', 'case': '英文大小写', affix: '加前缀后缀' };
   return map[kind] || kind;
 }
 

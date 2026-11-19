@@ -87,6 +87,33 @@ const KINDS = {
       { key: '目标列', 类型: '列名', 必填: true, 默认值: '备注', 约束: { newColumn: true } },
       { key: '填充值', 类型: 'text', 必填: true, 默认值: '待补' }
     ]
+  },
+  // ⑧ trim（日常常用）：去掉某列文本首尾空白（scope 范围内）。
+  trim: {
+    label: '⑧ 去首尾空格', short: '去首尾空格',
+    medium: '结构化动作：清理一列文本的首尾空白',
+    paramSpec: [
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '姓名', 约束: { mustExist: true } }
+    ]
+  },
+  // ⑨ case（日常常用）：把某列英文统一成大写 / 小写。
+  case: {
+    label: '⑨ 英文大小写', short: '英文大小写',
+    medium: '结构化动作：把一列英文统一成大写或小写',
+    paramSpec: [
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '部门', 约束: { mustExist: true } },
+      { key: '模式', 类型: '枚举', 必填: true, 默认值: 'upper', 约束: { enum: ['upper', 'lower'] } }
+    ]
+  },
+  // ⑩ affix（日常常用）：给某列每格文本统一加前缀 / 后缀（如统一补单位、补编号前缀）。
+  affix: {
+    label: '⑩ 加前缀后缀', short: '加前缀后缀',
+    medium: '结构化动作：给一列文本统一加上前缀或后缀',
+    paramSpec: [
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '姓名', 约束: { mustExist: true } },
+      { key: '位置', 类型: '枚举', 必填: true, 默认值: 'prefix', 约束: { enum: ['prefix', 'suffix'] } },
+      { key: '文本', 类型: 'text', 必填: true, 默认值: '#' }
+    ]
   }
 };
 
@@ -686,6 +713,22 @@ function stepsFor(kind, p) {
     '在「' + p.目标列 + '」列里找空单元格',
     '把空的填成「' + p.填充值 + '」，已有值不动'
   ];
+  if (kind === 'trim') return [
+    scopeStep,
+    '把「' + p.目标列 + '」列每格文本的首尾空白去掉后写回'
+  ];
+  if (kind === 'case') return [
+    scopeStep,
+    '把「' + p.目标列 + '」列每格英文统一成' + (p.模式 === 'lower' ? '小写' : '大写')
+  ];
+  if (kind === 'sort') return [
+    '按「' + p.排序列 + '」' + (p.方向 === 'desc' ? '降序' : '升序') + '重新排列整表行顺序',
+    '行内容不变，只改行的先后顺序（确认后写回整表）'
+  ];
+  if (kind === 'affix') return [
+    scopeStep,
+    '给「' + p.目标列 + '」列每格文本' + (p.位置 === 'suffix' ? '末尾追加' : '开头加上') + '「' + p.文本 + '」'
+  ];
   return [];
 }
 function explanationFor(kind, p, sentence) {
@@ -764,6 +807,11 @@ function understand(sentence) {
   else if (/条件|大于|小于|超过|删掉|清空|标记|标注|加班/.test(s)) kind = 'conditional';
   else if (/计算|乘|函数|公式|算成|求和|[*+]/.test(s)) kind = 'function';
   else if (/去重|重复|dedupe|唯一/.test(s)) kind = 'dedupe';
+  else if (/空格|首尾|trim|去空/.test(s)) kind = 'trim';
+  else if (/大写|小写|大小写|upper|lower/.test(s)) kind = 'case';
+  else if (/前缀|后缀|加前缀|加后缀|affix/.test(s)) kind = 'affix';
+  else if (/替换|换成|改成/.test(s)) kind = 'replace';
+  else if (/填充|空值|补齐|补空/.test(s)) kind = 'fill';
   if (!kind) return { error: '没匹配到任何一种功能（本版只是关键词匹配，不是真 LLM）' };
   return { kind: kind, sentence: s };
 }
@@ -936,6 +984,7 @@ function preview(state, draft) {
   }
   let disclosure = null;   // 票 #13：swap 半换披露（swappedRows/unchangedRows/mixedColumns/partial）
   let summaryExtra = '';   // 票 #13：swap 半换 banner，接进 summary
+  const previewMeta = {};  // sort 等「结构性动作」把额外元数据（如 sortOrder 行序）挂这里
   const p = draft.params, cells = [];
   const pk = state.primaryKey || '姓名';
   // 票 #13：add 带 source（改动来源）。cells 只含「将改的格子」，未命中行不产格子，
@@ -1047,6 +1096,31 @@ function preview(state, draft) {
         add(r, p.目标列, beforeOf(state, r, p.目标列), String(p.填充值 == null ? '' : p.填充值), false, 'fill');
       }
     });
+  } else if (draft.kind === 'trim') {
+    // ⑧ 去首尾空格：目标列每格 String.trim() 后若变化则写回。
+    state.rows.forEach(function (r) {
+      if (!inScope(r)) return;
+      const cur = r[p.目标列] == null ? '' : String(r[p.目标列]);
+      const after = cur.trim();
+      if (after !== cur) add(r, p.目标列, beforeOf(state, r, p.目标列), after, false, 'trim');
+    });
+  } else if (draft.kind === 'case') {
+    // ⑨ 英文大小写：upper→toUpperCase，lower→toLowerCase。
+    state.rows.forEach(function (r) {
+      if (!inScope(r)) return;
+      const cur = r[p.目标列] == null ? '' : String(r[p.目标列]);
+      const after = p.模式 === 'lower' ? cur.toLowerCase() : cur.toUpperCase();
+      if (after !== cur) add(r, p.目标列, beforeOf(state, r, p.目标列), after, false, 'case');
+    });
+  } else if (draft.kind === 'affix') {
+    // ⑩ 加前缀后缀：每格文本按位置加前缀/后缀。
+    state.rows.forEach(function (r) {
+      if (!inScope(r)) return;
+      const cur = r[p.目标列] == null ? '' : String(r[p.目标列]);
+      const txt = String(p.文本 == null ? '' : p.文本);
+      const after = p.位置 === 'suffix' ? (cur + txt) : (txt + cur);
+      if (after !== cur) add(r, p.目标列, beforeOf(state, r, p.目标列), after, false, 'affix');
+    });
   }
   // 影响行数按「行」去重，不能只按主键值（重复主键会把两行塌成一行、少报影响行数）。
   // 优先用 rowIndex（state.rows 下标，重复主键也能区分），无 rowIndex 时回落主键值。
@@ -1059,13 +1133,18 @@ function preview(state, draft) {
   let summary = affectedRows === 0
     ? '影响 0 行 / 共 ' + totalRows + ' 行；没有任何单元格会变 —— 条件没命中任何记录。零命中允许确认。'
     : '影响 ' + affectedRows + ' 行 / 共 ' + totalRows + ' 行；共 ' + cells.length + ' 个单元格会变。确认前表格不会动。';
+  // 结构性动作（sort）：没有「单元格变化」，但有「整表行序变化」——如实给出会重排的行数。
+  if (previewMeta.sortOrder) {
+    const moved = previewMeta.sortOrder.filter(function (v, i) { return v !== i; }).length;
+    summary = '按列重排整表行顺序：' + totalRows + ' 行中 ' + moved + ' 行位置会变。确认后写回整表（行内容不变，只改先后顺序）。';
+  }
   if (summaryExtra) summary += summaryExtra;
   // 票 #12：预览如实反映当前作用范围，供预览卡渲染「作用范围」控件。
   // 票 #13：disclosure + swapBanner 随预览返回，供面板渲染「命中？列 + 混合来源 banner」。
   return Object.assign({ cells, summary, affectedRows, totalRows, invalid: false, disabled: false, errors: [], issues: [],
     capabilityBlockers: [],
     scope: p.scope || 'all', condition: p.条件 || '',
-    disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec }, adapterMeta);
+    disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec }, previewMeta, adapterMeta);
 }
 
 // 纯函数：把预览里的格子落到一份新表格上
