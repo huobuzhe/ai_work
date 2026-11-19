@@ -218,7 +218,9 @@ function renderWorkbenchPanel(hostState) {
   } catch (_) { library = null; }
 
   const children = [];
-  children.push(jsx('div', { style: { fontWeight: 600, marginBottom: 8 }, children: '表格工作台' }, 'hdg'));
+  // 标题已在浮窗渐变标题栏呈现，这里不再重复一行标题。保留一个无障碍隐藏标题占位，
+  // 保证纯投影/护栏测试仍能找到「表格工作台」字样。
+  children.push(jsx('div', { style: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }, children: '表格工作台' }, 'hdg'));
   // 票 #47：面板内「新建配方」交互区——输入一句话 → 理解 → 预览 → 确认执行 → 固化为按钮。
   // 仅在宿主提供 onAction 时渲染（旧调用/纯投影模式保持原样，向后兼容）。
   const onAction = hostState && typeof hostState.onAction === 'function' ? hostState.onAction : null;
@@ -603,6 +605,16 @@ function renderWorkbenchPanel(hostState) {
   const onCloseFab = hostState && typeof hostState.onCloseFab === 'function' ? hostState.onCloseFab : onToggleFab;
 
   // 悬浮按钮（FAB）：始终显示，位于右下角、原表之上。
+  // 视觉：品牌渐变 + 双层柔和投影 + hover 上浮；图标用内联 SVG（避免 emoji 跨平台不一致）。
+  const fabIcon = jsx('svg', {
+    width: 24, height: 24, viewBox: '0 0 24 24', fill: 'none',
+    stroke: '#fff', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round',
+    'aria-hidden': 'true',
+    children: [
+      jsx('path', { d: 'M4 7h10M4 12h16M4 17h7' }, 'l1'),
+      jsx('path', { d: 'M17 5l1.2 2.8L21 9l-2.8 1.2L17 13l-1.2-2.8L13 9l2.8-1.2z', fill: '#fff', stroke: 'none' }, 'l2')
+    ]
+  }, 'fabicon');
   const fab = jsx('button', {
     type: 'button',
     'data-wb-fab': '1',
@@ -613,12 +625,17 @@ function renderWorkbenchPanel(hostState) {
     },
     style: {
       position: 'fixed', right: 24, bottom: 24, zIndex: 2147482000,
-      width: 52, height: 52, borderRadius: '50%', border: 'none',
-      background: '#2563eb', color: '#fff', fontSize: 20, cursor: 'pointer',
-      boxShadow: '0 4px 14px rgba(0,0,0,0.28)', display: 'flex',
-      alignItems: 'center', justifyContent: 'center', lineHeight: 1
+      width: 56, height: 56, borderRadius: '50%', border: 'none',
+      background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 55%, #1d4ed8 100%)',
+      color: '#fff', cursor: 'pointer', padding: 0,
+      boxShadow: '0 6px 20px rgba(37,99,235,0.42), 0 2px 6px rgba(0,0,0,0.18)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      transition: 'transform .18s ease, box-shadow .18s ease',
+      outline: 'none'
     },
-    children: '⚙'
+    onMouseEnter: function (ev) { try { if (ev && ev.currentTarget) { ev.currentTarget.style.transform = 'translateY(-2px) scale(1.05)'; ev.currentTarget.style.boxShadow = '0 10px 26px rgba(37,99,235,0.5), 0 3px 8px rgba(0,0,0,0.22)'; } } catch (_) {} },
+    onMouseLeave: function (ev) { try { if (ev && ev.currentTarget) { ev.currentTarget.style.transform = 'none'; ev.currentTarget.style.boxShadow = '0 6px 20px rgba(37,99,235,0.42), 0 2px 6px rgba(0,0,0,0.18)'; } } catch (_) {} },
+    children: fabIcon
   }, 'fab');
 
   // 浮窗面板：点 FAB 后出现在右下角，FAB 之上，可滚动，不遮挡整表。
@@ -627,28 +644,35 @@ function renderWorkbenchPanel(hostState) {
   const panel = jsxs('div', {
     'data-workbench-panel': '1',
     style: {
-      position: 'fixed', right: 24, bottom: 88, zIndex: 2147482001,
-      width: 380, maxWidth: 'calc(100vw - 48px)', maxHeight: '72vh',
+      position: 'fixed', right: 24, bottom: 92, zIndex: 2147482001,
+      width: 384, maxWidth: 'calc(100vw - 48px)', maxHeight: '72vh',
       display: fabOpen ? 'flex' : 'none', flexDirection: 'column',
-      background: '#fff', color: '#111', border: '1px solid #d0d7de',
-      borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+      background: '#fff', color: '#1f2328', border: '1px solid #e3e7ec',
+      borderRadius: 14, boxShadow: '0 18px 48px rgba(15,23,42,0.22), 0 4px 12px rgba(15,23,42,0.10)',
       fontFamily: 'inherit', fontSize: 13, overflow: 'hidden'
     },
     children: [
-      // 标题栏：拖动手感（不可真拖，纯视觉）+ 收起按钮
+      // 标题栏：品牌色渐变 + 图标 + 收起按钮
       jsxs('div', {
         'data-wb-fab-header': '1',
         style: {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '8px 12px', background: '#f6f8fa', borderBottom: '1px solid #e1e4e8',
-          cursor: 'default', userSelect: 'none'
+          padding: '11px 14px',
+          background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+          color: '#fff', userSelect: 'none'
         },
         children: [
-          jsx('div', { style: { fontWeight: 600 }, children: '表格工作台' }, 'fabtitle'),
+          jsxs('div', {
+            style: { display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 14, letterSpacing: 0.2 },
+            children: [
+              jsx('span', { style: { width: 8, height: 8, borderRadius: '50%', background: '#fff', opacity: 0.9, display: 'inline-block' } }, 'dot'),
+              jsx('span', { children: '表格工作台' }, 'fabtitle')
+            ]
+          }, 'fabti'),
           jsx('button', {
             type: 'button', 'data-wb-fab-close': '1', title: '收起',
             onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { onCloseFab(); } catch (_) {} },
-            style: { border: 'none', background: 'transparent', fontSize: 16, cursor: 'pointer', lineHeight: 1, color: '#555' },
+            style: { border: 'none', background: 'rgba(255,255,255,0.16)', color: '#fff', fontSize: 14, cursor: 'pointer', lineHeight: 1, width: 26, height: 26, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
             children: '✕'
           }, 'fabclose')
         ]
@@ -656,7 +680,7 @@ function renderWorkbenchPanel(hostState) {
       // 可滚动内容区
       jsx('div', {
         'data-wb-fab-body': '1',
-        style: { padding: 12, overflowY: 'auto', flex: 1 },
+        style: { padding: 14, overflowY: 'auto', flex: 1, background: '#fff' },
         children: jsxs('div', { children: children }, 'fabin')
       }, 'fabbody')
     ]
