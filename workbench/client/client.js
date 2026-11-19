@@ -161,7 +161,9 @@ function projectOne(b) {
     name: b.name,
     kind: b.kind,
     label: labelOfKind(b.kind),
-    source: b.source === 'preset' ? 'preset' : 'user',
+    // 保留来源原值：preset（仓内预置）/ user（用户固化）/ default（自动派生的默认配方）。
+    // 早期只区分 preset/user，把 source='default' 的默认配方误标成 user，与引擎真值不符（#45 source 标为 default）。
+    source: b.source === 'preset' ? 'preset' : (b.source === 'default' ? 'default' : 'user'),
     schemaVersion: b.schemaVersion,
     params: Object.assign({}, b.params || {}),
     medium: b.medium,

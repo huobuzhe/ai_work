@@ -11,6 +11,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const E = require('../lib/engine');
+const H = require('../lib/panel-state');
 const C = require(path.join(__dirname, '..', 'client', 'index.js'));
 
 function sampleState() {
@@ -166,6 +167,20 @@ test('按钮库 projectOne：未知/无 source 默认 user、无 schemaVersion �
   const lib = C.projectButtonLibrary(s);
   assert.equal(lib.buttons[0].source, 'user');
   assert.equal(lib.buttons[0].schemaVersion, E.SCHEMA_VERSION);
+});
+
+test('#45 default 默认配方按钮 source 原样保留为 default（不被 projectOne 塌成 user）', () => {
+  const s = H.buildPanelState({
+    columns: ['姓名', '部门', '工时', '时薪'],
+    rows: [{ 姓名: 'A', 部门: '销售', 工时: 160, 时薪: 80 }, { 姓名: 'B', 部门: '技术', 工时: 176, 时薪: 80 }],
+    draft: null
+  });
+  const lib = C.projectButtonLibrary(s);
+  assert.equal(lib.total, 1, '只有默认按钮时 total=1');
+  const defBtn = lib.buttons.filter(function (b) { return b.source === 'default'; })[0];
+  assert.ok(defBtn, '默认配方按钮应保留 source=default（不被塌成 user）');
+  assert.equal(defBtn.kind, 'swap');
+  assert.equal(defBtn.id, '__default__');
 });
 
 // ---------- labelOfKind 漂移防护 ----------
