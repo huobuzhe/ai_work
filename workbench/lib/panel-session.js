@@ -114,15 +114,40 @@ function createSessionStore(opts) {
     if (!draft || !draft.params || !columns || columns.length === 0) return draft;
     const p = Object.assign({}, draft.params);
     const exists = function (name) { return name != null && name !== '' && columns.indexOf(name) !== -1; };
+    // 票 #56：先从用户那句话里「按出现顺序」捞出真实列名（如「对调工时和时薪两列」→ [工时,时薪]）。
+    // understand() 只做 kind 关键词匹配、不解析列名；这里把句子中真实存在的列名按出现位置排序，
+    // 供 swap 双字段/条件类等使用，令「一句话 → 理解 → 预览」在真实表上一次到位。
+    const mentioned = [];
+    if (draft.sentence) {
+      const sent = String(draft.sentence);
+      columns.forEach(function (col) {
+        if (col == null || col === '') return;
+        const idx = sent.indexOf(String(col));
+        if (idx !== -1) mentioned.push({ col: col, idx: idx });
+      });
+      mentioned.sort(function (a, b) { return a.idx - b.idx; });
+    }
+    const mentionedCols = mentioned.map(function (m) { return m.col; });
     // 取前两个实际列作为「字段A/字段B」「来源列/目标列」等的默认候选。
     const c0 = columns[0];
     const c1 = columns.length > 1 ? columns[1] : columns[0];
-    // 常见列名参数：不存在就映射到实际列（仅当该参数存在且当前值不是有效列时）。
-    const mapA = ['字段A', '来源列', '目标列', '列', '来源', '目标'];
-    mapA.forEach(function (k) {
-      if (p[k] !== undefined && !exists(p[k]) && columns.indexOf(p[k]) === -1) p[k] = c0;
-    });
-    if (p['字段B'] !== undefined && !exists(p['字段B'])) p['字段B'] = c1;
+    // swap 且句子点明了 ≥2 个真实列名 → 直接用它们（避免默认列名撞列 / 撞上不相关真实列）。
+    if (draft.kind === 'swap' && mentionedCols.length >= 2) {
+      p['字段A'] = mentionedCols[0];
+      p['字段B'] = mentionedCols[1];
+    } else {
+      // 常见列名参数：不存在就映射到实际列（仅当该参数存在且当前值不是有效列时）。
+      const mapA = ['字段A', '来源列', '目标列', '列', '来源', '目标'];
+      mapA.forEach(function (k) {
+        if (p[k] !== undefined && !exists(p[k]) && columns.indexOf(p[k]) === -1) p[k] = c0;
+      });
+      if (p['字段B'] !== undefined && !exists(p['字段B'])) p['字段B'] = c1;
+    }
+    // 兜底：swap 两字段最终仍相同（如同命中同一真实列）→ 退到前两个不同实际列。
+    if (draft.kind === 'swap' && p['字段A'] === p['字段B']) {
+      const distinct = columns.filter(function (c) { return c !== p['字段A']; });
+      if (distinct.length) p['字段B'] = distinct[0];
+    }
     const merged = Object.assign({}, draft, { params: p });
     // 重算派生字段（steps/explanation 依赖 params）。
     try {
@@ -139,7 +164,13 @@ function createSessionStore(opts) {
   // action = { type, text?, kind?, params?, name? }
   function applyAction(file, table, action) {
     const cur = baseState(file, table);
-    const act = action || {};
+    // 大小写归一化：真实客户端（client/index.js）发的是小写动作名
+    // （understand/preview/confirm/solidify/…），而引擎 reduce 的 switch 只认大写
+    // （UNDERSTAND/PREVIEW/CONFIRM/SOLIDIFY/…），未归一化时小写会落 default 被静默忽略
+    // → 面板点「理解」无反应、stage 永远停在 IDLE（曾致真实面板整条管线失效）。
+    // 在此统一归一化为大写（已是大小写正确的动作不受影响），作为 Host 侧唯一兜底口。
+    const act = Object.assign({}, action || {});
+    if (typeof act.type === 'string') act.type = act.type.toUpperCase();
     let next = E.reduce(cur, act);
     // Host 侧兜底：UNDERSTAND / QUICK 产出的草稿，若列名参数指向不存在的列，映射到真实列，
     // 令后续 PREVIEW 能在真实表上通过校验（否则默认列名 部门/备注 一定失败）。

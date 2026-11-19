@@ -312,7 +312,10 @@ function makeActionHandler(deps) {
     // 一步到 EXECUTED（不经过 PREVIEWED），此前只有 CONFIRM 写盘 → 一键运行改的是内存、没落盘，
     // 用户看到「已执行」但复开文件没变。这里把 RUN_BUTTON 也纳入写回。
     const wrote = {};
-    const isExecute = (action.type === 'CONFIRM' || action.type === 'RUN_BUTTON');
+    // 大小写归一化后判断是否「执行」类动作：真实客户端发小写 confirm（见 client/index.js），
+    // 这里必须先转大写再比对，否则小写 confirm 不会触发写盘（面板显示已执行但磁盘没变）。
+    const actTypeUpper = typeof action.type === 'string' ? action.type.toUpperCase() : action.type;
+    const isExecute = (actTypeUpper === 'CONFIRM' || actTypeUpper === 'RUN_BUTTON');
     if (isExecute && vm.stage === 'EXECUTED' && beforeStage !== 'EXECUTED' && vm.preview && vm.preview.cells) {
       try {
         const r = applyTable(absPath, vm.preview.cells);

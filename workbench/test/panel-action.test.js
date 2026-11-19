@@ -155,3 +155,47 @@ test('makeActionHandler: POST body 也能携带 action（兼容 JSON body）', (
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.stage, 'UNDERSTOOD');
 });
+
+// 票 #56 回归：真实客户端 client/index.js 发的是**小写**动作名（understand/preview/confirm/solidify），
+// 而引擎 reduce 的 switch 只认大写。未归一化时小写落 default 被静默忽略 → 面板点「理解」无反应、
+// stage 永远停在 IDLE（真实面板整条管线失效的真实缺陷，此前测试全发大写故漏检）。
+// 以下用例专走**小写**路径，锁死 Host 侧大小写归一化。
+test('#56 回归：小写 understand 也能推进到 UNDERSTOOD（大小写归一化）', () => {
+  const store = createSessionStore();
+  const vm = store.applyAction('/f.xlsx', TABLE, { type: 'understand', text: '调换姓名和工时两列' });
+  assert.strictEqual(vm.stage, 'UNDERSTOOD', '小写 understand 应被归一化为大写并生效');
+  assert.strictEqual(vm.draft.kind, 'swap');
+});
+
+test('#56 回归：小写 understand→preview→confirm 全链走通并落盘（applyTable 被调用一次）', () => {
+  const calls = [];
+  const store = createSessionStore();
+  const h = makeActionHandler({
+    readTable: () => TABLE, resolveFile: (f) => f, store,
+    applyTable: (file, cells) => { calls.push(cells); return { ok: true, cellsWritten: cells.length }; }
+  });
+  const post = (action) => h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file: '/f.xlsx', action }) });
+  let r = post({ type: 'understand', text: '调换姓名和工时两列' });
+  assert.strictEqual(r.body.stage, 'UNDERSTOOD');
+  r = post({ type: 'preview' });
+  assert.strictEqual(r.body.stage, 'PREVIEWED');
+  r = post({ type: 'confirm' });
+  assert.strictEqual(r.body.stage, 'EXECUTED', '小写 confirm 应被识别为执行类动作');
+  assert.strictEqual(r.body.writtenOk, true);
+  assert.strictEqual(calls.length, 1, '小写 confirm 应恰好写盘一次');
+});
+
+test('#56：句子点明的两个真实列名 → swap 字段A/字段B 用它们（非默认列名撞列）', () => {
+  const T = { columns: ['姓名', '部门', '工时', '时薪'], rows: [{ 姓名: '阿岚', 部门: '销售', 工时: 160, 时薪: 80 }] };
+  const store = createSessionStore();
+  const vm = store.applyAction('/f.xlsx', T, { type: 'understand', text: '对调工时和时薪两列' });
+  assert.strictEqual(vm.draft.params['字段A'], '工时');
+  assert.strictEqual(vm.draft.params['字段B'], '时薪');
+});
+
+test('#56：swap 句子没点明列名 → 退到两个不同的真实列，绝不 A===B', () => {
+  const T = { columns: ['姓名', '工时'], rows: [{ 姓名: '张三', 工时: 80 }] };
+  const store = createSessionStore();
+  const vm = store.applyAction('/f.xlsx', T, { type: 'understand', text: '对调两列' });
+  assert.notStrictEqual(vm.draft.params['字段A'], vm.draft.params['字段B'], 'swap 两字段必须不同');
+});
