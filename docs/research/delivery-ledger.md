@@ -1,6 +1,6 @@
 # 交付账本（Delivery Ledger）
 
-> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段，2026-11-19 补记「第二波 #41–#54 + #55」段，2026-11-19 补记「#45 source=default 投影修复 + GUI 闭环验证」。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
+> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段，2026-11-19 补记「第二波 #41–#54 + #55」段，2026-11-19 补记「#45 source=default 投影修复 + GUI 闭环验证」，2026-11-19 补记「第三波 #56 真实面板闭环三个致命 bug 修复」。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
 > 用途：两个 effort 收官后的最终清单与唯一 backlog，供后续会话/接手人直接查阅，不必重跑清点。
 
 ## 全局状态
@@ -149,6 +149,18 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **面板闭环验证（无头等价演练）**：真实 GUI `http://127.0.0.1:62840` 返回 401（需 tokenized URL，无法直接驱动浏览器 DOM），改用真实引擎 + `client/index.js` 投影 + `panel-bridge` 的端到端演练覆盖面板代码路径：①预览卡六段齐全、影响 2/2 行；②默认按钮 `__default__`/swap 工时↔时薪，点击重算 ok（影响 2 行/共 2 行、4 个单元格将变）；③建表 #53（`buildCreateSpec` blank）→ `defaultCreateTable` 真实建 xlsx ok；④上传建表 #55（2 数据行）真实写盘 ok。演练脚本用后即删。
 
 **测试基线（2026-11-19，含 `7ebaa19`）**：`npm test` 427 tests / 406 pass / 0 fail / 21 skipped（跳过均「react 不可解析」环境跳过，+1 为 #45 source 漂移防护测试）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。
+
+## 交付后增量（第三波：真实面板闭环的三个致命 bug 修复，#56，2026-11-19 补记）
+
+真实 GUI 面板「理解 → 预览 → 确认执行」在带 token 的真宿主里点击后**整条管线失效**（点理解无任何反应 / 报"按钮库里还没有这个按钮" / 报"输入框是空的，先写一句话"）。根因是**两个叠加的代码 bug + 一个列名解析缺口**，此前测试全用大写动作名 + fetch 桩模拟成功，精准漏掉了真实客户端路径。三处修复：
+
+- **① 动作名大小写不匹配（致命，`42fe744`）**：真实客户端 `client/index.js::runAction` 发**小写** `understand/preview/confirm/solidify`，而引擎 `lib/engine.js:1119` `reduce` 的 `switch` 只认**大写** `'UNDERSTAND'` 等，小写落 `default: return state` 被**静默忽略** → stage 永远停在 IDLE、点什么都没用。修复：`lib/panel-session.js::applyAction` 入口把 `action.type` 归一化为大写（Host 侧唯一兜底口，大写动作不受影响）；`lib/panel-bridge.js:317` 的「是否执行类动作」判断也先 `toUpperCase()` 再比 `CONFIRM`/`RUN_BUTTON`，否则**小写 `confirm` 不触发写盘**（面板显示已执行但磁盘没变）。
+- **② 理解没带输入框文字（`3029a92`）**：`runAction('understand', {})` 只发动作类型、漏发 `text`；引擎 `UNDERSTAND` 用 `action.text`（缺省才退 `state.input`，而 Host 侧 `state.input` 从未被 SET_INPUT 写过）→ `understand('')` → 报"输入框是空的，先写一句话"。修复：`client/index.js::runAction` 在 `type==='understand'` 且 `act.text` 未给时附当前 `inputText`；`npm run build:client` 重建 `client/client.js`。
+- **③ swap 列名解析缺口（`42fe744`）**：`understand()` 只做 kind 关键词匹配、不解析列名，草稿默认列名（部门/备注）落到真实表上撞列 → 校验报"字段A 与 字段B 不能相同"。修复：`lib/panel-session.js::normalizeDraft` 对 `swap` 从 `draft.sentence` 按出现顺序捞出真实列名（"对调工时和时薪两列" → `字段A=工时`/`字段B=时薪`），并兜底保证 A≠B。
+
+**回归测试**：`test/panel-action.test.js` 加 4 例（小写 understand 全链、小写 confirm 落盘一次、句子列名解析、不撞列）；`test/new-recipe-loop.test.js` 加 1 条断言（understand 请求体带 `text`）。**真实端到端验证**（真实 `client/index.js` 渲染 body + 真实 `makeActionHandler`，非 stub）：输入"对调工时和时薪两列" → 理解(UNDERSTOOD) → 预览(PREVIEWED，影响 4 行) → 确认(EXECUTED，写盘 8 格)，并回读 `演示_员工工时表.xlsx` 确认工时↔时薪 4 行 8 格真实对调落盘（mtime/sha256 均变）。
+
+**测试基线（2026-11-19，含 `3029a92`）**：`npm test` 431 tests / 410 pass / 0 fail / 21 skipped（跳过均「react 不可解析」环境跳过，+5 为 #56 回归）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：`42fe744`（①③）、`3029a92`（②）。
 
 ## 边界与已知瑕疵（接手须知）
 
