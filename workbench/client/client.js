@@ -16,6 +16,101 @@ window.__ModuleLoader__.load({
 const TAB_ID = 'workbench.tab';
 const TAB_KIND = 'workbench';
 
+// 自定义下拉组件：不用原生 <select>（面板 overflow 容器里原生弹出层会被裁、且样式不一），
+// 改用「按钮 + 绝对定位选项列表」，自带 open 状态 + 高 z-index + 点击外部/选中即收起。
+// 作为稳定模块级组件渲染（jsx(Dropdown,{...})），可在内部用 hooks。
+function WbDropdown(props) {
+  const React = require('react');
+  const rt = require('react/jsx-runtime');
+  const jsx = rt.jsx; const jsxs = rt.jsxs;
+  const [open, setOpen] = React.useState(false);
+  const [coords, setCoords] = React.useState(null);
+  const wrapRef = React.useRef ? React.useRef(null) : { current: null };
+  // 打开时用 getBoundingClientRect 计算 fixed 坐标，让选项列表脱离任何 overflow 容器裁剪
+  //（面板 body 有 overflowY:auto，绝对定位列表靠底会被裁——这是"下拉展不开"的根因之一）。
+  const openList = function () {
+    try {
+      var el = wrapRef.current;
+      if (el && el.getBoundingClientRect) {
+        var r = el.getBoundingClientRect();
+        setCoords({ left: r.left, top: r.bottom + 2, width: r.width });
+      }
+    } catch (_) {}
+    setOpen(true);
+  };
+  React.useEffect(function () {
+    if (!open) return undefined;
+    var onDoc = function (ev) {
+      try {
+        if (wrapRef.current && !wrapRef.current.contains(ev.target)) setOpen(false);
+      } catch (_) { setOpen(false); }
+    };
+    document.addEventListener('mousedown', onDoc, true);
+    return function () { document.removeEventListener('mousedown', onDoc, true); };
+  }, [open]);
+  var value = props.value == null ? '' : String(props.value);
+  var options = props.options || [];
+  var placeholder = props.placeholder || '（请选择）';
+  // options 既可传字符串数组，也可传 {value,label} 对象数组（用于枚举显示中文名）。
+  var norm = options.map(function (o) {
+    return (o && typeof o === 'object') ? { value: String(o.value), label: String(o.label == null ? o.value : o.label) } : { value: String(o), label: String(o) };
+  });
+  var display = '';
+  for (var i = 0; i < norm.length; i++) { if (norm[i].value === value) { display = norm[i].value === 'all' ? '全部记录' : (norm[i].value === 'match' ? '满足条件' : norm[i].label); break; } }
+  var btnStyle = {
+    flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '5px 8px', border: '1px solid #d0d7de', borderRadius: 6, fontSize: 12,
+    background: '#fff', color: display ? '#1f2328' : '#8b97a3', cursor: 'pointer', textAlign: 'left',
+    outline: 'none', minHeight: 28, boxSizing: 'border-box'
+  };
+  var listStyle = coords ? {
+    position: 'fixed', left: coords.left, top: coords.top, width: coords.width, zIndex: 2147483000,
+    background: '#fff', border: '1px solid #d0d7de', borderRadius: 6,
+    boxShadow: '0 8px 24px rgba(15,23,42,0.18)', maxHeight: 220, overflowY: 'auto', padding: 4
+  } : {
+    position: 'absolute', left: 0, right: 0, top: 'calc(100% + 2px)', zIndex: 2147483000,
+    background: '#fff', border: '1px solid #d0d7de', borderRadius: 6,
+    boxShadow: '0 8px 24px rgba(15,23,42,0.18)', maxHeight: 220, overflowY: 'auto', padding: 4
+  };
+  var optEls = norm.map(function (o, oi) {
+    var sel = o.value === value;
+    var label = o.value === 'all' ? '全部记录' : (o.value === 'match' ? '满足条件' : o.label);
+    return jsx('div', {
+      'data-wb-opt': o.value,
+      onClick: function (ev) { try { ev.stopPropagation(); } catch (_) {} setOpen(false); try { props.onChange && props.onChange(o.value); } catch (_) {} },
+      onMouseEnter: function (ev) { try { ev.currentTarget.style.background = '#eef4ff'; } catch (_) {} },
+      onMouseLeave: function (ev) { try { ev.currentTarget.style.background = sel ? '#e7efff' : '#fff'; } catch (_) {} },
+      style: {
+        padding: '6px 8px', fontSize: 12, borderRadius: 4, cursor: 'pointer',
+        background: sel ? '#e7efff' : '#fff', color: sel ? '#1d4ed8' : '#1f2328', fontWeight: sel ? 600 : 400
+      },
+      children: label
+    }, 'o-' + oi);
+  });
+  if (!optEls.length) optEls = [jsx('div', { style: { padding: '6px 8px', fontSize: 12, color: '#8b97a3' }, children: '（无可选项）' }, 'o-empty')];
+  return jsxs('div', {
+    'data-wb-dropdown': props.fieldKey || '',
+    'data-wb-field': props.fieldKey || '',
+    // 测试/外部可直接调 el.props.onChange({target:{value}} 或 value)，两者都接受。
+    onChange: function (v) { var arg = (v && typeof v === 'object' && v.target) ? v.target.value : v; try { props.onChange && props.onChange(arg); } catch (_) {} },
+    ref: wrapRef,
+    style: { position: 'relative', flex: '1 1 auto', display: 'flex' },
+    children: [
+      jsxs('button', {
+        type: 'button',
+        'data-wb-dropbtn': props.fieldKey || '',
+        onClick: function (ev) { try { ev.preventDefault(); ev.stopPropagation(); } catch (_) {} if (open) { setOpen(false); } else { openList(); } },
+        style: btnStyle,
+        children: [
+          jsx('span', { children: display || placeholder }, 'tx'),
+          jsx('span', { style: { marginLeft: 6, color: '#8b97a3', fontSize: 10 }, children: open ? '▲' : '▼' }, 'car')
+        ]
+      }, 'btn'),
+      open ? jsx('div', { style: listStyle, children: optEls }, 'list') : null
+    ]
+  }, 'dd');
+}
+
 // 通用动作表单元数据（UI 专用）：每种动作的字段定义，供面板渲染下拉框/输入框。
 // type：'column'=从当前表列选（下拉）；'enum'=枚举下拉；'text'=文本输入。
 // 与引擎 KINDS.paramSpec 保持同步（列名/枚举/文本语义一致）；此处只作渲染，校验仍由引擎封闭派生。
@@ -367,16 +462,14 @@ function renderWorkbenchPanel(hostState) {
         var ctrl;
         if (f.type === 'column' || f.type === 'enum') {
           var opts = (f.type === 'enum') ? (f.options || []) : cols;
-          var optEls = (f.type === 'column') ? [jsx('option', { value: '', children: '（请选择）' }, 'opt-empty')] : [];
-          opts.forEach(function (o, oi) {
-            optEls.push(jsx('option', { value: String(o), selected: String(o) === String(curVal) ? true : undefined, children: String(o) }, 'opt' + oi));
-          });
-          ctrl = jsx('select', {
+          ctrl = jsx(WbDropdown, {
+            fieldKey: f.key,
             'data-wb-field': f.key,
-            value: String(curVal == null ? '' : curVal),
-            onChange: function (ev) { try { hostState.onFormChange && hostState.onFormChange(f.key, ev.target.value); } catch (_) {} },
-            style: inputStyle
-          }, 'sel-' + f.key, optEls);
+            value: (curVal == null ? '' : String(curVal)),
+            options: opts,
+            placeholder: '（请选择）',
+            onChange: function (v) { var arg = (v && typeof v === 'object' && v.target) ? v.target.value : v; try { hostState.onFormChange && hostState.onFormChange(f.key, arg); } catch (_) {} }
+          }, 'sel-' + f.key);
         } else {
           ctrl = jsx('input', {
             'data-wb-field': f.key,
@@ -394,15 +487,14 @@ function renderWorkbenchPanel(hostState) {
       // 公共字段：作用范围（scope）+ 条件。conditional 默认 match，其余默认 all。
       var scopeVal = fv.scope !== undefined ? fv.scope : 'all';
       var condVal = fv['条件'] !== undefined ? fv['条件'] : '';
-      var scopeSel = jsx('select', {
+      var scopeSel = jsx(WbDropdown, {
+        fieldKey: 'scope',
         'data-wb-field': 'scope',
         value: String(scopeVal),
-        onChange: function (ev) { try { hostState.onFormChange && hostState.onFormChange('scope', ev.target.value); } catch (_) {} },
-        style: inputStyle
-      }, 'sel-scope', [
-        jsx('option', { value: 'all', selected: scopeVal === 'all' ? true : undefined, children: '全部记录' }, 'sc-all'),
-        jsx('option', { value: 'match', selected: scopeVal === 'match' ? true : undefined, children: '满足条件' }, 'sc-match')
-      ]);
+        options: ['all', 'match'],
+        placeholder: '全部记录',
+        onChange: function (v) { var arg = (v && typeof v === 'object' && v.target) ? v.target.value : v; try { hostState.onFormChange && hostState.onFormChange('scope', arg); } catch (_) {} }
+      }, 'sel-scope');
       var scopeRow = jsxs('div', { style: fieldRowStyle, children: [jsx('div', { style: labelStyle, children: '作用范围' }, 'lb-scope'), scopeSel] }, 'frow-scope');
       var condRows = (String(scopeVal) === 'match') ? [jsxs('div', { style: fieldRowStyle, children: [
         jsx('div', { style: labelStyle, children: '条件' }, 'lb-cond'),
@@ -802,7 +894,7 @@ function renderWorkbenchPanel(hostState) {
       try { onToggleFab(); } catch (_) {}
     },
     style: {
-      position: 'fixed', right: 24, bottom: 24, zIndex: 2147482000,
+      position: 'fixed', right: 24, bottom: 24, zIndex: 2147482000, pointerEvents: 'auto',
       width: 56, height: 56, borderRadius: '50%', border: 'none',
       background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 55%, #1d4ed8 100%)',
       color: '#fff', cursor: 'pointer', padding: 0,
@@ -822,7 +914,7 @@ function renderWorkbenchPanel(hostState) {
   const panel = jsxs('div', {
     'data-workbench-panel': '1',
     style: {
-      position: 'fixed', right: 24, bottom: 92, zIndex: 2147482001,
+      position: 'fixed', right: 24, bottom: 92, zIndex: 2147482001, pointerEvents: 'auto',
       width: 384, maxWidth: 'calc(100vw - 48px)', maxHeight: '72vh',
       display: fabOpen ? 'flex' : 'none', flexDirection: 'column',
       background: '#fff', color: '#1f2328', border: '1px solid #e3e7ec',
@@ -864,6 +956,16 @@ function renderWorkbenchPanel(hostState) {
     ]
   }, 'panel');
 
+  // 叠加模式（overlay=true）：不接管文件主视图，宿主原生表格视图照常显示；
+  // 本组件只在全局浮层里渲染「悬浮按钮 + 悬浮面板」（fab/panel 自身即 position:fixed）。
+  // 根节点用一个零占位（pointer-events:none，尺寸 0）避免遮挡原生表格的点击/编辑。
+  if (hostState && hostState.overlay === true) {
+    return jsxs('div', {
+      'data-workbench-fab-root': '1',
+      style: { position: 'fixed', right: 0, bottom: 0, width: 0, height: 0, zIndex: 2147482000, pointerEvents: 'none' },
+      children: [fab, panel]
+    }, 'fabroot-overlay');
+  }
   // 根节点：position:relative 以便流式主区域用 absolute inset:0 填满 pane；浮窗按钮/面板仍 fixed 覆盖。
   // 收起态也把面板保留在树里（display:none），所以这里总是渲染 main + fab + panel。
   return jsxs('div', { 'data-workbench-fab-root': '1', style: { position: 'relative', width: '100%', height: '100%' }, children: [mainPane, fab, panel] }, 'fabroot');
@@ -977,12 +1079,100 @@ function usePanelData(React, address) {
   return { data: slot.data, error: slot.error, state: slot, override: override, applyButtonPreview: applyButtonPreview, setOverride: setOverride };
 }
 
+// ── 全局浮层宿主：右下角悬浮按钮 + 浮窗面板（不接管文件主视图） ─────────────────
+// 从 betterSidebar.getSnapshot() 里解析「当前打开的可编辑表格文件」：
+//   snapshot.state.activePane（活跃 leaf id）+ state.bottomSplits（leaf 树）；
+//   取该 leaf 的 active tab，若是 editor 类型且 path 以 .xlsx/.xls/.csv 结尾 → 命中。
+// 解析不出/未打开表格 → 不渲染任何东西（绝不遮挡原生表格）。
+function pickActiveSheetFile(snap) {
+  try {
+    var st = snap && snap.state;
+    if (!st) return undefined;
+    var leaves = [];
+    (function walk(node) {
+      if (!node) return;
+      if (node.kind === 'leaf') { leaves.push(node); return; }
+      (node.children || []).forEach(walk);
+    })(st.bottomSplits);
+    if (!leaves.length) return undefined;
+    var leaf = null;
+    for (var i = 0; i < leaves.length; i++) { if (leaves[i].id === st.activePane) { leaf = leaves[i]; break; } }
+    if (!leaf) leaf = leaves[0];
+    var tabs = leaf.tabs || [];
+    var tab = null;
+    for (var j = 0; j < tabs.length; j++) { if (tabs[j].id === leaf.active) { tab = tabs[j]; break; } }
+    if (!tab) tab = tabs[tabs.length - 1];
+    if (!tab) return undefined;
+    // editor 类型 tab 带 path（普通字符串）与可选 cwd。
+    var p = tab.path;
+    if (typeof p !== 'string' || !/\.(xlsx|xls|csv)$/i.test(p)) return undefined;
+    return { scope: 'session', sessionId: snap.sessionId, path: p };
+  } catch (_) { return undefined; }
+}
+
+function registerWorkbenchOverlay(ctx) {
+  // shell.overlay 是宿主全局浮层 slot（better-sidebar client.js:18921 亦用它注册告警条），
+  // 渲染在整个 shell 之上、不占用任何 sidebar 布局。在这里挂我们的悬浮按钮。
+  ctx.inject(['betterSidebar'], function (injected) {
+    var sidebar = injected.get ? injected.get('betterSidebar') : injected.betterSidebar;
+    if (!sidebar || typeof sidebar.getSnapshot !== 'function') return;
+    injected.effect(function () {
+      return injected.slots.inject('shell.overlay', function () {
+        return injected.slots.register(
+          { name: 'shell.overlay', id: 'dsh-workbench-fab', order: 60, registrant: 'dsh-workbench', inject: function () { return {}; } },
+          function WorkbenchOverlayHost(props) {
+            var React = null;
+            try { React = require('react'); } catch (_) { React = null; }
+            var snap = { state: undefined, sessionId: undefined };
+            var hooksOk = false;
+            try {
+              if (React && typeof React.useSyncExternalStore === 'function') {
+                snap = React.useSyncExternalStore(
+                  function (onChange) { return sidebar.subscribe ? sidebar.subscribe(onChange) : function () {}; },
+                  function () { return sidebar.getSnapshot(); }
+                );
+                hooksOk = true;
+              } else if (typeof sidebar.getSnapshot === 'function') {
+                snap = sidebar.getSnapshot();
+              }
+            } catch (_) { hooksOk = hooksOk; }
+            var addr = pickActiveSheetFile(snap);
+            if (!addr || !addr.path) return null;
+            // 复用既有 panel body（内含全部 hooks/动作/表单逻辑），叠加模式：只出 fab+panel。
+            // 以 React 元素方式渲染（不能在渲染树外直接当函数调用，否则 hooks 规则被破坏）。
+            try {
+              var rt = require('react/jsx-runtime');
+              var Comp = WorkbenchPanelBodyRef;
+              if (typeof Comp !== 'function') return null;
+              return rt.jsx(Comp, { address: addr, overlay: true }, 'wb-overlay-' + addr.path);
+            } catch (e) {
+              try {
+                var rt2 = require('react/jsx-runtime');
+                return rt2.jsx('button', { type: 'button', 'data-wb-fab': '1', style: { position: 'fixed', right: 24, bottom: 24, width: 56, height: 56, borderRadius: '50%', border: 'none', background: '#ef4444', color: '#fff', zIndex: 2147482000 }, children: '⚠' }, 'faberr');
+              } catch (_) { return null; }
+            }
+          }
+        );
+      });
+    }, 'workbench: global fab overlay');
+  });
+}
+
+// 供 overlay 复用 panel body（避免重复实现整套 hooks/动作）。延迟绑定：registerWorkbenchPanel 里赋值。
+var WorkbenchPanelBodyRef = function () { return null; };
+
 function registerWorkbenchPanel(ctx) {
-  // 阶段 1：注册 tab 类型（priority=extension，外部包公开路径；keepMounted 常驻）
-  // 契约照抄 dsh-univer-office lib/client.js:23371-23373 与 better-sidebar
-  // client-registry.js:30123-30130：用 ctx.inject([...], cb) 等 sidebarRightTabs 就绪，
-  // 经 injected.get("sidebarRightTabs") 取值（不要直接点 nativeCtx.sidebarRightTabs），
-  // 取不到就安全返回不抛错。
+  // 架构（用户 m08845 诉求）：**不再抢占** .xlsx/.xls/.csv 的主视图。
+  // 之前用 sidebarRightTabs.register({patterns:['*.xlsx',...], priority:'extension'}) 把整块文件面板
+  // 「抢」成了自己重绘的只读表，覆盖掉宿主原生（documentpreview）的可编辑表格视图——用户要的是
+  // 「像 WPS 那样打开就是原始可编辑表格，插件只多一个浮窗按钮」。故移除文件 tap 类型抢占，
+  // 改为注册 **全局浮层（shell.overlay）**：宿主原生表格照常显示，插件只在右下角叠加一个悬浮按钮，
+  // 点开是浮窗功能面板。当前打开的文件路径从 betterSidebar.getSnapshot() 的活跃 editor tab 解析。
+  registerWorkbenchOverlay(ctx);
+
+  // 兜底：仍保留一个**不抢 pattern** 的 tab 类型（不给 patterns → 不会自动接管任何文件），
+  // 供需要时手动新开一个「表格工作台」页签（沿用旧 body 逻辑，从 useTabInfo 取文件地址）。
+  // 这一步对用户日常「打开 xlsx 即见原生表 + 浮窗按钮」无副作用。
   ctx.inject(['sidebarRightTabs'], function (injected) {
     const tabs = injected.get ? injected.get('sidebarRightTabs') : injected.sidebarRightTabs;
     if (tabs === void 0) return;
@@ -990,13 +1180,14 @@ function registerWorkbenchPanel(ctx) {
       const dispose = tabs.register({
         id: TAB_ID,
         kind: TAB_KIND,
-        patterns: ['*.xlsx', '*.xls', '*.csv'],
+        // 无 patterns：不匹配任何文件地址，绝不与宿主原生 viewer 竞争；仅作手动页签存在。
+        patterns: [],
         priority: 'extension',
         keepMounted: true,
         title: function () { return '表格工作台'; }
       });
       return dispose;
-    }, 'workbench: sidebar tab type');
+    }, 'workbench: manual tab type');
   });
 
   // 阶段 2：面板 body 注册到 sidebar.right.pane.tab，key 等于 tab id。
@@ -1006,25 +1197,30 @@ function registerWorkbenchPanel(ctx) {
   // 使整个 fiber 进入 failed（宿主报 "dsh-workbench: failed"，无 tab）。
   ctx.effect(function () {
     return ctx.slots.inject('sidebar.right.pane.tab', function () {
+      var WorkbenchPanelBody;
       const d = ctx.slots.register(
         // 票 #41：inject 只提供额外上下文，**不能覆盖** slot 自己声明的 hooks
         // （sidebar.right.pane.tab 的 slot 定义声明 inject:{hooks:{tabInfo}}，body 靠它拿到
         // props.useTabInfo）。若这里返回 {hooks:{}} 会把 tabInfo 挤掉 → props.useTabInfo 变
         // undefined → 拿不到 tab.contentId → 永远「暂无预览」。故对齐 univer 返回空对象。
         { name: 'sidebar.right.pane.tab', key: TAB_ID, inject: function () { return {}; } },
-        function WorkbenchPanelBody(props) {
-          // slot body 必须是 React 组件、返回 React 元素（返回普通对象会触发 React error #31）。
+        WorkbenchPanelBody = function (props) {
           // 票 #41：从 slot props 的 useTabInfo（univer 直接用 props.useTabInfo()，非 props.hooks）
-          // 取 tab.contentId（文件地址）→ parseFileAddress → {sessionId, path}，轮询 Host 路由
-          // 拿真实 preview，再渲染成 React 元素。
+          // 取 tab.contentId → parseFileAddress → {sessionId, path}；overlay 模式则用 props.address。
           var React = null;
           try { React = require('react'); } catch (_) { React = null; }
           var address = undefined;
+          // 叠加模式（overlay）：宿主 side 无法通过 useTabInfo 拿文件，改由外部宿主组件把
+          // 解析好的 address（{scope,sessionId,path}）经 props.address 传入。
           try {
-            var useTabInfo = props && props.useTabInfo;
-            if (typeof useTabInfo === 'function') {
-              var ti = useTabInfo();
-              address = parseFileAddress(ti && ti.tab ? ti.tab.contentId : undefined);
+            if (props && props.address && props.address.path) {
+              address = props.address;
+            } else {
+              var useTabInfo = props && props.useTabInfo;
+              if (typeof useTabInfo === 'function') {
+                var ti = useTabInfo();
+                address = parseFileAddress(ti && ti.tab ? ti.tab.contentId : undefined);
+              }
             }
           } catch (_) { address = undefined; }
           var vm = null;
@@ -1249,6 +1445,7 @@ function registerWorkbenchPanel(ctx) {
           var onFormCancel = function () { try { setActiveKind(''); } catch (_) {} };
           try {
             return renderWorkbenchPanel(Object.assign({}, effective, {
+              overlay: !!(props && props.overlay),
               onButtonClick: onClick,
               onButtonAction: onButtonAction,
               inputText: inputText,
@@ -1291,6 +1488,8 @@ function registerWorkbenchPanel(ctx) {
           }
         }
       );
+      // 供全局浮层宿主复用同一套面板逻辑（overlay 模式下 address 由外部解析传入）。
+      WorkbenchPanelBodyRef = WorkbenchPanelBody;
       return d;
     });
   }, 'workbench: panel body');
@@ -1298,7 +1497,7 @@ function registerWorkbenchPanel(ctx) {
   return { tabId: TAB_ID, kind: TAB_KIND, projectPreviewCard, projectButtonLibrary };
 }
 
-module.exports = { apply, inject, registerWorkbenchPanel, projectPreviewCard, projectButtonLibrary, renderWorkbenchPanel, parseFileAddress, TAB_ID, TAB_KIND };
+module.exports = { apply, inject, registerWorkbenchPanel, projectPreviewCard, projectButtonLibrary, renderWorkbenchPanel, parseFileAddress, pickActiveSheetFile, TAB_ID, TAB_KIND };
 
     return module.exports;
   }

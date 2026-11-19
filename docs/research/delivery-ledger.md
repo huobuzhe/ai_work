@@ -216,6 +216,15 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 **测试基线（2026-11-19，第八波）**：`npm test` 472 tests / 451 pass / 0 fail / 21 skipped（+8 新动作）；两 acceptance 绿。本波提交见 git log（trim/case/affix）。
 
+## 交付后增量（第九波：原生表格视图回退 + 自定义下拉，用户 m08845，2026-11-19 补记）
+
+用户反馈两个问题：①配置表单下拉框展不开/选不了；②打开 xlsx 应显示宿主原生可编辑表格（像 WPS 那样），插件只多一个浮窗按钮、不接管主视图。
+
+- **问题2 架构根因**：此前 `sidebarRightTabs.register({patterns:['*.xlsx','*.xls','*.csv'], priority:'extension'})` 抢占了 .xlsx 文件面板，覆盖掉宿主原生 documentpreview 的可编辑表格视图 → 用户看到的是 workbench 重绘的只读表。
+- **修法（overlay 架构）**：文件 tab 类型 patterns 改为 `[]`（不再抢占任何文件）；新增 `registerWorkbenchOverlay(ctx)` 经 `shell.overlay` 全局浮层注册右下角悬浮按钮+悬浮面板；`pickActiveSheetFile(snapshot)` 从 `betterSidebar.getSnapshot()` 的活跃 editor tab 解析当前打开的 .xlsx/.xls/.csv（非表格不渲染、绝不遮挡原生视图）；`renderWorkbenchPanel(overlay:true)` 只渲染 fab+panel、不渲染流式主区域表。
+- **问题1 修法**：新增 `WbDropdown` 自定义下拉组件（按钮 + 打开时 `getBoundingClientRect` 定位的 `position:fixed` 选项列表→脱离面板 overflow 裁剪；高 z-index、点击外部/选中即收；支持字符串或 {value,label} 选项）。配置表单与作用范围选择均改用 WbDropdown。
+- **测试**：panel-smoke 补 `pickActiveSheetFile` 单测（xlsx/csv 命中、txt/空快照不命中）+ tab.patterns 必须为空的架构断言；panel-projection 补「叠加模式只渲染 fab+panel、不渲染 data-workbench-main/原表」断言。全量 npm test 474 tests/453 pass/0 fail/21 skipped；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。

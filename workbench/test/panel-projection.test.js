@@ -237,9 +237,10 @@ function makeReactShim() {
     return [inst.hooks[i], set];
   }
   function useEffect() {}
+  function useRef(init) { return { current: init }; }
   const jsx = (type, props, key) => ({ $$typeof: Symbol.for('react.element'), type, key, props: props || {} });
   const jsxs = jsx;
-  const React = { useState, useEffect, createElement: jsx };
+  const React = { useState, useEffect, useRef, createElement: jsx };
   return {
     React, jsx, jsxs,
     beginRender() { if (!inst) inst = { hooks: [], idx: 0 }; inst.idx = 0; },
@@ -273,6 +274,16 @@ test('浮窗外壳：收起态面板在树里但 display:none，不遮挡原表�
   // 收起态内部控件仍在树里（测试可查、切换展开时无需重建）
   assert.ok(findEl(tree, 'data-wb-input', '1'), '收起态输入框仍在树中');
   assert.ok(findEl(tree, 'data-wb-action', 'understand'), '收起态「理解」按钮仍在树中');
+});
+
+// 叠加模式（overlay=true，用户 m08845 问题2）：只渲染悬浮按钮+浮窗面板，
+// **不渲染** data-workbench-main 流式主区域表 —— 让宿主原生可编辑表格视图原样显示，插件只叠加浮窗。
+test('叠加模式：overlay=true 只渲染浮窗按钮+面板，不渲染流式主区域表（原生表格不被接管）', () => {
+  const tree = shimRender({ stage: 'IDLE', overlay: true, fabOpen: false });
+  assert.ok(findEl(tree, 'data-wb-fab', '1'), '叠加模式仍应有悬浮按钮');
+  assert.ok(findEl(tree, 'data-workbench-panel', '1'), '叠加模式仍应有浮窗面板');
+  assert.equal(findEl(tree, 'data-workbench-main', '1'), null, '叠加模式不得渲染流式主区域表 data-workbench-main');
+  assert.equal(findEl(tree, 'data-workbench-orig-table', '1'), null, '叠加模式不得渲染自己重绘的原表（避免覆盖原生表）');
 });
 
 test('浮窗外壳：展开态面板 display:flex 可见', () => {

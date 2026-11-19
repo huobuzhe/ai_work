@@ -75,6 +75,10 @@ test('factory 导出的注册函数经 sidebarRightTabs + slots 契约挂载常�
   assert.equal(calls.tabs[0].keepMounted, true, 'keepMounted 必须为 true（常驻）');
   assert.equal(calls.tabs[0].priority, 'extension', '外部包走 extension 优先级');
   assert.ok(calls.tabs[0].id && calls.tabs[0].kind, 'tab 需要 id 与 kind');
+  // 关键架构（用户 m08845 / 问题2）：tab **不再抢占** xlsx/csv 主视图，patterns 必须为空，
+  // 让宿主原生可编辑表格视图照常显示，插件只经 shell.overlay 叠加浮窗按钮。
+  assert.ok(Array.isArray(calls.tabs[0].patterns), 'tab.patterns 应为数组');
+  assert.equal(calls.tabs[0].patterns.length, 0, 'tab 不得用 patterns 抢占任何文件（含 *.xlsx/*.csv）');
 
   // 阶段 2：面板 body 注册到 sidebar.right.pane.tab
   assert.equal(calls.slots.length, 1);
@@ -124,4 +128,35 @@ test('package.json 声明 dsh.client(platform=web) 与 client 导出、build:cli
   assert.ok(pkg.exports['./client'], '必须导出 ./client');
   assert.ok(pkg.scripts['build:client'], '必须有 build:client 脚本');
   assert.ok(pkg.dsh.bundle.patch, '必须声明 dsh.bundle.patch');
+});
+
+test('pickActiveSheetFile：从 betterSidebar 快照解析当前打开的 xlsx/csv（问题2 叠加模式取文件）', () => {
+  const def = loadBundle();
+  const mod = { exports: {} };
+  const exported = def.factory(function () { throw new Error('no external require'); }, mod.exports, mod);
+  const pick = exported.pickActiveSheetFile;
+  assert.equal(typeof pick, 'function', '必须导出 pickActiveSheetFile');
+
+  function snap(activePane, tabs, kind) {
+    return {
+      sessionId: 'sess-1',
+      state: {
+        activePane: activePane,
+        bottomSplits: { kind: 'split', direction: 'row', children: [{ kind: 'leaf', id: 'leaf-A', active: tabs && tabs[0] && tabs[0].id, tabs: tabs }] }
+      }
+    };
+  }
+  // 命中：active leaf 的 active tab 是 editor 且 path 指向 .xlsx
+  const ok = pick(snap('leaf-A', [{ id: 't1', active: true, type: 'editor', path: 'F:/ai_work/演示_动作_swap.xlsx' }]));
+  assert.ok(ok, '应解析出当前 xlsx 文件');
+  assert.equal(ok.path, 'F:/ai_work/演示_动作_swap.xlsx');
+  assert.equal(ok.scope, 'session');
+  assert.equal(ok.sessionId, 'sess-1');
+  // .csv 也命中
+  assert.equal(pick(snap('leaf-A', [{ id: 't2', active: true, type: 'editor', path: 'F:/ai_work/外勤登记表.csv' }])).path, 'F:/ai_work/外勤登记表.csv');
+  // 非表格文件（.txt）不命中 → 不渲染任何浮窗，绝不遮挡原生视图
+  assert.equal(pick(snap('leaf-A', [{ id: 't3', active: true, type: 'editor', path: 'F:/a/b.txt' }])), undefined);
+  // 无 tab / 空快照不命中
+  assert.equal(pick({ state: {} }), undefined);
+  assert.equal(pick(null), undefined);
 });
