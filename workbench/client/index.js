@@ -702,7 +702,7 @@ function renderWorkbenchPanel(hostState) {
       // 可滚动内容区
       jsx('div', {
         'data-wb-fab-body': '1',
-        style: { padding: 14, overflowY: 'auto', flex: 1, background: '#fff' },
+        style: { padding: 14, overflowY: 'auto', flex: '1 1 auto', minHeight: 0, background: '#fff' },
         children: jsxs('div', { children: children }, 'fabin')
       }, 'fabbody')
     ]
