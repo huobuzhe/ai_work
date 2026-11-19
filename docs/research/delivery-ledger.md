@@ -210,6 +210,12 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 **测试基线（2026-11-19，第七波）**：pm test 464 tests / 443 pass / 0 fail / 21 skipped（+8 replace-fill +2 panel-multi-action 扩到 7 动作）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：fcfc8f（原表流式主区域）、 0039f（replace/fill + 通用表单）、0f56f5（空白表主键）。
 
+## 交付后增量（第八波：新增 trim/case/affix 三种日常动作，QUICK 芯片 8→10，2026-11-19 补记）
+
+用户 m08197「只有5个按钮太少，继续添加日常常用功能」。引擎 `lib/engine.js` KINDS 增 ⑧`trim`（去目标列文本首尾空白）、⑨`case`（英文统一大写 upper / 小写 lower）、⑩`affix`（统一加前缀 prefix / 后缀 suffix），各带 paramSpec + stepsFor + preview 分支，均复用 cells 值变换模型（每格 before→after，不改架构），封闭校验由 paramSpec 机械派生；`understand` 关键词补 trim/case/affix（并补 replace/fill）。client `ACTION_FORMS` + `labelOfKind` 同步，QUICK 芯片现共 **10 个**，全部走「通用字段配置表单」（用户自选列、可加条件 scope/条件）。新测试 `test/new-actions-trim-case-affix.test.js` 8 例。
+
+**测试基线（2026-11-19，第八波）**：`npm test` 472 tests / 451 pass / 0 fail / 21 skipped（+8 新动作）；两 acceptance 绿。本波提交见 git log（trim/case/affix）。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
