@@ -110,8 +110,41 @@ function buildCreateSpec(templates, req) {
     }
     return { ok: true, structure: { primaryKey: pk, columns: columns, name: name } };
   }
+  if (mode === 'upload') {
+    // 票 #55：上传建表——用户从文件树选一个已存在的 xlsx/csv，读出列与数据行后在此校验。
+    // req.columns: {列名:类型} 字典（缺类型默认 text）；req.primaryKey 缺省取首列；req.rows: [{列名:值}]。
+    // 走引擎单一来源 createTable({mode:'upload', manifest, rows})：validateManifest + validateRows 双重封闭校验。
+    let cols = req.columns;
+    if (typeof cols === 'string') {
+      // 宽松：允许传逗号分隔列名（类型默认 text）。
+      const names = String(cols).split(/[\s,，、;；]+/).map(function (s) { return s.trim(); }).filter(Boolean);
+      const dict = {}; names.forEach(function (n) { if (!dict[n]) dict[n] = 'text'; });
+      cols = dict;
+    }
+    if (!cols || typeof cols !== 'object' || Object.keys(cols).length === 0) {
+      return { ok: false, errors: [{ field: 'columns', reason: '上传建表需要列清单（列名→类型）' }] };
+    }
+    const names = Object.keys(cols);
+    const pk = (req.primaryKey && String(req.primaryKey).trim()) || names[0];
+    if (names.indexOf(pk) < 0) return { ok: false, errors: [{ field: 'primaryKey', reason: '主键列必须在列清单里：' + pk }] };
+    const manifest = { schemaVersion: 1, name: (req.name && String(req.name).trim()) || '上传建表', primaryKey: pk, columns: cols };
+    const rows = Array.isArray(req.rows) ? req.rows : [];
+    const built = E.createTable({ mode: 'upload', manifest: manifest, rows: rows });
+    if (!built || built.ok === false) {
+      return { ok: false, errors: (built && built.errors) || [{ field: 'rows', reason: '上传数据行非法' }] };
+    }
+    return {
+      ok: true,
+      structure: {
+        primaryKey: built.structure.primaryKey,
+        columns: cols,
+        name: manifest.name,
+        rows: (built.structure.rows || []).slice()
+      }
+    };
+  }
   if (mode !== 'template') {
-    return { ok: false, errors: [{ field: 'mode', reason: '支持 template / blank（upload、description 见引擎 createTable）' }] };
+    return { ok: false, errors: [{ field: 'mode', reason: '支持 template / blank / upload（description 见引擎 createTable）' }] };
   }
   const wanted = req.template;
   if (!wanted) return { ok: false, errors: [{ field: 'template', reason: '缺少 template（模板名或文件名）' }] };

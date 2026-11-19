@@ -450,7 +450,8 @@ function makeCreateHandler(deps) {
       template: params.template,
       name: params.name,
       columns: params.columns,
-      primaryKey: params.primaryKey
+      primaryKey: params.primaryKey,
+      rows: params.rows
     });
     if (!spec.ok) return { status: 400, body: { error: '结构不合格', errors: spec.errors } };
     let dir;

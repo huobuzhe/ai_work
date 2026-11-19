@@ -134,6 +134,74 @@ test('#52b AC-C6 makeCreateHandler blank 建表 200 + 列头正确', () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// ---- seam A (upload 上传建表) ----
+test('#55 AC-A7 buildCreateSpec upload：字典列+数据行 → 结构带 rows，主键缺省首列', () => {
+  const r = buildCreateSpec(TEMPLATES, {
+    mode: 'upload',
+    name: '上传员工表',
+    columns: { 姓名: 'text', 部门: 'text', 工时: 'number' },
+    rows: [{ 姓名: '张三', 部门: '研发', 工时: 8 }, { 姓名: '李四', 部门: '测试', 工时: 6 }]
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.structure.primaryKey, '姓名', '主键缺省取首列');
+  assert.strictEqual(r.structure.name, '上传员工表');
+  assert.strictEqual(r.structure.rows.length, 2);
+  assert.strictEqual(r.structure.rows[0].姓名, '张三');
+});
+
+test('#55 AC-A8 buildCreateSpec upload：字符串列名（类型默认 text）+ 可指定主键', () => {
+  const r = buildCreateSpec(TEMPLATES, {
+    mode: 'upload',
+    columns: '工号, 姓名, 部门',
+    primaryKey: '工号',
+    rows: [{ 工号: 'E1', 姓名: '张三', 部门: '研发' }]
+  });
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.structure.primaryKey, '工号');
+  assert.deepStrictEqual(r.structure.columns, { 工号: 'text', 姓名: 'text', 部门: 'text' });
+});
+
+test('#55 AC-A9 buildCreateSpec upload：空列清单 → errors', () => {
+  const r = buildCreateSpec(TEMPLATES, { mode: 'upload', columns: {}, rows: [{ x: 1 }] });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.errors[0].field, 'columns');
+});
+
+test('#55 AC-A10 buildCreateSpec upload：主键不在列清单 → errors', () => {
+  const r = buildCreateSpec(TEMPLATES, { mode: 'upload', columns: { 姓名: 'text' }, primaryKey: '工号', rows: [{ 姓名: '张三' }] });
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.errors[0].field, 'primaryKey');
+});
+
+test('#55 AC-A11 buildCreateSpec upload：主键重复/空数据行 → 引擎封闭校验拦截（ok:false + errors）', () => {
+  const dup = buildCreateSpec(TEMPLATES, { mode: 'upload', columns: { 姓名: 'text' }, rows: [{ 姓名: 'A' }, { 姓名: 'A' }] });
+  assert.strictEqual(dup.ok, false);
+  assert.ok(dup.errors.length > 0 && dup.errors[0].field === '姓名', '主键重复应报在姓名列: ' + JSON.stringify(dup.errors));
+  const empty = buildCreateSpec(TEMPLATES, { mode: 'upload', columns: { 姓名: 'text' }, rows: [] });
+  assert.strictEqual(empty.ok, false);
+  assert.strictEqual(empty.errors[0].field, 'rows', '无数据行应报 rows');
+});
+
+// ---- seam C (upload 路由透传 rows) ----
+test('#55 AC-C7 makeCreateHandler upload 传 rows 给 structure 并建文件 200', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-create-'));
+  const created = [];
+  const h = makeCreateHandler({
+    loadTemplates: () => TEMPLATES,
+    resolveDir: () => dir,
+    createTable: (file, structure) => { created.push({ file, structure }); fs.writeFileSync(file, 'x'); return { ok: true }; }
+  });
+  const r = h({
+    method: 'POST', url: '/workbench-api/create',
+    body: JSON.stringify({ mode: 'upload', name: '上传表', columns: { 姓名: 'text', 部门: 'text' }, rows: [{ 姓名: '张三', 部门: '研发' }] })
+  });
+  assert.strictEqual(r.status, 200);
+  assert.ok(fs.existsSync(r.body.file));
+  assert.strictEqual(created[0].structure.rows.length, 1, 'rows 应透传到 structure');
+  assert.strictEqual(created[0].structure.rows[0].姓名, '张三');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // ---- python create 真实建表 ----
 test('#52 AC-D1 defaultCreateTable 真实建空表 + read-values 复核列头', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-create-'));
@@ -154,5 +222,31 @@ test('#52 AC-D1 defaultCreateTable 真实建空表 + read-values 复核列头', 
   if (!out) { fs.rmSync(dir, { recursive: true, force: true }); throw lastErr || new Error('read-values 失败'); }
   assert.deepStrictEqual(out.columns.slice(0, 3), ['姓名', '部门', '工时'], '主键置首 + 列序');
   assert.strictEqual(out.rows.length, 0, '无数据行');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('#55 AC-D2 defaultCreateTable upload 真实写数据行 + read-values 复核内容', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-create-'));
+  const file = path.join(dir, 'upload.xlsx');
+  const structure = {
+    primaryKey: '姓名', columns: { 姓名: 'text', 部门: 'text', 工时: 'number' }, name: '上传员工表',
+    rows: [{ 姓名: '张三', 部门: '研发', 工时: 8 }, { 姓名: '李四', 部门: '测试', 工时: 6 }]
+  };
+  const r = defaultCreateTable(file, structure);
+  assert.strictEqual(r.ok, true);
+  const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
+  const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  let out = null, lastErr = null;
+  for (const bin of candidates) {
+    const rr = spawnSync(bin, [bridge, 'read-values', file], { encoding: 'utf8' });
+    if (rr.error) { lastErr = rr.error; continue; }
+    if (rr.status !== 0) { lastErr = new Error(rr.stderr); continue; }
+    out = JSON.parse((rr.stdout || '').trim()); break;
+  }
+  if (!out) { fs.rmSync(dir, { recursive: true, force: true }); throw lastErr || new Error('read-values 失败'); }
+  assert.deepStrictEqual(out.columns.slice(0, 3), ['姓名', '部门', '工时'], '主键置首 + 列序');
+  assert.strictEqual(out.rows.length, 2, '应写入 2 数据行');
+  assert.strictEqual(String(out.rows[0].姓名), '张三');
+  assert.strictEqual(String(out.rows[1].姓名), '李四');
   fs.rmSync(dir, { recursive: true, force: true });
 });

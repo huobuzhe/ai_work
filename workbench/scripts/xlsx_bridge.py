@@ -93,10 +93,11 @@ def apply(path, cells_json):
     wb.save(path); print('OK')
 
 def create(path, structure_json):
-    """按结构清单建一张空 xlsx（票 #52「从模板新建表格」）。
-    structure_json: {primaryKey, columns:{列名:类型}, name?, mode?}。
-    行为：写出表头（primaryKey 置首、其余列按清单顺序），无数据行。
-    纯 IO，结构合法性由 lib/engine.js 的 createTable/validateManifest 保证（桥不判业务）。
+    """按结构清单建一张 xlsx（票 #52 空表 / #55 上传建表）。
+    structure_json: {primaryKey, columns:{列名:类型}, name?, mode?, rows?:[{列名:值}]}。
+    行为：写出表头（primaryKey 置首、其余列按清单顺序）；若 structure 带 rows（上传建表），
+    逐行按表头顺序写入数据（缺列填空）。
+    纯 IO，结构/数据合法性由 lib/engine.js 的 createTable/validateManifest/validateRows 保证（桥不判业务）。
     """
     from openpyxl import Workbook
     with open(structure_json, encoding='utf-8') as f:
@@ -112,6 +113,12 @@ def create(path, structure_json):
     except Exception:
         ws.title = 'Sheet1'
     ws.append(header)
+    rows = structure.get('rows') or []
+    if isinstance(rows, list):
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            ws.append([('' if r.get(c) is None else r.get(c)) for c in header])
     wb.save(path)
     print('OK')
 
