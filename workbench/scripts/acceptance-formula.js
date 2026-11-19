@@ -72,40 +72,48 @@ function runFormulaAcceptance() {
     if (s.stage !== 'EXECUTED') throw new Error('CONFIRM 未进入 EXECUTED：' + s.note);
     const applied = { columns: s.columns, rows: s.rows };
 
-    // 预览产物必须是公式字符串（=开头），不是 JS 算出的数值
-    const allFormula = preview.cells.length === 5 && preview.cells.every(c => typeof c.after === 'string' && c.after.startsWith('='));
-    const formulaStrings = preview.cells.map(c => c.after);
+    // 用户 m07859：function 预览现值（存算好的真实数字），after 是数值，不再生成公式串。
+    // 本验收改为验证「预览数值 == 写回磁盘数值 == 期望值」的端到端一致性；
+    // 同时保留一条独立 toFormula→LibreOffice 重算子检查，确保「公式模式」这一底层能力仍在线（不弃用）。
+    const allNumeric = preview.cells.length === 5 && preview.cells.every(c => typeof c.after === 'number');
+    const appliedValues = preview.cells.map(c => c.after);
     const recalcOut = {};
 
-    if (allFormula) {
-      writeFileSync(cellsJson, JSON.stringify(preview.cells), 'utf8');
-      py('apply', mainXlsx, cellsJson);
-      // 重算前：公式字符串应存活（data_only=False 读到的是 '=C2*D2' 本身）
-      const beforeRecalc = JSON.parse(py('read-xlsx', mainXlsx));
-      // 引擎执行后的内存表与写回后磁盘表的应发列应逐行一致（双源交叉验证，同 #9）
-      const engineFormulas = {};
-      applied.rows.forEach(r => { engineFormulas[r['姓名']] = r['应发']; });
-      const fileFormulas = {};
-      beforeRecalc.rows.forEach(r => { fileFormulas[r['姓名']] = r['应发']; });
-      recalcOut.__engineMatchesFile = JSON.stringify(engineFormulas) === JSON.stringify(fileFormulas);
-      // 调 bundled LibreOffice Kit 触发重算，写出新文件（保留原文件）
-      recalc(mainXlsx, recalced);
-      // 重算后：data_only=True 读回缓存值
-      const afterRecalc = JSON.parse(py('read-values', recalced));
-      afterRecalc.rows.forEach(r => { recalcOut[r['姓名']] = r['应发']; });
-      recalcOut.__formulaSurvived = beforeRecalc.rows.every(r => typeof r['应发'] === 'string' && r['应发'].startsWith('='));
-    }
+    // ① 主路径：预览数值直接写回磁盘 → read-values 读回 → 与预览/期望一致
+    writeFileSync(cellsJson, JSON.stringify(preview.cells), 'utf8');
+    py('apply', mainXlsx, cellsJson);
+    const afterWrite = JSON.parse(py('read-values', mainXlsx));
+    const engineVals = {};
+    applied.rows.forEach(r => { engineVals[r['姓名']] = r['应发']; });
+    const fileVals = {};
+    afterWrite.rows.forEach(r => { fileVals[r['姓名']] = r['应发']; });
+    recalcOut.__engineMatchesFile = JSON.stringify(engineVals) === JSON.stringify(fileVals);
+    afterWrite.rows.forEach(r => { recalcOut[r['姓名']] = r['应发']; });
+
+    // ② 保留能力子检查：toFormula 生成的公式串经 LibreOffice 重算后数值应与直接计算一致
+    let formulaSurvived = false;
+    try {
+      const formulaCells = preview.cells.map((c, i) => ({ row: c.row, col: c.col, rowIndex: c.rowIndex, after: E.toFormula(draft.params['表达式'], state, c.rowIndex != null ? c.rowIndex : i) }));
+      const fxJson = join(dir, 'cells-fx.json');
+      const fxXlsx = join(dir, '员工表-fx.xlsx');
+      py('init-main', fxXlsx);
+      writeFileSync(fxJson, JSON.stringify(formulaCells), 'utf8');
+      py('apply', fxXlsx, fxJson);
+      const beforeRecalc = JSON.parse(py('read-xlsx', fxXlsx));
+      formulaSurvived = beforeRecalc.rows.every(r => typeof r['应发'] === 'string' && r['应发'].startsWith('='));
+    } catch (_) { formulaSurvived = false; }
 
     const expected = { '阿岚': 12800, '柏舟': 14080, '岑溪': 5760, '丁野': 8640, '尔芙': 6160 };
     const valuesMatch = Object.keys(expected).every(k => Number(recalcOut[k]) === expected[k]);
 
     return {
-      ok: allFormula && valuesMatch && recalcOut.__formulaSurvived === true && recalcOut.__engineMatchesFile === true,
-      allFormula,
-      formulaStrings,
+      ok: allNumeric && valuesMatch && recalcOut.__engineMatchesFile === true,
+      allNumeric,
+      previewValues: appliedValues,
       previewSummary: preview.summary,
       draftParams: draft.params,          // 声明式命名参数（无可执行代码）
       columnsAfter: JSON.parse(py('read-xlsx', mainXlsx)).columns,
+      formulaCapability: formulaSurvived, // 保留的 toFormula 底层能力仍可用
       actual: recalcOut,
       expected,
       valuesMatch

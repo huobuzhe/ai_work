@@ -568,6 +568,40 @@ function toFormula(expr, state, rowIndex) {
   if (!l || !r) return null;
   return '=' + l + m[2] + r;
 }
+// ---- 数值求值（与 toFormula 同文法；用户 m07859 选「存算好的真实数字」）----
+// 与 toFormula 共享同一个 operand/operator 文法，但这里把操作数解析成**该行实际单元格数值**并做算术，
+// 产出可直接写入单元格的数字（预览与磁盘都显示真实数字，而非 =C2*D2 公式文本）。
+// 诚实边界：只支持「操作数 单运算符 操作数」的二元算术（与 toFormula 完全一致的范围），
+// 不支持括号/多运算符——超出范围返回 null（调用方回落公式或空）。
+function computeValue(expr, state, rowIndex) {
+  const s = String(expr == null ? '' : expr).replace(/\s+/g, '').replace(/×/g, '*').replace(/−/g, '-');
+  const m = /^([^*+\-]+)([*+\-])([^*+\-]+)$/.exec(s);
+  if (!m) return null;
+  const rows = (state && state.rows) || [];
+  const row = rows[rowIndex || 0] || null;
+  if (!row) return null;
+  const cols = (state && state.columns) || [];
+  const operandValue = function (tok) {
+    if (/^\d+(\.\d+)?$/.test(tok)) return Number(tok);         // 数字字面量
+    if (!/^[\u4e00-\u9fffA-Za-z_][\u4e00-\u9fffA-Za-z0-9_]*$/.test(tok)) return null;
+    if (cols.indexOf(tok) === -1) return null;                 // 未知列名
+    const raw = row[tok];
+    if (raw === null || raw === undefined || raw === '') return null;
+    const n = Number(raw);
+    return isFinite(n) ? n : null;                             // 非数值单元格 → 无法算
+  };
+  const a = operandValue(m[1]), b = operandValue(m[3]);
+  if (a === null || b === null) return null;
+  const op = m[2];
+  let v;
+  if (op === '*') v = a * b;
+  else if (op === '+') v = a + b;
+  else if (op === '-') v = a - b;
+  else return null;
+  // 消除浮点误差（如 0.1*3=0.30000000000000004）：保留最多 10 位小数再去尾零。
+  const rounded = Math.round(v * 1e10) / 1e10;
+  return rounded;
+}
 // 从「…算成应发 / 写成 X / 得到 X」里抽输出列名（命名参数），抽不到返回 null。
 function extractOutputColumn(sentence) {
   const m = /算成([^\s，,。；;]+)|写成([^\s，,。；;]+)|得到([^\s，,。；;]+)|输出([^\s，,。；;]+)/.exec(String(sentence || ''));
@@ -928,7 +962,14 @@ function preview(state, draft) {
   } else if (draft.kind === 'function') {
     state.rows.forEach(function (r, ri) {
       if (!inScope(r)) return;
-      // 产物是公式字符串（不是 JS 算出的数值）；计算交给 LibreOffice 重算后读回缓存值。
+      // 用户 m07859 选「存算好的真实数字」：优先算实际数值写入（预览/磁盘都显示数字，不再是公式文本）。
+      // computeValue 与 toFormula 同文法；算不出（非数值单元格/超出文法）时回落公式字符串，
+      // 再不行则空串并标 invalid（保持可诊断，不静默错算）。
+      const value = computeValue(p.表达式, state, ri);
+      if (value !== null) {
+        add(r, p.输出列, beforeOf(state, r, p.输出列), value, false, 'function');
+        return;
+      }
       const formula = toFormula(p.表达式, state, ri);
       add(r, p.输出列, beforeOf(state, r, p.输出列), formula || '', !formula, 'function');
     });
@@ -1291,7 +1332,7 @@ function exportButtons(state) {
 }
 
 module.exports = {
-  SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, columnLetter, toFormula, extractOutputColumn, extractExpression,
+  SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, columnLetter, toFormula, computeValue, extractOutputColumn, extractExpression,
   initial, understand, buildDraft, validate, preview, applyCells, reduce, exportButtons, nextButtonId,
   loadRegistry, hydrateRegistry,
   TYPE_ENUM, TYPE_MAP, UPLOAD_WHITELIST, DEFAULT_PRIMARY_KEY,

@@ -879,7 +879,8 @@ function registerWorkbenchPanel(ctx) {
           var inputText = '', setInputText = function () {};
           var actionState = null, setActionState = function () {};
           var actionBusy = false, setActionBusy = function () {};
-          // 浮窗开合状态：默认收起（打开 Excel 时只显示一个悬浮按钮，不挡原表）。
+          // 浮窗开合状态：默认**展开**（用户 m07859：打开 Excel 要直接看到原表，而不是一片空白）。
+          // 浮窗是 position:fixed 覆盖层，展开也不改动 Excel 本身布局；用户可点 ✕ 收起只剩悬浮球。
           // 护栏测试非渲染上下文拿不到 hooks → fabOpen 默认 true，保证面板内容仍在树里可断言。
           var fabOpen = true, setFabOpen = function () {};
           var hooksOk = false;
@@ -891,7 +892,7 @@ function registerWorkbenchPanel(ctx) {
               actionState = actTuple[0]; setActionState = actTuple[1];
               var busyTuple = React.useState(false);
               actionBusy = busyTuple[0]; setActionBusy = busyTuple[1];
-              var fabTuple = React.useState(false);
+              var fabTuple = React.useState(true);
               fabOpen = fabTuple[0]; setFabOpen = fabTuple[1];
               hooksOk = true;
             }

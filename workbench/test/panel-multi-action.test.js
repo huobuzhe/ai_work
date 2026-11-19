@@ -188,6 +188,10 @@ for (const kind of ACTIONS) {
     const idleText = textOf(tree).join(' ');
     assert.ok(findByAttr(tree, 'data-workbench-orig-table', '1'), kind + ': IDLE 应渲染原始表格');
     assert.doesNotMatch(idleText, /→/, kind + ': IDLE 不应出现 before→after 箭头');
+    // 用户 m07859：打开文件默认**展开**浮窗面板直接显示原表（不再是一片空白）。
+    const idlePanel = findByAttr(tree, 'data-workbench-panel', '1');
+    assert.ok(idlePanel, kind + ': 应有浮窗面板');
+    assert.notEqual(idlePanel.props.style.display, 'none', kind + ': 打开时浮窗面板默认应展开（display≠none）');
 
     // 点 QUICK 一键动作
     const qbtn = findByAttr(tree, 'data-wb-quick', kind);

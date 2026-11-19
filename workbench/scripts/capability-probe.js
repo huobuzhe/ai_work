@@ -74,12 +74,17 @@ function runLocalProbe() {
     s = E.reduce(s, { type: 'CONFIRM' });
     if (s.stage !== 'EXECUTED') throw new Error('CONFIRM 未进入 EXECUTED：' + s.note);
 
-    // 公式单元格是 = 开头的公式字符串（不是 JS 算出的数值）——canWriteFormula 的判定点源头。
-    const allFormula = preview.cells.length > 0 && preview.cells.every(function (c) {
+    // 能力位口径（票 #25）：这里验的是「本平台能否写入公式并被重算」这一**平台能力**，
+    // 与 function 动作现值语义（用户 m07859 存算好的真实数字）无关。故显式用 E.toFormula
+    // 生成公式字符串来构造单元格，直接检验「写公式→重算→读回」的完整切换。
+    const formulaCells = preview.cells.map(function (c, i) {
+      return { row: c.row, col: c.col, rowIndex: (c.rowIndex != null ? c.rowIndex : i), after: E.toFormula(s.draft.params['表达式'], state, (c.rowIndex != null ? c.rowIndex : i)) };
+    });
+    const allFormula = formulaCells.length > 0 && formulaCells.every(function (c) {
       return typeof c.after === 'string' && c.after.charAt(0) === '=';
     });
 
-    writeFileSync(cellsJson, JSON.stringify(preview.cells), 'utf8');
+    writeFileSync(cellsJson, JSON.stringify(formulaCells), 'utf8');
     py('apply', mainXlsx, cellsJson);
     // 重算前：读回仍是公式字符串本身（data_only=False），证明公式存活被写入。
     const before = JSON.parse(py('read-xlsx', mainXlsx));
@@ -105,7 +110,7 @@ function runLocalProbe() {
       functionSet: functionEvaluated,        // 乘法函数被真正求值（公式存活→重算得数值的完整切换）
       detail: {
         allFormula: allFormula,
-        formulaStrings: preview.cells.map(function (c) { return c.after; }),
+        formulaStrings: formulaCells.map(function (c) { return c.after; }),
         formulaSurvived: formulaSurvived,
         valuesMatch: valuesMatch,
         computedPresent: computedPresent,

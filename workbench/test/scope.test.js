@@ -115,12 +115,14 @@ test('conditional：scope=match 只对命中行增删改；scope=all 对所有�
   assert.equal(a.cells.length, 5);
 });
 
-test('function：scope=match 只对命中行写公式，scope=all 写全部行', () => {
+test('function：scope=match 只对命中行写值，scope=all 写全部行', () => {
   const s = mkState();
   const m = E.preview(s, E.buildDraft('function', null, { scope: 'match', 条件: '工时 > 150' }));
   assert.equal(m.cells.length, 2);
   assert.deepEqual(uniq(rowsOf(m)).sort(), ['柏舟', '阿岚'].sort());
-  assert.deepEqual(m.cells.map(function (c) { return c.after; }).sort(), ['=C2*D2', '=C3*D3'].sort());
+  // function 现值语义：after 为算好的真实数值（user m07859「存算好的真实数字」），不再是公式串。
+  m.cells.forEach(function (c) { assert.equal(typeof c.after, 'number'); });
+  assert.deepEqual(m.cells.map(function (c) { return c.after; }).sort(function (x, y) { return x - y; }), [12800, 14080]);
   const a = E.preview(s, E.buildDraft('function', null, { scope: 'all' }));
   assert.equal(a.affectedRows, 5);
 });

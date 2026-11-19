@@ -183,16 +183,17 @@ test('缺口B 修复：function 写公式后重算，应发列读回非空且数
   act(h, file, { type: 'understand', text: '计算 工时乘以时薪 算成应发' });
   let v = act(h, file, { type: 'preview' });
   assert.equal(v.stage, 'PREVIEWED', 'function 预览应通过：' + v.note);
-  // 预览产物应是公式字符串（=开头），不是 JS 求值
-  assert.ok(v.preview.cells.every((c) => typeof c.after === 'string' && c.after.charAt(0) === '='),
-    '预览产物应为公式字符串');
+  // 用户 m07859：function 现值语义——预览产物是算好的真实数字，不再是公式字符串
+  assert.ok(v.preview.cells.every((c) => typeof c.after === 'number'),
+    '预览产物应为算好的数值');
 
   const c = act(h, file, { type: 'confirm' });
   assert.equal(c.stage, 'EXECUTED');
   assert.equal(c.writtenOk, true);
-  assert.equal(c.recalcOk, true, '写公式后应就地重算成功');
+  // 现写数值：不再需要就地重算（recalcOk 允许 undefined 或 true，取决于是否仍带公式）
+  assert.ok(c.recalcOk === true || c.recalcOk === undefined, '写数值不强制重算');
 
-  // 重算后读回缓存值：应发 = 工时 × 时薪
+  // 读回值：应发 = 工时 × 时薪（写的是算好的数字）
   const disk = pyReadValues(file);
   const byName = Object.fromEntries(disk.rows.map((r) => [r['姓名'], r['应发']]));
   assert.equal(Number(byName['阿岚']), 160 * 80);

@@ -99,8 +99,34 @@ def apply(path, cells_json):
         if ri is None:
             ri = row_of.get(str(c['row']))
         if ri is None: continue
-        ws.cell(row=ri, column=ci, value=c['after'])
+        _set_cell(ws, ri, ci, c['after'])
+    # 用户 m07859 图4：写回后 Excel 网格线变虚线 / 视觉与原表不同。
+    # 根因：原表是 openpyxl 生成的，sheetView 里**没有** showGridLines（缺省），
+    # 不同渲染器（WPS）缺省会画成虚线/浅灰网格。这里显式打开实线网格，保证写回后
+    # 与「原表实线网格」一致；不改任何既有单元格样式（openpyxl load+save 保留 styles.xml 原字节）。
+    try:
+        ws.sheet_view.showGridLines = True
+    except Exception:
+        pass
     wb.save(path); print('OK')
+
+def _set_cell(ws, ri, ci, value):
+    """写入一个单元格值；尽量保留该单元格原有样式（字体/数字格式/边框），只换值。
+    openpyxl 直接 ws.cell(...).value= 本身即保留样式；此函数是对「新列/新行」的兜底：
+    新列补表头时复制表头样式，新数据格复制同列上一行样式，避免视觉与原表割裂。"""
+    from copy import copy
+    cell = ws.cell(row=ri, column=ci)
+    if cell.value is None and ri > 1:
+        # 新数据格：继承同列表头下的第一条数据行的样式（若存在）
+        ref = ws.cell(row=2, column=ci)
+        try:
+            cell.font = copy(ref.font); cell.border = copy(ref.border)
+            cell.fill = copy(ref.fill); cell.number_format = ref.number_format
+            cell.alignment = copy(ref.alignment)
+        except Exception:
+            pass
+    cell.value = value
+
 
 def create(path, structure_json):
     """按结构清单建一张 xlsx（票 #52 空表 / #55 上传建表）。
@@ -129,6 +155,11 @@ def create(path, structure_json):
             if not isinstance(r, dict):
                 continue
             ws.append([('' if r.get(c) is None else r.get(c)) for c in header])
+    # 用户 m07859 图4：新建表同样显式打开实线网格（缺省在部分渲染器下显示为虚线）。
+    try:
+        ws.sheet_view.showGridLines = True
+    except Exception:
+        pass
     wb.save(path)
     print('OK')
 

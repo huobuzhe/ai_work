@@ -1,7 +1,8 @@
 'use strict';
-// 票 #11 主 seam 测试（纯引擎，不碰 xlsx / LibreOffice）：
-// function kind 必须「生成公式字符串 + 命名参数」，而不是在 JS 里求值。
-// 规格 #8：不实现求值器、只生成公式读回缓存；与第一张票共用同一引擎接口与主 seam。
+// 票 #11 主 seam 测试（纯引擎，不碰 xlsx / LibreOffice）。
+// 用户 m07859 决定：function 动作**存算好的真实数字**（预览/磁盘都显示数值，不再显示公式文本）。
+// 因此 function 预览的 after 是数值（如 12800），不再是 '=C2*D2' 公式字符串；
+// toFormula（生成 A1 公式串）保留为可用的底层能力（供将来「保留公式」模式），单测照测。
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const E = require('../lib/engine');
@@ -49,19 +50,27 @@ test('toFormula：非法表达式 / 未知列名返回 null（不硬算值）', 
   assert.equal(E.toFormula('', fresh(), 0), null);
 });
 
-test('function 预览：写的是公式字符串（after 以 = 开头），不是 JS 算出的数值', () => {
+test('function 预览：after 是算好的真实数值（不是公式字符串）', () => {
   const s = fresh();
   const draft = E.buildDraft('function', '把工时乘以时薪算成应发');
   const pv = E.preview(s, draft);
   assert.equal(pv.invalid, false);
   assert.equal(pv.cells.length, 5);
   assert.equal(pv.cells[0].col, '应发');
-  assert.equal(pv.cells[0].after, '=C2*D2'); // 公式，不是 12800
-  assert.equal(pv.cells[1].after, '=C3*D3');
+  assert.equal(pv.cells[0].after, 12800); // 160 × 80，数值不是 '=C2*D2'
+  assert.equal(pv.cells[1].after, 14080); // 176 × 80
   assert.match(pv.summary, /影响 5 行 \/ 共 5 行/);
 });
 
-test('function + scope=match：只对命中记录生成公式', () => {
+test('computeValue：数值求值（与 toFormula 同文法，但算实际值）', () => {
+  assert.equal(E.computeValue('工时 * 时薪', fresh(), 0), 12800); // 160×80
+  assert.equal(E.computeValue('工时 * 时薪', fresh(), 3), 8640);  // 144×60
+  assert.equal(E.computeValue('工时 * 2', fresh(), 1), 352);      // 176×2
+  assert.equal(E.computeValue('工时 >>> 时薪', fresh(), 0), null); // 非法文法
+  assert.equal(E.computeValue('不存在的列 * 时薪', fresh(), 0), null); // 未知列
+});
+
+test('function + scope=match：只对命中记录算数值', () => {
   const s = fresh();
   const draft = E.buildDraft('function', null, {
     表达式: '工时 * 时薪', 输出列: '应发', scope: 'match', 条件: '工时 > 150'
@@ -70,9 +79,9 @@ test('function + scope=match：只对命中记录生成公式', () => {
   assert.equal(pv.invalid, false);
   assert.equal(pv.cells.length, 2); // 阿岚 160、柏舟 176
   assert.equal(pv.cells[0].row, '阿岚');
-  assert.equal(pv.cells[0].after, '=C2*D2');
+  assert.equal(pv.cells[0].after, 12800);
   assert.equal(pv.cells[1].row, '柏舟');
-  assert.equal(pv.cells[1].after, '=C3*D3');
+  assert.equal(pv.cells[1].after, 14080);
 });
 
 test('function 非法表达式：validate 前就拒绝，预览标 invalid 且不产公式', () => {
@@ -83,14 +92,14 @@ test('function 非法表达式：validate 前就拒绝，预览标 invalid 且�
   assert.equal(pv.cells.length, 0);
 });
 
-test('状态机：UNDERSTAND→PREVIEW→CONFIRM 产出写公式动作（复用 #9 状态机）', () => {
+test('状态机：UNDERSTAND→PREVIEW→CONFIRM 产出写数值动作（复用 #9 状态机）', () => {
   let s = E.reduce(fresh(), { type: 'SET_INPUT', text: '把工时乘以时薪算成应发' });
   s = E.reduce(s, { type: 'UNDERSTAND' });
   assert.equal(s.draft.kind, 'function');
   s = E.reduce(s, { type: 'PREVIEW' });
-  assert.equal(s.preview.cells[0].after, '=C2*D2');
+  assert.equal(s.preview.cells[0].after, 12800);
   s = E.reduce(s, { type: 'CONFIRM' });
   assert.equal(s.stage, 'EXECUTED');
   assert.ok(s.columns.includes('应发'));
-  assert.equal(s.rows[0]['应发'], '=C2*D2'); // 内存态存的是公式字符串
+  assert.equal(s.rows[0]['应发'], 12800); // 内存态存的是算好的数值
 });
