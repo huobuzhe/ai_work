@@ -669,6 +669,10 @@ function registerWorkbenchPanel(ctx) {
               setActionBusy(true);
               var origin = (typeof window !== 'undefined' && window.location && window.location.origin) || '';
               var act = Object.assign({ type: type }, extra || {});
+              // 票 #47/#56：understand 必须把当前输入框文字一并发给 Host——引擎的 UNDERSTAND 用
+              // action.text（缺省才退 state.input，而 Host 侧 state.input 从未被 SET_INPUT 写过）。
+              // 此前没带 text，导致用户明明输了字、点「理解」却被判「输入框是空的」（真实面板缺陷）。
+              if (type === 'understand' && act.text === undefined) act.text = (inputText || '');
               // solidify 时把当前输入框文字作为按钮名（用户可后续重命名）。
               if (type === 'solidify' && !act.name) act.name = (inputText || '').trim() || '我的配方';
               var body = JSON.stringify({

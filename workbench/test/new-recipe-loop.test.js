@@ -126,6 +126,10 @@ test('票 #47 回归：输入→理解→预览→确认→固化，按钮最终
   shim.beginRender(); tree = body(mkProps()); shim.finishRender();
   assert.match(textOf(tree).join(' '), /已理解成/, '理解后显示 note');
   assert.equal(progress, 'UNDERSTOOD');
+  // 票 #56 回归：understand 必须把输入框文字一并发给 Host（否则引擎用空 input→「输入框是空的」）。
+  const undCall = calls.filter((c) => c.url.includes('/workbench-api/action')).map((c) => JSON.parse(c.init.body)).filter((b) => b.action.type === 'understand').pop();
+  assert.ok(undCall, '应发出 understand action');
+  assert.equal(undCall.action.text, '调换姓名和工时两列', 'understand 必须带上输入框文字');
 
   // 点「预览」
   btn = findByAttr(tree, 'data-wb-action', 'preview');
