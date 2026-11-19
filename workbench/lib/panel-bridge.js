@@ -94,12 +94,71 @@ function defaultRecalc(file) {
 }
 
 /**
+ * 读表缓存（性能修复，2026-11-19）：defaultReadTable 每次要 spawn python + import openpyxl
+ *（约 600ms 起步）+ 逐个读同目录兄弟数据源，单次可达 3s+。而面板 /state 每 900ms 轮询一次、
+ * 每次动作又重读，导致「暂无预览要等很久 / 点理解很久没反应」。
+ * 这里加一层**每文件 TTL 缓存**：短 TTL 内重复读复用结果；写盘（apply）后主动 invalidate。
+ * 副作用：外部改动文件后最多延迟 TTL 才看到（TTL 取短，2s，兼顾实时性与性能）。
+ * 兄弟数据源（extract 用）单独 lazy 缓存，只有 extract 真正需要时才加载（不拖累每次读表）。
+ */
+const _readCache = new Map(); // key = absPath -> { at:number, value:{columns,rows,sources?} }
+const _sourcesCache = new Map(); // key = absPath -> { at:number, value:sourcesDict }
+const READ_CACHE_TTL_MS = 2000;
+const SOURCES_CACHE_TTL_MS = 10000;
+
+function _invalidateOne(absPath) {
+  try { _readCache.delete(absPath); } catch (_) {}
+  try { _sourcesCache.delete(absPath); } catch (_) {}
+}
+/** 写盘后调用：让下一次读表拿到最新磁盘状态（不缓存脏值）。 */
+function invalidateReadCache(absPath) {
+  if (absPath) _invalidateOne(absPath);
+  else { _readCache.clear(); _sourcesCache.clear(); }
+}
+
+/**
+ * 读表（带 TTL 缓存）。除主表外不再默认 eager 读兄弟数据源（那是 3s 慢的主因）；
+ * 兄弟数据源改走 loadSourcesForExtract(file) 惰性加载。
+ * @param {string} file
+ * @returns {{columns:string[], rows:object[]}}
+ */
+function cachedReadTable(file) {
+  const now = Date.now();
+  const hit = _readCache.get(file);
+  if (hit && (now - hit.at) < READ_CACHE_TTL_MS) return hit.value;
+  const value = defaultReadTableCore(file);
+  _readCache.set(file, { at: now, value });
+  return value;
+}
+
+/**
+ * 惰性加载主表同目录的兄弟数据源（extract 动作需要时才调）。结果缓存 10s。
+ * @param {string} file 主表绝对路径
+ * @returns {Object<string,{columns:string[],rows:object[]}>}
+ */
+function loadSourcesForExtract(file) {
+  const now = Date.now();
+  const hit = _sourcesCache.get(file);
+  if (hit && (now - hit.at) < SOURCES_CACHE_TTL_MS) return hit.value;
+  let value = {};
+  try { value = collectSiblingSources(file); } catch (_) { value = {}; }
+  _sourcesCache.set(file, { at: now, value });
+  return value;
+}
+
+/**
  * 默认读表器：spawn python xlsx_bridge.py read-values <file>，解析其 stdout JSON。
  * 读 data_only=True（重算缓存值），与 univer 一致地取最终可见值。
+ * 注：为性能**不再**在此 eager 读兄弟数据源；见 cachedReadTable / loadSourcesForExtract。
  * @param {string} file 绝对路径
  * @returns {{columns:string[], rows:object[]}}
  */
 function defaultReadTable(file) {
+  return cachedReadTable(file);
+}
+
+/** 真正的读表实现（无缓存无兄弟源）：spawn python 读主表。 */
+function defaultReadTableCore(file) {
   const { spawnSync } = require('child_process');
   const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
   // 优先用 python，退 py（Windows 常见）。只读文件、不写，结果走 stdout。
@@ -114,16 +173,7 @@ function defaultReadTable(file) {
     }
     const out = (r.stdout || '').trim();
     if (!out) throw new Error('xlsx_bridge 无输出');
-    const table = JSON.parse(out);
-    // 接缝缺口修复（extract 数据源）：把同级目录下的声明式数据源（.csv/.xlsx）一并读成
-    // sources 字典（键=文件名），供引擎 extract 的「来源文件」校验与跨表提取使用。
-    // 此前 defaultReadTable 只回 {columns,rows}、无 sources → extract 永远报
-    // 「来源文件不在声明式数据源里」。这里补上「同目录兄弟文件即数据源」的默认约定。
-    try {
-      const sources = collectSiblingSources(file);
-      if (sources && Object.keys(sources).length) table.sources = sources;
-    } catch (_) { /* 数据源加载失败不影响主表读取 */ }
-    return table;
+    return JSON.parse(out);
   }
   throw lastErr || new Error('找不到可用的 python 解释器');
 }
@@ -236,6 +286,13 @@ function makeStateHandler(deps) {
       return { status: 500, body: { error: '读表失败：' + ((e && e.message) || e) } };
     }
     const draft = resolveDraft(absPath);
+    // 惰性加载兄弟数据源：仅当已存草稿是 extract 时才需要（不拖累普通读表）。
+    try {
+      if (draft && draft.kind === 'extract') {
+        const sources = loadSourcesForExtract(absPath);
+        if (sources && Object.keys(sources).length) table = Object.assign({}, table, { sources: sources });
+      }
+    } catch (_) { /* 非致命 */ }
     const vm = buildPanelState({ columns: table.columns, rows: table.rows, draft: draft, registryButtons: presets() });
     return {
       status: 200,
@@ -406,6 +463,19 @@ function makeActionHandler(deps) {
     } catch (e) {
       return { status: 500, body: { error: '读表失败：' + ((e && e.message) || e) } };
     }
+    // extract 动作需要「同目录兄弟数据源」。这里在**首次** baseState/view 之前就决定是否挂 sources——
+    // 因为 baseState 一旦用不带 sources 的 table 建了态就会缓存住，之后补 sources 也进不去引擎。
+    // 触发条件：动作是 UNDERSTAND/RUN_BUTTON（尚不知道 kind，先备好），或表本已有 sources 需求。
+    // loadSourcesForExtract 内置 10s 缓存，只有真正的第一次会 spawn python 读兄弟文件。
+    // 关键：文件首次动作几乎总是 UNDERSTAND → 态第一次建就带上 sources，无需事后 reset。
+    try {
+      const actUpper0 = typeof action.type === 'string' ? action.type.toUpperCase() : '';
+      const quickKindExtract = actUpper0 === 'QUICK' && action && action.kind === 'extract';
+      if (actUpper0 === 'UNDERSTAND' || actUpper0 === 'RUN_BUTTON' || quickKindExtract) {
+        const sources = loadSourcesForExtract(absPath);
+        if (sources && Object.keys(sources).length) table = Object.assign({}, table, { sources: sources });
+      }
+    } catch (_) { /* 数据源加载失败不致命 */ }
     const beforeStage = store.view(absPath, table).stage;
     let vm;
     try {
@@ -438,6 +508,8 @@ function makeActionHandler(deps) {
           wrote.recalcOk = !!(rec && rec.ok);
           if (rec && !rec.ok) wrote.recalcError = rec.error;
         }
+        // 写盘成功后让缓存失效，下一次读表拿到最新磁盘状态。
+        invalidateReadCache(absPath);
       } catch (e) {
         wrote.writtenOk = false;
         wrote.writeError = (e && e.message) || String(e);
@@ -465,7 +537,7 @@ function makeActionHandler(deps) {
   };
 }
 
-module.exports = { makeStateHandler, makeButtonHandler, makeActionHandler, makeTemplatesHandler, makeCreateHandler, defaultReadTable, defaultApplyTable, defaultCreateTable, defaultLoadTemplates, defaultRecalc, collectSiblingSources };
+module.exports = { makeStateHandler, makeButtonHandler, makeActionHandler, makeTemplatesHandler, makeCreateHandler, defaultReadTable, defaultReadTableCore, cachedReadTable, loadSourcesForExtract, invalidateReadCache, defaultApplyTable, defaultCreateTable, defaultLoadTemplates, defaultRecalc, collectSiblingSources };
 
 /**
  * 票 #52：默认模板加载器——spawn node scripts/load-templates.js，解析 stdout 的 templates 数组。

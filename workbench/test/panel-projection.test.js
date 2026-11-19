@@ -205,3 +205,80 @@ test('labelOfKind 镜像不漂移：每个引擎 KINDS 都能拿到与 KINDS.sho
       'kind=' + kind + ' 的按钮库 label 应等于引擎 KINDS.short');
   }
 });
+
+// ---------- 浮窗外壳：悬浮按钮 + 隐藏态浮窗面板（用户 m06260 需求） ----------
+// 需求：打开 Excel 时原表不被遮挡，只浮一个小按钮；点按钮才弹出小型工作台浮窗。
+// 结构保证：①始终有 position:fixed 的悬浮按钮 data-wb-fab；
+//          ②浮窗面板 data-workbench-panel 始终在树里，收起态 display:none（不占位、可被测试查到）；
+//          ③面板内控件（输入框/动作按钮）在收起态也在树中，只是不可见。
+
+function shimRender(hostState) {
+  const shim = makeReactShim();
+  const m = { exports: {} };
+  const fs = require('node:fs');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'client', 'index.js'), 'utf8');
+  const req = (spec) => {
+    if (spec === 'react') return shim.React;
+    if (spec === 'react/jsx-runtime') return { jsx: shim.jsx, jsxs: shim.jsxs };
+    return require(spec);
+  };
+  const api = new Function('module', 'exports', 'require', 'window', src + '\nreturn module.exports;')(m, m.exports, req, undefined);
+  shim.beginRender();
+  const tree = api.renderWorkbenchPanel(hostState);
+  shim.finishRender();
+  return tree;
+}
+function makeReactShim() {
+  let inst = null;
+  function useState(init) {
+    const i = inst.idx++;
+    if (!(i in inst.hooks)) inst.hooks[i] = (typeof init === 'function' ? init() : init);
+    const set = (v) => { inst.hooks[i] = (typeof v === 'function' ? v(inst.hooks[i]) : v); };
+    return [inst.hooks[i], set];
+  }
+  function useEffect() {}
+  const jsx = (type, props, key) => ({ $$typeof: Symbol.for('react.element'), type, key, props: props || {} });
+  const jsxs = jsx;
+  const React = { useState, useEffect, createElement: jsx };
+  return {
+    React, jsx, jsxs,
+    beginRender() { if (!inst) inst = { hooks: [], idx: 0 }; inst.idx = 0; },
+    finishRender() {},
+    runCleanups() { inst = null; }
+  };
+}
+function findEl(node, attr, val) {
+  if (!node) return null;
+  if (Array.isArray(node)) { for (const c of node) { const r = findEl(c, attr, val); if (r) return r; } return null; }
+  if (node && node.$$typeof === Symbol.for('react.element')) {
+    if (node.props && node.props[attr] === val) return node;
+    return findEl(node.props && node.props.children, attr, val);
+  }
+  return null;
+}
+
+test('浮窗外壳：始终渲染 position:fixed 悬浮按钮 data-wb-fab', () => {
+  const tree = shimRender({ stage: 'IDLE' });
+  const fab = findEl(tree, 'data-wb-fab', '1');
+  assert.ok(fab, '应有悬浮按钮 data-wb-fab');
+  assert.equal(fab.props.style.position, 'fixed', '悬浮按钮须 position:fixed（覆盖在原表上）');
+  assert.ok(fab.props.style.zIndex >= 1000, '悬浮按钮 zIndex 要足够高，覆盖在表格之上');
+});
+
+test('浮窗外壳：收起态面板在树里但 display:none，不遮挡原表；含输入框与动作按钮', () => {
+  const tree = shimRender({ stage: 'IDLE', fabOpen: false, onAction: function () {} });
+  const panel = findEl(tree, 'data-workbench-panel', '1');
+  assert.ok(panel, '浮窗面板应始终在 React 树里（收起态也不移除）');
+  assert.equal(panel.props.style.display, 'none', '收起态面板须 display:none（不遮挡原表、不占位）');
+  // 收起态内部控件仍在树里（测试可查、切换展开时无需重建）
+  assert.ok(findEl(tree, 'data-wb-input', '1'), '收起态输入框仍在树中');
+  assert.ok(findEl(tree, 'data-wb-action', 'understand'), '收起态「理解」按钮仍在树中');
+});
+
+test('浮窗外壳：展开态面板 display:flex 可见', () => {
+  const tree = shimRender({ stage: 'IDLE', fabOpen: true, onAction: function () {} });
+  const panel = findEl(tree, 'data-workbench-panel', '1');
+  assert.ok(panel, '展开态应有面板');
+  assert.equal(panel.props.style.display, 'flex', '展开态面板 visibility 应为 flex');
+  assert.equal(panel.props.style.position, 'fixed', '面板须 position:fixed 浮窗');
+});

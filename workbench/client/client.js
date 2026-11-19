@@ -256,6 +256,35 @@ function renderWorkbenchPanel(hostState) {
       mkAction('confirm', '确认执行', canConfirm),
       mkAction('solidify', '固化为按钮', canSolidify)
     ] }, 'btnrow');
+    // 五个动作一键化（用户 m06260「把这5个按钮实现」）：每个动作一个快捷按钮，
+    // 点击发 QUICK（跳过理解、直接出「解释+影响预览」），用户再点「确认执行」即写盘。
+    // QUICK 的列名参数由 Host panel-session.normalizeDraft 映射到真实列，故此处给通用缺省即可。
+    var QUICK_ACTIONS = [
+      { kind: 'extract', label: '提取字段' },
+      { kind: 'swap', label: '调换两列' },
+      { kind: 'conditional', label: '条件改动' },
+      { kind: 'function', label: '公式计算' },
+      { kind: 'dedupe', label: '按主键去重' }
+    ];
+    var quickBtns = QUICK_ACTIONS.map(function (qa) {
+      return jsx('button', {
+        type: 'button',
+        'data-wb-quick': qa.kind,
+        title: '一键发起「' + qa.label + '」→ 直接给出解释与影响预览',
+        disabled: busy ? true : undefined,
+        onClick: function (ev) {
+          try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
+          try { onAction('quick', { kind: qa.kind }); } catch (_) {}
+        },
+        style: { marginRight: 6, marginBottom: 4 },
+        children: qa.label
+      }, 'quick' + qa.kind);
+    });
+    var quickRow = jsxs('div', { 'data-wb-quickbar': '1', style: { marginBottom: 8 }, children: [
+      jsx('div', { style: { fontSize: 11, opacity: 0.65, marginBottom: 4 }, children: '一键动作（直接出预览，再确认执行即写盘）' }, 'quicklbl'),
+      jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 }, children: quickBtns }, 'quickrow')
+    ] }, 'quickbar');
+    children.push(quickRow);
     children.push(jsxs('div', { 'data-wb-newrecipe': '1', style: { marginBottom: 10 }, children: [inputEl, btnRow] }, 'newrecipe'));
     // 状态提示（note）：把引擎/宿主给的提示如实显示。
     if (hostState && typeof hostState.note === 'string' && hostState.note) {
@@ -468,7 +497,77 @@ function renderWorkbenchPanel(hostState) {
     }
     children.push(jsxs('div', { 'data-wb-newtable': '1', style: { marginTop: 12, paddingTop: 8, borderTop: '1px solid #eee' }, children: ntChildren }, 'newtable'));
   }
-  return jsxs('div', { 'data-workbench-panel': '1', style: { padding: 12, fontFamily: 'inherit', fontSize: 13 }, children: children });
+  // ── 浮窗外壳 ──────────────────────────────────────────────────────────────
+  // 需求（用户 m06260）：打开 Excel 时原表**不被遮挡**，只在表格上方浮一个小按钮；
+  // 点按钮才弹出小型「表格工作台」浮窗（含功能按钮），预览显示修改后数据，执行写入真实数据。
+  // 实现：本 slot body 只渲染 position:fixed 的悬浮元素（不占侧栏流式布局），
+  // 完全不碰宿主 Excel 表格 DOM。fabOpen 由 WorkbenchPanelBody 的 React state 控制。
+  const fabOpen = hostState && hostState.fabOpen !== false; // 非渲染上下文默认展开（护测可断言内容）
+  const onToggleFab = hostState && typeof hostState.onToggleFab === 'function' ? hostState.onToggleFab : function () {};
+  const onCloseFab = hostState && typeof hostState.onCloseFab === 'function' ? hostState.onCloseFab : onToggleFab;
+
+  // 悬浮按钮（FAB）：始终显示，位于右下角、原表之上。
+  const fab = jsx('button', {
+    type: 'button',
+    'data-wb-fab': '1',
+    title: '表格工作台',
+    onClick: function (ev) {
+      try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
+      try { onToggleFab(); } catch (_) {}
+    },
+    style: {
+      position: 'fixed', right: 24, bottom: 24, zIndex: 2147482000,
+      width: 52, height: 52, borderRadius: '50%', border: 'none',
+      background: '#2563eb', color: '#fff', fontSize: 20, cursor: 'pointer',
+      boxShadow: '0 4px 14px rgba(0,0,0,0.28)', display: 'flex',
+      alignItems: 'center', justifyContent: 'center', lineHeight: 1
+    },
+    children: '⚙'
+  }, 'fab');
+
+  // 浮窗面板：点 FAB 后出现在右下角，FAB 之上，可滚动，不遮挡整表。
+  // 收起态用 display:none 隐藏（而非不渲染），保证内部控件始终在 React 树里——
+  // 既让护栏/e2e 测试能查到控件，又让用户打开 Excel 时只看到悬浮按钮。
+  const panel = jsxs('div', {
+    'data-workbench-panel': '1',
+    style: {
+      position: 'fixed', right: 24, bottom: 88, zIndex: 2147482001,
+      width: 380, maxWidth: 'calc(100vw - 48px)', maxHeight: '72vh',
+      display: fabOpen ? 'flex' : 'none', flexDirection: 'column',
+      background: '#fff', color: '#111', border: '1px solid #d0d7de',
+      borderRadius: 10, boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+      fontFamily: 'inherit', fontSize: 13, overflow: 'hidden'
+    },
+    children: [
+      // 标题栏：拖动手感（不可真拖，纯视觉）+ 收起按钮
+      jsxs('div', {
+        'data-wb-fab-header': '1',
+        style: {
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '8px 12px', background: '#f6f8fa', borderBottom: '1px solid #e1e4e8',
+          cursor: 'default', userSelect: 'none'
+        },
+        children: [
+          jsx('div', { style: { fontWeight: 600 }, children: '表格工作台' }, 'fabtitle'),
+          jsx('button', {
+            type: 'button', 'data-wb-fab-close': '1', title: '收起',
+            onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { onCloseFab(); } catch (_) {} },
+            style: { border: 'none', background: 'transparent', fontSize: 16, cursor: 'pointer', lineHeight: 1, color: '#555' },
+            children: '✕'
+          }, 'fabclose')
+        ]
+      }, 'fabheader'),
+      // 可滚动内容区
+      jsx('div', {
+        'data-wb-fab-body': '1',
+        style: { padding: 12, overflowY: 'auto', flex: 1 },
+        children: jsxs('div', { children: children }, 'fabin')
+      }, 'fabbody')
+    ]
+  }, 'panel');
+
+  // 收起态也把面板保留在树里（display:none），所以这里总是渲染 fab + panel。
+  return jsxs('div', { 'data-workbench-fab-root': '1', children: [fab, panel] }, 'fabroot');
 }
 
 function apply(ctx) {
@@ -638,6 +737,9 @@ function registerWorkbenchPanel(ctx) {
           var inputText = '', setInputText = function () {};
           var actionState = null, setActionState = function () {};
           var actionBusy = false, setActionBusy = function () {};
+          // 浮窗开合状态：默认收起（打开 Excel 时只显示一个悬浮按钮，不挡原表）。
+          // 护栏测试非渲染上下文拿不到 hooks → fabOpen 默认 true，保证面板内容仍在树里可断言。
+          var fabOpen = true, setFabOpen = function () {};
           var hooksOk = false;
           try {
             if (React && typeof React.useState === 'function') {
@@ -647,6 +749,8 @@ function registerWorkbenchPanel(ctx) {
               actionState = actTuple[0]; setActionState = actTuple[1];
               var busyTuple = React.useState(false);
               actionBusy = busyTuple[0]; setActionBusy = busyTuple[1];
+              var fabTuple = React.useState(false);
+              fabOpen = fabTuple[0]; setFabOpen = fabTuple[1];
               hooksOk = true;
             }
           } catch (_) { hooksOk = false; }
@@ -812,6 +916,9 @@ function registerWorkbenchPanel(ctx) {
             onInput: function (v) { try { setInputText(v); } catch (_) {} },
             onAction: runAction,
             actionBusy: actionBusy,
+            fabOpen: fabOpen,
+            onToggleFab: function () { try { setFabOpen(!fabOpen); } catch (_) {} },
+            onCloseFab: function () { try { setFabOpen(false); } catch (_) {} },
             templates: templates,
             onCreate: onCreate,
             onCreateBlank: onCreateBlank,

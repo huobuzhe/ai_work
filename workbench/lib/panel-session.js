@@ -160,6 +160,29 @@ function createSessionStore(opts) {
     }
   }
 
+  // QUICK「一键动作」的列名参数预归一化：把手写默认列名映射到当前表真实列。
+  // 只处理「列名类」参数（必须是已存在列）；枚举/文本/表达式参数保持引擎缺省。
+  function preNormalizeQuickParams(kind, p, cols) {
+    if (!cols || cols.length === 0) return p;
+    const has = function (v) { return v != null && cols.indexOf(v) !== -1; };
+    const c0 = cols[0];
+    const c1 = cols.length > 1 ? cols[1] : cols[0];
+    // swap / conditional / function / extract 的字段类参数缺省指向不存在列时，映射到前两实际列。
+    if (kind === 'swap') {
+      if (!has(p['字段A'])) p['字段A'] = c0;
+      if (!has(p['字段B'])) { const d = cols.filter(function (c) { return c !== p['字段A']; }); p['字段B'] = d.length ? d[0] : c1; }
+    } else if (kind === 'conditional') {
+      if (!has(p['目标列'])) { const d = cols.filter(function (c) { return c !== c0; }); p['目标列'] = d.length ? d[0] : c1; }
+      // 条件/值 交给引擎缺省（'工时 > 150' 等）；若表里条件仅涉及单列，仍可预览。
+    } else if (kind === 'function') {
+      if (!has(p['输出列'])) { const d = cols.filter(function (c) { return c !== c0; }); p['输出列'] = d.length ? d[0] : c1; }
+    } else if (kind === 'extract') {
+      if (!has(p['匹配列'])) p['匹配列'] = c0;
+      if (!has(p['写到'])) p['写到'] = c0;
+    }
+    return p;
+  }
+
   // 应用一个动作，返回视图模型（含 stage/draft/preview/buttons/note）。
   // action = { type, text?, kind?, params?, name? }
   function applyAction(file, table, action) {
@@ -171,6 +194,15 @@ function createSessionStore(opts) {
     // 在此统一归一化为大写（已是大小写正确的动作不受影响），作为 Host 侧唯一兜底口。
     const act = Object.assign({}, action || {});
     if (typeof act.type === 'string') act.type = act.type.toUpperCase();
+    // QUICK（面板「一键动作」按钮）：引擎在 reduce 内部立刻 preview+校验，用默认列名（部门/备注等）
+    // 落到真实表必失败，事后 normalizeDraft 已来不及（reduce 已 return guard）。故在 reduce **之前**
+    // 就把 params 的列名类参数按真实列预归一化，令一键动作也能在任意表上直接出预览。
+    if (act.type === 'QUICK' && act.kind) {
+      try {
+        const cols = (cur.columns || []).slice();
+        act.params = preNormalizeQuickParams(act.kind, Object.assign({}, act.params || {}), cols);
+      } catch (_) {}
+    }
     let next = E.reduce(cur, act);
     // Host 侧兜底：UNDERSTAND / QUICK 产出的草稿，若列名参数指向不存在的列，映射到真实列，
     // 令后续 PREVIEW 能在真实表上通过校验（否则默认列名 部门/备注 一定失败）。

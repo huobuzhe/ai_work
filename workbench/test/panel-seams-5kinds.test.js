@@ -20,7 +20,8 @@ const os = require('node:os');
 const { spawnSync } = require('node:child_process');
 
 const {
-  makeActionHandler, defaultReadTable, defaultApplyTable, defaultRecalc, collectSiblingSources
+  makeActionHandler, defaultReadTable, defaultApplyTable, defaultRecalc, collectSiblingSources,
+  loadSourcesForExtract, invalidateReadCache
 } = require('../lib/panel-bridge');
 const { createSessionStore } = require('../lib/panel-session');
 
@@ -60,6 +61,34 @@ function act(h, file, action) {
   return h({ method: 'POST', url: '/workbench-api/action', body: JSON.stringify({ file, action }) }).body;
 }
 
+// 面板「五动作一键化」回归：每个快捷按钮发 QUICK，须在任意真实表上直接出合法预览（PREVIEWED）。
+// 关键缺口：QUICK 在引擎 reduce 内部立刻 preview+校验，默认列名（部门/备注）落真实表必失败；
+// 修复：panel-session 在 QUICK 前按真实列预归一化 params（preNormalizeQuickParams），
+// 且 extract 的 QUICK 需在 handler 里同样挂 sources。此测试钉住五个动作全部直达 PREVIEWED。
+test('一键动作 QUICK：五动作在真实表上都能直接出合法预览（PREVIEWED）', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-quick5-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let file;
+  try {
+    file = makeTable(dir, {
+      primaryKey: '姓名',
+      columns: { 姓名: 'text', 工时: 'number', 时薪: 'number' }, name: '一键五动作',
+      rows: [
+        { 姓名: '阿岚', 工时: 160, 时薪: 80 },
+        { 姓名: '柏舟', 工时: 176, 时薪: 90 }
+      ]
+    });
+    // extract 需要同目录兄弟数据源
+    fs.writeFileSync(path.join(dir, '外勤登记表.csv'), '姓名,邮箱\n阿岚,a@x.com\n柏舟,b@x.com\n', 'utf8');
+  } catch (e) { t.skip('python/openpyxl 不可用：' + e.message); return; }
+  const h = makeHandler();
+  for (const kind of ['swap', 'conditional', 'function', 'dedupe', 'extract']) {
+    const v = act(h, file, { type: 'quick', kind });
+    assert.equal(v.stage, 'PREVIEWED', 'kind=' + kind + ' QUICK 应直达 PREVIEWED，实际 ' + v.stage + '：' + v.note);
+    assert.ok(v.preview, 'kind=' + kind + ' 应有 preview');
+  }
+});
+
 test('缺口A 修复：defaultReadTable 把同目录 CSV 读成 sources（extract 可用）', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-a-src-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -80,9 +109,13 @@ test('缺口A 修复：defaultReadTable 把同目录 CSV 读成 sources（extrac
   assert.deepEqual(srcs['外勤登记表.csv'].columns, ['姓名', '邮箱']);
   assert.equal(srcs['外勤登记表.csv'].rows.length, 2);
 
-  // readTable 结果应带 sources（引擎 extract 校验依赖它）
+  // readTable 本体（性能修复后）不再 eager 带 sources；兄弟源改由 loadSourcesForExtract 惰性加载。
   const tbl = defaultReadTable(main);
-  assert.ok(tbl.sources && tbl.sources['外勤登记表.csv'], 'readTable 应附 sources');
+  assert.equal(tbl.sources, undefined, 'defaultReadTable 默认不再 eager 附带 sources（性能修复）');
+  const lazySrcs = loadSourcesForExtract(main);
+  assert.ok(lazySrcs['外勤登记表.csv'], 'loadSourcesForExtract 应惰性加载到 外勤登记表.csv');
+  // 面板 action handler 内部会在 extract 场景自动补 sources；此处 invalidate 保证拿到最新
+  invalidateReadCache(main);
 
   // 端到端：extract 一句话 → 理解 → 预览（应通过）→ 确认 → 磁盘邮箱列被填入
   const h = makeHandler();
@@ -178,4 +211,34 @@ test('缺口C 修复：主键重复时按 rowIndex 精确写回，首个重复�
     disk.rows.map((r) => [r['姓名'], String(r['工时']), String(r['时薪'])]),
     [['阿岚', '80', '160'], ['柏舟', '90', '176'], ['阿岚', '50', '100']]
   );
+});
+
+test('性能修复：读表 TTL 缓存命中不重复 spawn；写盘后失效拿到最新值', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-cache-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let file;
+  try {
+    file = makeTable(dir, {
+      primaryKey: '姓名',
+      columns: { 姓名: 'text', 工时: 'number' }, name: '缓存表',
+      rows: [{ 姓名: '阿岚', 工时: 160 }]
+    });
+  } catch (e) { t.skip('python/openpyxl 不可用：' + e.message); return; }
+  invalidateReadCache(file);
+  // 第一次读（缓存未命中）
+  const a = defaultReadTable(file);
+  assert.equal(a.rows.length, 1);
+  // 第二次读：应命中缓存（引用同一对象，MS 级；不 spawn python）
+  const t0 = Date.now();
+  const b = defaultReadTable(file);
+  const cachedMs = Date.now() - t0;
+  assert.equal(b, a, '缓存命中应返回同一对象引用');
+  assert.ok(cachedMs < 50, '缓存命中应远快于 spawn（<50ms），实际 ' + cachedMs + 'ms');
+  // 外部改动后 invalidate，再读应拿到新值
+  const st = path.join(dir, 'st2.json');
+  fs.writeFileSync(st, JSON.stringify({ primaryKey: '姓名', columns: { 姓名: 'text', 工时: 'number' }, name: '缓存表', rows: [{ 姓名: '阿岚', 工时: 99 }] }), 'utf8');
+  py(['create', file, st]);
+  invalidateReadCache(file);
+  const c = defaultReadTable(file);
+  assert.equal(String(c.rows[0]['工时']), '99', 'invalidate 后应读到磁盘最新值');
 });
