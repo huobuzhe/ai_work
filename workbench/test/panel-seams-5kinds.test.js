@@ -89,6 +89,39 @@ test('一键动作 QUICK：五动作在真实表上都能直接出合法预览�
   }
 });
 
+// 语义落点回归：QUICK 不能盲目取前两列（那会把 swap 换到 姓名/部门、把 conditional/function/extract
+// 落到 姓名 列覆盖主键）。带「备注」列 + 数字列（工时/时薪）的真实表上，验证每个动作改的是「对的列」。
+test('一键动作 QUICK：语义落点正确（换数字列/写到备注列，不覆盖主键）', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-quick-sem-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let file;
+  try {
+    file = makeTable(dir, {
+      primaryKey: '姓名',
+      columns: { 姓名: 'text', 部门: 'text', 工时: 'number', 时薪: 'number', 备注: 'text' }, name: '语义落点',
+      rows: [
+        { 姓名: '阿岚', 部门: '销售', 工时: 160, 时薪: 80, 备注: '' },
+        { 姓名: '柏舟', 部门: '技术', 工时: 176, 时薪: 90, 备注: '' }
+      ]
+    });
+    fs.writeFileSync(path.join(dir, '外勤登记表.csv'), '姓名,邮箱\n阿岚,a@x.com\n柏舟,b@x.com\n', 'utf8');
+  } catch (e) { t.skip('python/openpyxl 不可用：' + e.message); return; }
+  const h = makeHandler();
+  const changedCols = (v) => {
+    const set = {};
+    (v.preview && v.preview.cells || []).forEach((c) => { set[c.col] = true; });
+    return Object.keys(set);
+  };
+  // swap：改的是 工时/时薪 两列，姓名/部门 不动
+  let v = act(h, file, { type: 'quick', kind: 'swap' });
+  let cols = changedCols(v).sort();
+  assert.deepEqual(cols, ['工时', '时薪'].sort(), 'swap 应对调 工时↔时薪，实际改 ' + cols.join(','));
+  // function：写到 备注 列（不覆盖姓名/工时/时薪）
+  v = act(h, file, { type: 'quick', kind: 'function' });
+  cols = changedCols(v);
+  assert.ok(cols.indexOf('备注') !== -1 && cols.indexOf('姓名') === -1, 'function 应写到备注列、不碰姓名，实际 ' + cols.join(','));
+});
+
 test('缺口A 修复：defaultReadTable 把同目录 CSV 读成 sources（extract 可用）', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-a-src-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

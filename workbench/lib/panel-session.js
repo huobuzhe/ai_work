@@ -162,23 +162,62 @@ function createSessionStore(opts) {
 
   // QUICK「一键动作」的列名参数预归一化：把手写默认列名映射到当前表真实列。
   // 只处理「列名类」参数（必须是已存在列）；枚举/文本/表达式参数保持引擎缺省。
-  function preNormalizeQuickParams(kind, p, cols) {
+  // 关键改进（#58 后续）：不能盲目取前两列——那会让 swap 换错列、conditional/function/extract 落到
+  // 姓名/部门等错列。这里按表头语义 + 实际数值类型做启发式：
+  //   · numericCols = 表里「看起来是数字」的列（列名含 工时/时薪/工资/数量/金额/价/额/数 或抽样值多为数字）
+  //   · textCols = 其余文本列
+  //   · 优先保证「写入类目标」落在文本列、「计算/对调」落在数字列，且尽量不覆盖主键列。
+  function preNormalizeQuickParams(kind, p, cols, rows, primaryKey) {
     if (!cols || cols.length === 0) return p;
     const has = function (v) { return v != null && cols.indexOf(v) !== -1; };
-    const c0 = cols[0];
-    const c1 = cols.length > 1 ? cols[1] : cols[0];
-    // swap / conditional / function / extract 的字段类参数缺省指向不存在列时，映射到前两实际列。
+    const pk = primaryKey || cols[0];
+    const NUMNAME = /工时|时薪|工资|薪|数量|金额|价|额|数|量|score|hour|wage|salary|amount|qty|count|price|total/i;
+    const isNumericCol = function (col) {
+      if (NUMNAME.test(String(col))) return true;
+      if (!Array.isArray(rows) || rows.length === 0) return false;
+      let num = 0, tot = 0;
+      for (const r of rows) {
+        const v = r && r[col];
+        if (v === '' || v == null) continue;
+        tot++;
+        if (typeof v === 'number' || /^-?\d+(\.\d+)?$/.test(String(v).trim())) num++;
+      }
+      return tot > 0 && num / tot >= 0.6;
+    };
+    const numericCols = cols.filter(isNumericCol);
+    const textCols = cols.filter(function (c) { return !isNumericCol(c); });
+    const nonPk = cols.filter(function (c) { return c !== pk; });
+    const nonPkNumeric = nonPk.filter(isNumericCol);
+    const pickWriteCol = function (cur) {
+      if (has(cur) && cur !== pk) return cur;
+      // 写入类：优先文本列（且非主键）；没有文本列则取非主键列；再不行取末列。
+      const cand = textCols.filter(function (c) { return c !== pk; });
+      if (cand.length) return cand[cand.length - 1]; // 最右文本列（常是「备注/说明」类空白列）
+      if (nonPk.length) return nonPk[nonPk.length - 1];
+      return cols[cols.length - 1];
+    };
     if (kind === 'swap') {
-      if (!has(p['字段A'])) p['字段A'] = c0;
-      if (!has(p['字段B'])) { const d = cols.filter(function (c) { return c !== p['字段A']; }); p['字段B'] = d.length ? d[0] : c1; }
+      // 对调两列：未指定有效列时，优先挑两个数字列（工时↔时薪）；不足两个数字列退回前两列。
+      const src = nonPkNumeric.length >= 2 ? nonPkNumeric : cols;
+      if (!has(p['字段A'])) p['字段A'] = src[0];
+      if (!has(p['字段B'])) { const d = src.filter(function (c) { return c !== p['字段A']; }); p['字段B'] = d.length ? d[0] : (src[1] || pk); }
     } else if (kind === 'conditional') {
-      if (!has(p['目标列'])) { const d = cols.filter(function (c) { return c !== c0; }); p['目标列'] = d.length ? d[0] : c1; }
-      // 条件/值 交给引擎缺省（'工时 > 150' 等）；若表里条件仅涉及单列，仍可预览。
+      // 条件改动：目标列默认落一个文本/备注列（标「加班」等），别覆盖主键。
+      if (!has(p['目标列']) || p['目标列'] === pk) p['目标列'] = pickWriteCol(p['目标列']);
+      // 条件保持引擎缺省（如 '工时 > 150'）；若表里无 工时 列，用首个数字列构造条件。
+      if (!has(p['条件']) && typeof p['条件'] === 'string' && numericCols.length && !numericCols.some(function (c) { return p['条件'].indexOf(c) !== -1; })) {
+        p['条件'] = numericCols[0] + ' > 0';
+      }
     } else if (kind === 'function') {
-      if (!has(p['输出列'])) { const d = cols.filter(function (c) { return c !== c0; }); p['输出列'] = d.length ? d[0] : c1; }
+      // 公式计算：输出列默认落一个文本/空白列（如「应发/备注」），别覆盖主键或参与计算的数字列。
+      if (!has(p['输出列']) || p['输出列'] === pk) p['输出列'] = pickWriteCol(p['输出列']);
+      // 表达式：若缺省且表里有 ≥2 个数字列，构造 数字列1*数字列2。
+      if (numericCols.length >= 2 && (!p['表达式'] || typeof p['表达式'] !== 'string')) {
+        p['表达式'] = numericCols[0] + ' * ' + numericCols[1];
+      }
     } else if (kind === 'extract') {
-      if (!has(p['匹配列'])) p['匹配列'] = c0;
-      if (!has(p['写到'])) p['写到'] = c0;
+      if (!has(p['匹配列'])) p['匹配列'] = pk; // 用主键做匹配列
+      if (!has(p['写到']) || p['写到'] === pk) p['写到'] = pickWriteCol(p['写到']);
     }
     return p;
   }
@@ -200,7 +239,9 @@ function createSessionStore(opts) {
     if (act.type === 'QUICK' && act.kind) {
       try {
         const cols = (cur.columns || []).slice();
-        act.params = preNormalizeQuickParams(act.kind, Object.assign({}, act.params || {}), cols);
+        const rows = (cur.rows || []).slice();
+        const pk = cur.primaryKey;
+        act.params = preNormalizeQuickParams(act.kind, Object.assign({}, act.params || {}), cols, rows, pk);
       } catch (_) {}
     }
     let next = E.reduce(cur, act);
