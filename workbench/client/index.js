@@ -354,9 +354,16 @@ function renderWorkbenchPanel(hostState) {
       cells.forEach(function (c) { if (c.rowIndex != null && c.col != null) cellMap[c.rowIndex + '|' + c.col] = c; });
       const CAP = 50;
       const shownRows = pvRows.slice(0, CAP);
-      const thStyle = { border: '1px solid #d0d0d0', padding: '3px 6px', background: '#f4f4f4', fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' };
-      const tdStyle = { border: '1px solid #e2e2e2', padding: '3px 6px', fontSize: 12, whiteSpace: 'nowrap' };
+      const thStyle = { border: '1px solid #d9d9d9', padding: '5px 9px', background: '#f5f6f7', fontSize: 12, fontWeight: 600, textAlign: 'left', whiteSpace: 'nowrap', color: '#303133' };
+      const tdStyle = { border: '1px solid #e6e6e6', padding: '5px 9px', fontSize: 12, whiteSpace: 'nowrap', color: '#303133' };
+      const tdNum = Object.assign({}, tdStyle, { textAlign: 'right', fontVariantNumeric: 'tabular-nums' });
       const tdChanged = Object.assign({}, tdStyle, { background: '#fff6e0', color: '#8a5a00', fontWeight: 'bold' });
+      // 数值单元格右对齐，让表格看起来像规整的数据表（数字列不乱）。
+      const colIsNumeric = pvCols.map(function (col) {
+        return pvRows.some(function (r) { return r && typeof r[col] === 'number'; }) ||
+          pvRows.some(function (r) { return r && r[col] != null && r[col] !== '' && isFinite(Number(r[col])) && String(r[col]).trim() !== '' && !isNaN(Number(r[col])) && /^[0-9.\-]+$/.test(String(r[col]).trim()); });
+      });
+      const cellTd = function (col, ci) { return colIsNumeric[ci] ? tdNum : tdStyle; };
       const head = jsxs('tr', { children: pvCols.map(function (col, ci) { return jsx('th', { style: thStyle, children: String(col) }, 'h' + ci); }) }, 'hrow');
       const bodyRows = shownRows.map(function (r, ri) {
         const tds = pvCols.map(function (col, ci) {
@@ -365,27 +372,32 @@ function renderWorkbenchPanel(hostState) {
           if (executed) {
             const cur = (r && r[col] != null) ? r[col] : '';
             const wasChanged = !!cellMap[ri + '|' + col];
-            const styleExec = wasChanged ? tdChanged : tdStyle;
+            const styleExec = wasChanged ? tdChanged : cellTd(col, ci);
             const props = wasChanged ? { 'data-wb-changed': String(ri) + '|' + col, style: styleExec, children: (cur != null) ? String(cur) : '' } : { style: styleExec, children: (cur != null) ? String(cur) : '' };
             return jsx('td', props, 'c' + ri + '_' + ci);
           }
           const ch = cellMap[ri + '|' + col];
           if (ch) {
             const afterVal = (pvAfter && pvAfter[ri] && pvAfter[ri][col] !== undefined) ? pvAfter[ri][col] : ch.after;
+            // 新增列（如 function 的「应发」）原表没有：before 是「（无此列）」之类的占位，
+            // 不必画「（无此列） → 值」这种长文本，直接显示新值即可（用户 m07024：表格别撑变形）。
+            const beforeStr = String(ch.before == null ? '' : ch.before);
+            const isNewCol = beforeStr === '（无此列）' || beforeStr === '(无此列)' || beforeStr === '';
+            const label = isNewCol ? String(afterVal) : (beforeStr + ' → ' + String(afterVal));
             return jsx('td', {
               'data-wb-changed': String(ri) + '|' + col,
               style: tdChanged,
-              children: String(ch.before) + ' → ' + String(afterVal)
+              children: label
             }, 'c' + ri + '_' + ci);
           }
           const plain = (r && r[col] != null) ? r[col] : '';
-          return jsx('td', { style: tdStyle, children: (plain != null) ? String(plain) : '' }, 'c' + ri + '_' + ci);
+          return jsx('td', { style: cellTd(col, ci), children: (plain != null) ? String(plain) : '' }, 'c' + ri + '_' + ci);
         });
         return jsx('tr', { children: tds }, 'r' + ri);
       });
       const tableEl = jsxs('table', {
         'data-workbench-table': '1',
-        style: { borderCollapse: 'collapse', fontSize: 12, width: '100%' },
+        style: { borderCollapse: 'collapse', fontSize: 12, width: 'auto', minWidth: '100%' },
         children: [jsx('thead', { children: head }, 'thead'), jsx('tbody', { children: bodyRows }, 'tbody')]
       }, 'impacttable');
       children.push(jsxs('div', {
@@ -420,18 +432,22 @@ function renderWorkbenchPanel(hostState) {
     const tbl = (hostState && hostState.table) ? hostState.table : null;
     let rendered = false;
     if (tbl && Array.isArray(tbl.columns) && tbl.columns.length > 0 && Array.isArray(tbl.rows) && tbl.rows.length > 0) {
-      const thStyle = { border: '1px solid #d0d0d0', padding: '3px 6px', background: '#f4f4f4', fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' };
-      const tdStyle = { border: '1px solid #e2e2e2', padding: '3px 6px', fontSize: 12, whiteSpace: 'nowrap' };
+      const thStyle = { border: '1px solid #d9d9d9', padding: '5px 9px', background: '#f5f6f7', fontSize: 12, fontWeight: 600, textAlign: 'left', whiteSpace: 'nowrap', color: '#303133' };
+      const tdStyle = { border: '1px solid #e6e6e6', padding: '5px 9px', fontSize: 12, whiteSpace: 'nowrap', color: '#303133' };
+      const tdNum = Object.assign({}, tdStyle, { textAlign: 'right', fontVariantNumeric: 'tabular-nums' });
+      const origColNum = tbl.columns.map(function (col) {
+        return tbl.rows.some(function (r) { return r && r[col] != null && r[col] !== '' && /^[0-9.\-]+$/.test(String(r[col]).trim()); });
+      });
       const head = jsxs('tr', { children: tbl.columns.map(function (col, ci) { return jsx('th', { style: thStyle, children: String(col) }, 'h' + ci); }) }, 'hrow');
       const bodyRows = tbl.rows.slice(0, 50).map(function (r, ri) {
         const tds = tbl.columns.map(function (col, ci) {
-          return jsx('td', { style: tdStyle, children: (r && r[col] != null) ? String(r[col]) : '' }, 'c' + ri + '_' + ci);
+          return jsx('td', { style: origColNum[ci] ? tdNum : tdStyle, children: (r && r[col] != null) ? String(r[col]) : '' }, 'c' + ri + '_' + ci);
         });
         return jsx('tr', { children: tds }, 'r' + ri);
       });
       children.push(jsxs('div', { 'data-workbench-orig-table': '1', style: { marginBottom: 8, maxHeight: 220, overflow: 'auto', border: '1px solid #eee' }, children: [
         jsxs('div', { style: { fontSize: 11, opacity: 0.65, margin: '2px 4px' }, children: '原始表格（尚未操作）' }, 'origlbl'),
-        jsxs('table', { 'data-workbench-table': 'orig', style: { borderCollapse: 'collapse', fontSize: 12, width: '100%' }, children: [
+        jsxs('table', { 'data-workbench-table': 'orig', style: { borderCollapse: 'collapse', fontSize: 12, width: 'auto', minWidth: '100%' }, children: [
           jsx('thead', { children: head }, 'thead'), jsx('tbody', { children: bodyRows }, 'tbody')
         ] }, 'origtable')
       ] }, 'origbox'));

@@ -292,7 +292,16 @@ function createSessionStore(opts) {
           }
         }
       } catch (_) { afterRows = null; }
-      preview = Object.assign({}, preview, { columns: columns, rows: rows, afterRows: afterRows });
+      // 若预览会新增列（如 function 的「应发」），这些列在原 columns 里没有 → 追加到展示列，
+      // 否则预览表格看不到新列、受影响的「新增格」也无处渲染（用户 m07024：公式结果列看不到）。
+      let previewColumns = columns.slice();
+      try {
+        const cells = Array.isArray(preview.cells) ? preview.cells : [];
+        for (const c of cells) {
+          if (c && c.col != null && previewColumns.indexOf(c.col) === -1) previewColumns.push(c.col);
+        }
+      } catch (_) {}
+      preview = Object.assign({}, preview, { columns: previewColumns, rows: rows, afterRows: afterRows });
     }
     // 用户 m06880：一打开（还没动作/IDLE）就要看到原始表格。无条件带上当前表 table{columns,rows}，
     // 供 client 在无预览时渲染原表。
