@@ -338,7 +338,11 @@ function renderWorkbenchPanel(hostState) {
   }
   // 用户 m06880：一打开（stage=IDLE，还没点任何动作）时，只显示原始表格，不显示默认草稿的「即将改」预览。
   // 一旦 UNDERSTOOD/PREVIEWED/EXECUTED 才进入预览分支。default 草稿在 IDLE 会自带 preview，需按 stage 拦掉。
+  // 用户 m08197：打开文件时 tab 面板一片空白——因为此前只渲染 position:fixed 浮层，面板自身的流式区域是空的。
+  // 现在把「表格」（原表 / 预览 / 执行后）渲染成面板内的**流式主区域**（填满 pane），浮窗按钮只作覆盖层浮在右下。
   const stageNow = (hostState && hostState.stage) || 'IDLE';
+  let mainTableEl = null;   // 主区域：当前阶段应显示的表格（原表/预览/执行后）
+  let summaryEl = null;     // 主区域顶部的说明/影响摘要行
   if (preview && stageNow !== 'IDLE') {
     const lines = [];
     if (preview.explanation) lines.push('解释：' + preview.explanation);
@@ -420,11 +424,11 @@ function renderWorkbenchPanel(hostState) {
         style: { borderCollapse: 'collapse', fontSize: 12, width: 'auto', minWidth: '100%' },
         children: [jsx('thead', { children: head }, 'thead'), jsx('tbody', { children: bodyRows }, 'tbody')]
       }, 'impacttable');
-      children.push(jsxs('div', {
+      mainTableEl = jsxs('div', {
         'data-workbench-cells': String(cells.length),
-        style: { marginBottom: 8, maxHeight: 220, overflow: 'auto', border: '1px solid #eee' },
+        style: { maxHeight: '100%', overflow: 'auto', border: '1px solid #eee', borderRadius: 6 },
         children: [tableEl]
-      }, 'cellbox'));
+      }, 'cellbox');
     } else if (cells.length > 0) {
       // 回退：没有整表信息时，退回逐格文字（旧行为）。
       const CAP = 20;
@@ -440,13 +444,13 @@ function renderWorkbenchPanel(hostState) {
       if (cells.length > CAP) {
         cellEls.push(jsx('div', { style: { opacity: 0.7, fontSize: 12 }, children: '还有 ' + (cells.length - CAP) + ' 个单元格会变……' }, 'cellmore'));
       }
-      children.push(jsxs('div', {
+      mainTableEl = jsxs('div', {
         'data-workbench-cells': String(cells.length),
-        style: { marginBottom: 8, maxHeight: 180, overflowY: 'auto' },
+        style: { maxHeight: '100%', overflowY: 'auto' },
         children: cellEls
-      }, 'cellbox'));
+      }, 'cellbox');
     }
-    children.push(jsxs('div', { 'data-workbench-preview': '1', style: { marginBottom: 8 }, children: lineEls }, 'pv'));
+    summaryEl = jsxs('div', { 'data-workbench-preview': '1', style: { marginBottom: 8 }, children: lineEls }, 'pv');
   } else {
     // 用户 m06880：还没动作/IDLE 时，直接显示原始表格（不再只显示「暂无预览」）。
     const tbl = (hostState && hostState.table) ? hostState.table : null;
@@ -459,21 +463,21 @@ function renderWorkbenchPanel(hostState) {
         return tbl.rows.some(function (r) { return r && r[col] != null && r[col] !== '' && /^[0-9.\-]+$/.test(String(r[col]).trim()); });
       });
       const head = jsxs('tr', { children: tbl.columns.map(function (col, ci) { return jsx('th', { style: thStyle, children: String(col) }, 'h' + ci); }) }, 'hrow');
-      const bodyRows = tbl.rows.slice(0, 50).map(function (r, ri) {
+      const bodyRows = tbl.rows.slice(0, 200).map(function (r, ri) {
         const tds = tbl.columns.map(function (col, ci) {
           return jsx('td', { style: origColNum[ci] ? tdNum : tdStyle, children: (r && r[col] != null) ? String(r[col]) : '' }, 'c' + ri + '_' + ci);
         });
         return jsx('tr', { children: tds }, 'r' + ri);
       });
-      children.push(jsxs('div', { 'data-workbench-orig-table': '1', style: { marginBottom: 8, maxHeight: 220, overflow: 'auto', border: '1px solid #eee' }, children: [
+      mainTableEl = jsxs('div', { 'data-workbench-orig-table': '1', style: { maxHeight: '100%', overflow: 'auto', border: '1px solid #eee', borderRadius: 6 }, children: [
         jsxs('div', { style: { fontSize: 11, opacity: 0.65, margin: '2px 4px' }, children: '原始表格（尚未操作）' }, 'origlbl'),
         jsxs('table', { 'data-workbench-table': 'orig', style: { borderCollapse: 'collapse', fontSize: 12, width: 'auto', minWidth: '100%' }, children: [
           jsx('thead', { children: head }, 'thead'), jsx('tbody', { children: bodyRows }, 'tbody')
         ] }, 'origtable')
-      ] }, 'origbox'));
+      ] }, 'origbox');
       rendered = true;
     }
-    children.push(jsx('div', { 'data-workbench-preview': 'empty', style: { opacity: 0.7 }, children: rendered ? '' : '暂无预览。' }, 'pvempty'));
+    summaryEl = jsx('div', { 'data-workbench-preview': 'empty', style: { opacity: 0.7 }, children: rendered ? '' : '暂无预览。' }, 'pvempty');
   }
   if (library && library.total > 0) {
     // 票 #43：按钮库渲染成真正可点击的 <button>，每个按钮绑定 onClick。
@@ -617,12 +621,24 @@ function renderWorkbenchPanel(hostState) {
     }
     children.push(jsxs('div', { 'data-wb-newtable': '1', style: { marginTop: 12, paddingTop: 8, borderTop: '1px solid #eee' }, children: ntChildren }, 'newtable'));
   }
-  // ── 浮窗外壳 ──────────────────────────────────────────────────────────────
+  // ── 面板主区域（流式，填满 pane）+ 浮层按钮 ────────────────────────────────
+  // 用户 m08197：「打开文件还是原来的 Excel 表，里面有个浮窗」——即打开 xlsx 后 pane 里应直接
+  // 显示这张表的网格（原表/预览/执行后），而不是空白；浮窗只是右下角一个按钮，点了才展开功能面板。
+  // 因此：主区域 = 当前阶段的表格（流式、可滚动、填满 pane）；浮窗按钮/面板 = position:fixed 覆盖层。
+  const mainPane = jsx('div', {
+    'data-workbench-main': '1',
+    style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', padding: 10, boxSizing: 'border-box', background: '#fff', overflow: 'hidden', fontFamily: 'inherit', fontSize: 13, color: '#1f2328' },
+    children: [
+      summaryEl ? jsx('div', { style: { flex: '0 0 auto', marginBottom: 6 }, children: summaryEl }, 'msum') : null,
+      jsx('div', { style: { flex: '1 1 auto', minHeight: 0, overflow: 'auto' }, children: mainTableEl || jsx('div', { style: { opacity: 0.6, padding: 12 }, children: '暂无数据。' }, 'mnodata') }, 'mtbl')
+    ].filter(Boolean)
+  }, 'main');
+  // 浮窗外壳 ──────────────────────────────────────────────────────────────
   // 需求（用户 m06260）：打开 Excel 时原表**不被遮挡**，只在表格上方浮一个小按钮；
   // 点按钮才弹出小型「表格工作台」浮窗（含功能按钮），预览显示修改后数据，执行写入真实数据。
-  // 实现：本 slot body 只渲染 position:fixed 的悬浮元素（不占侧栏流式布局），
-  // 完全不碰宿主 Excel 表格 DOM。fabOpen 由 WorkbenchPanelBody 的 React state 控制。
-  const fabOpen = hostState && hostState.fabOpen !== false; // 非渲染上下文默认展开（护测可断言内容）
+  // 实现：主区域表格填满 pane（上面 mainPane），浮窗按钮/面板用 position:fixed 覆盖层浮于其上，
+  // 不占 pane 流式布局。fabOpen 由 WorkbenchPanelBody 的 React state 控制（默认收起，只露按钮）。
+  const fabOpen = hostState && hostState.fabOpen === true; // 默认收起：打开文件只看到浮窗按钮，点开才展开功能面板
   const onToggleFab = hostState && typeof hostState.onToggleFab === 'function' ? hostState.onToggleFab : function () {};
   const onCloseFab = hostState && typeof hostState.onCloseFab === 'function' ? hostState.onCloseFab : onToggleFab;
 
@@ -708,8 +724,9 @@ function renderWorkbenchPanel(hostState) {
     ]
   }, 'panel');
 
-  // 收起态也把面板保留在树里（display:none），所以这里总是渲染 fab + panel。
-  return jsxs('div', { 'data-workbench-fab-root': '1', children: [fab, panel] }, 'fabroot');
+  // 根节点：position:relative 以便流式主区域用 absolute inset:0 填满 pane；浮窗按钮/面板仍 fixed 覆盖。
+  // 收起态也把面板保留在树里（display:none），所以这里总是渲染 main + fab + panel。
+  return jsxs('div', { 'data-workbench-fab-root': '1', style: { position: 'relative', width: '100%', height: '100%' }, children: [mainPane, fab, panel] }, 'fabroot');
 }
 
 function apply(ctx) {
@@ -879,10 +896,9 @@ function registerWorkbenchPanel(ctx) {
           var inputText = '', setInputText = function () {};
           var actionState = null, setActionState = function () {};
           var actionBusy = false, setActionBusy = function () {};
-          // 浮窗开合状态：默认**展开**（用户 m07859：打开 Excel 要直接看到原表，而不是一片空白）。
-          // 浮窗是 position:fixed 覆盖层，展开也不改动 Excel 本身布局；用户可点 ✕ 收起只剩悬浮球。
-          // 护栏测试非渲染上下文拿不到 hooks → fabOpen 默认 true，保证面板内容仍在树里可断言。
-          var fabOpen = true, setFabOpen = function () {};
+          // 浮窗开合状态：默认**收起**（用户 m08197：打开文件先看到原表本身，只露一个浮窗按钮；
+          // 点按钮才展开功能面板）。护栏测试非渲染上下文默认 false 亦无害（面板内容仍留在树里 display:none）。
+          var fabOpen = false, setFabOpen = function () {};
           var hooksOk = false;
           try {
             if (React && typeof React.useState === 'function') {
@@ -892,7 +908,7 @@ function registerWorkbenchPanel(ctx) {
               actionState = actTuple[0]; setActionState = actTuple[1];
               var busyTuple = React.useState(false);
               actionBusy = busyTuple[0]; setActionBusy = busyTuple[1];
-              var fabTuple = React.useState(true);
+              var fabTuple = React.useState(false);
               fabOpen = fabTuple[0]; setFabOpen = fabTuple[1];
               hooksOk = true;
             }

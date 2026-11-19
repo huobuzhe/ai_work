@@ -184,14 +184,22 @@ for (const kind of ACTIONS) {
     await waitTick(0);
     shim.beginRender(); tree = body(mkProps()); shim.finishRender();
 
-    // IDLE：应显示原始表格（data-workbench-orig-table），且不含 before→after 箭头行。
+    // 用户 m08197：打开文件时 tab 面板应直接显示原表（流式主区域 data-workbench-main 里含原表），
+    // 浮窗按钮只作覆盖层（默认收起，点开才展开功能面板），pane 不再空白。
     const idleText = textOf(tree).join(' ');
+    assert.ok(findByAttr(tree, 'data-workbench-main', '1'), kind + ': 应有流式主区域 data-workbench-main（不再空白）');
     assert.ok(findByAttr(tree, 'data-workbench-orig-table', '1'), kind + ': IDLE 应渲染原始表格');
     assert.doesNotMatch(idleText, /→/, kind + ': IDLE 不应出现 before→after 箭头');
-    // 用户 m07859：打开文件默认**展开**浮窗面板直接显示原表（不再是一片空白）。
     const idlePanel = findByAttr(tree, 'data-workbench-panel', '1');
     assert.ok(idlePanel, kind + ': 应有浮窗面板');
-    assert.notEqual(idlePanel.props.style.display, 'none', kind + ': 打开时浮窗面板默认应展开（display≠none）');
+    assert.equal(idlePanel.props.style.display, 'none', kind + ': 打开时浮窗默认收起（只露浮窗按钮，原表在流式主区域）');
+    // 点浮窗按钮应展开面板
+    const idleFab = findByAttr(tree, 'data-wb-fab', '1');
+    assert.ok(idleFab && idleFab.props.onClick, kind + ': 应有浮窗按钮 data-wb-fab');
+    idleFab.props.onClick({ preventDefault() {} });
+    shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+    const openPanel = findByAttr(tree, 'data-workbench-panel', '1');
+    assert.notEqual(openPanel.props.style.display, 'none', kind + ': 点浮窗按钮后面板应展开');
 
     // 点 QUICK 一键动作
     const qbtn = findByAttr(tree, 'data-wb-quick', kind);
