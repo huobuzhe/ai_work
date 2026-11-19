@@ -1060,25 +1060,40 @@ function registerWorkbenchPanel(ctx) {
             if (!String(columns || '').trim()) { setCreatedNotice('新建失败：请填写列名（逗号分隔）'); return; }
             doCreate({ mode: 'blank', name: (name || '').trim() || undefined, columns: columns }, '新建表格');
           };
-          return renderWorkbenchPanel(Object.assign({}, effective, {
-            onButtonClick: onClick,
-            onButtonAction: onButtonAction,
-            inputText: inputText,
-            onInput: function (v) { try { setInputText(v); } catch (_) {} },
-            onAction: runAction,
-            actionBusy: actionBusy,
-            fabOpen: fabOpen,
-            onToggleFab: function () { try { setFabOpen(!fabOpen); } catch (_) {} },
-            onCloseFab: function () { try { setFabOpen(false); } catch (_) {} },
-            templates: templates,
-            onCreate: onCreate,
-            onCreateBlank: onCreateBlank,
-            blankName: blankName,
-            blankColumns: blankColumns,
-            onBlankName: function (v) { try { setBlankName(v); } catch (_) {} },
-            onBlankColumns: function (v) { try { setBlankColumns(v); } catch (_) {} },
-            createdNotice: createdNotice
-          }));
+          try {
+            return renderWorkbenchPanel(Object.assign({}, effective, {
+              onButtonClick: onClick,
+              onButtonAction: onButtonAction,
+              inputText: inputText,
+              onInput: function (v) { try { setInputText(v); } catch (_) {} },
+              onAction: runAction,
+              actionBusy: actionBusy,
+              fabOpen: fabOpen,
+              onToggleFab: function () { try { setFabOpen(!fabOpen); } catch (_) {} },
+              onCloseFab: function () { try { setFabOpen(false); } catch (_) {} },
+              templates: templates,
+              onCreate: onCreate,
+              onCreateBlank: onCreateBlank,
+              blankName: blankName,
+              blankColumns: blankColumns,
+              onBlankName: function (v) { try { setBlankName(v); } catch (_) {} },
+              onBlankColumns: function (v) { try { setBlankColumns(v); } catch (_) {} },
+              createdNotice: createdNotice
+            }));
+          } catch (renderErr) {
+            // 上线健壮性兜底：面板渲染期任何意外异常都不得冒泡击穿宿主视图。
+            // 返回一个最小合法 React 元素（仅一个可点开的悬浮按钮），保证宿主不崩、用户不白屏。
+            try {
+              var rt2 = require('react/jsx-runtime');
+              var msg = (renderErr && renderErr.message) || String(renderErr);
+              return rt2.jsx('button', {
+                type: 'button', 'data-wb-fab': '1', 'data-workbench-error-fallback': '1',
+                title: '表格工作台（渲染异常：' + msg + '）',
+                style: { position: 'fixed', right: 24, bottom: 24, zIndex: 2147482000, width: 56, height: 56, borderRadius: '50%', border: 'none', background: '#ef4444', color: '#fff', fontSize: 20, cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.28)' },
+                children: '⚠'
+              }, 'fabfallback');
+            } catch (_) { return null; }
+          }
         }
       );
       return d;
