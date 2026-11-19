@@ -712,7 +712,7 @@ function renderWorkbenchPanel(hostState) {
         'data-wb-newblank-btn': '1',
         onClick: function (ev) {
           try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
-          try { onCreateBlank(blankName, blankColumns); } catch (_) {}
+          try { onCreateBlank(blankName, blankColumns, hostState && hostState.blankPrimaryKey); } catch (_) {}
         },
         style: { padding: '5px 11px', borderRadius: 8, border: '1px solid #2563eb', background: '#2563eb', color: '#fff', fontSize: 12, fontWeight: 500, cursor: 'pointer', marginLeft: 6 },
         children: '新建空白表'
@@ -724,12 +724,19 @@ function renderWorkbenchPanel(hostState) {
         style: Object.assign({}, ntInputStyle, { width: 90, marginRight: 4 })
       }, 'ntbn');
       const colInput = jsx('input', {
-        type: 'text', 'data-wb-newblank-columns': '1', placeholder: '列名，逗号分隔（首列作主键）', value: blankColumns,
+        type: 'text', 'data-wb-newblank-columns': '1', placeholder: '列名，逗号分隔（如 姓名,部门,工时）', value: blankColumns,
         onChange: function (ev) { try { hostState.onBlankColumns && hostState.onBlankColumns(ev.target.value); } catch (_) {} },
-        style: Object.assign({}, ntInputStyle, { width: 180 })
+        style: Object.assign({}, ntInputStyle, { width: 170, marginRight: 4 })
       }, 'ntbc');
+      // 主键选择（更灵活：不再固定首列作主键，可指定任意一列）。留空则默认首列。
+      const pkInput = jsx('input', {
+        type: 'text', 'data-wb-newblank-pk': '1', placeholder: '主键列（默认首列）',
+        value: (hostState && hostState.blankPrimaryKey) || '',
+        onChange: function (ev) { try { hostState.onBlankPrimaryKey && hostState.onBlankPrimaryKey(ev.target.value); } catch (_) {} },
+        style: Object.assign({}, ntInputStyle, { width: 110 })
+      }, 'ntbpk');
       ntChildren.push(jsx('div', { style: { fontSize: 11, opacity: 0.6, margin: '6px 0 2px' }, children: '空白表' }, 'ntblbl'));
-      ntChildren.push(jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }, children: [nameInput, colInput, btn] }, 'ntblankrow'));
+      ntChildren.push(jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }, children: [nameInput, colInput, pkInput, btn] }, 'ntblankrow'));
     }
     if (hostState && hostState.createdNotice) {
       ntChildren.push(jsx('div', { 'data-wb-created': '1', style: { color: '#0a7', fontSize: 12, marginTop: 4 }, children: hostState.createdNotice }, 'ntok'));
@@ -1141,6 +1148,7 @@ function registerWorkbenchPanel(ctx) {
           var blankColumns = '', setBlankColumns = function () {};
           var activeKind = '', setActiveKind = function () {};
           var formValues = {}, setFormValues = function () {};
+          var blankPrimaryKey = '', setBlankPrimaryKey = function () {};
           if (hooksOk) {
             try {
               var tplTuple = React.useState([]);
@@ -1156,6 +1164,8 @@ function registerWorkbenchPanel(ctx) {
               activeKind = akTuple[0]; setActiveKind = akTuple[1];
               var fvTuple = React.useState({});
               formValues = fvTuple[0]; setFormValues = fvTuple[1];
+              var bpkTuple = React.useState('');
+              blankPrimaryKey = bpkTuple[0]; setBlankPrimaryKey = bpkTuple[1];
               React.useEffect(function () {
                 var alive = true;
                 try {
@@ -1189,9 +1199,9 @@ function registerWorkbenchPanel(ctx) {
           var onCreate = function (templateName) {
             doCreate({ mode: 'template', template: templateName }, templateName);
           };
-          var onCreateBlank = function (name, columns) {
+          var onCreateBlank = function (name, columns, primaryKey) {
             if (!String(columns || '').trim()) { setCreatedNotice('新建失败：请填写列名（逗号分隔）'); return; }
-            doCreate({ mode: 'blank', name: (name || '').trim() || undefined, columns: columns }, '新建表格');
+            doCreate({ mode: 'blank', name: (name || '').trim() || undefined, columns: columns, primaryKey: (primaryKey && String(primaryKey).trim()) || undefined }, '新建表格');
           };
           // 通用动作配置表单回调：选动作→初始化字段值；改字段；按当前字段值发 QUICK 预览。
           var onPickKind = function (kind) {
@@ -1237,6 +1247,8 @@ function registerWorkbenchPanel(ctx) {
               blankColumns: blankColumns,
               onBlankName: function (v) { try { setBlankName(v); } catch (_) {} },
               onBlankColumns: function (v) { try { setBlankColumns(v); } catch (_) {} },
+              blankPrimaryKey: blankPrimaryKey,
+              onBlankPrimaryKey: function (v) { try { setBlankPrimaryKey(v); } catch (_) {} },
               createdNotice: createdNotice,
               activeKind: activeKind,
               formValues: formValues,
