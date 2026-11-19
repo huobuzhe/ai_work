@@ -1,6 +1,6 @@
 # 交付账本（Delivery Ledger）
 
-> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段，2026-11-19 补记「第二波 #41–#54 + #55」段，2026-11-19 补记「#45 source=default 投影修复 + GUI 闭环验证」，2026-11-19 补记「第三波 #56 真实面板闭环三个致命 bug 修复」。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
+> 快照时间：2026-11-17（Asia/Shanghai），2026-11-18 补记「交付后增量」段，2026-11-19 补记「第二波 #41–#54 + #55」段，2026-11-19 补记「#45 source=default 投影修复 + GUI 闭环验证」，2026-11-19 补记「第三波 #56 真实面板闭环三个致命 bug 修复」，2026-11-19 补记「第四波 #57 接缝缺口 / 第五波 #58 延迟修复+浮窗重构 / 第六波 #61 影响行数按行去重 + 五动作实机 e2e + #62 浮窗美化」。来源：GitHub issue tracker `huobuzhe/ai_work` + 本地 `git log`。
 > 用途：两个 effort 收官后的最终清单与唯一 backlog，供后续会话/接手人直接查阅，不必重跑清点。
 
 ## 全局状态
@@ -185,6 +185,16 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 **回归测试**：`test/panel-projection.test.js` 加 3 例浮窗外壳结构（始终有 position:fixed 悬浮按钮 / 收起态面板 display:none 且在树里 / 展开态 display:flex）；`test/panel-seams-5kinds.test.js` 加 2 例（读表 TTL 缓存命中不重复 spawn + 写盘失效拿最新值 / QUICK 五动作在真实表上均直达 PREVIEWED）。
 
 **测试基线（2026-11-19，#58）**：`npm test` 441 tests / 420 pass / 0 fail / 21 skipped；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：3b63c3d（面板延迟缓存 + 浮窗 UI + 五动作一键化）。
+
+## 交付后增量（第六波：影响行数按行去重 + 五动作实机 e2e 固化 + 浮窗 FAB 美化，#61/#62，2026-11-19 补记）
+
+用户 m07263（AFK）要求：打开 Excel 原表原样、只多一个不遮挡的浮窗按钮并优化美化；自己实机跑通全部功能自解问题；完成地图探索；整体美化到可上线。
+
+- **#61 影响行数按行去重（`5f52068`）**：`lib/engine.js` 的 `affectedRows` 原用主键值字符串 `c.row` 做去重键 `rowSet[c.row]=true`，**重复主键会把两行塌成一行、少报影响行数**（预览显示"影响 1 行"但磁盘实变 2 行；swap 在带重复姓名的表上可用磁盘实证两行都对调、仅计数错）。修复：`rowSet` 键优先用 `rowIndex`（`'#'+c.rowIndex`，重复主键也能区分），无 `rowIndex` 时回落主键值（`'k:'+c.row`，向后兼容）。
+- **五动作实机 e2e 固化（`test/panel-multi-action.test.js`，随 `5f52068`）**：迷你 React 垫片跑**真实 `client/index.js`** + **真实 `makeActionHandler`**（真实 panel-session 状态机 + 真实引擎 + 真实 `xlsx_bridge.py` 建表/写盘/读回），对 extract/swap/conditional/function/dedupe 各驱动一遍「IDLE 原始表格 → 点一键动作出预览 → 确认执行写盘」，断言三态 DOM 结构（IDLE 有 `data-workbench-orig-table` 无箭头 / PREVIEW 有箭头 / EXECUTED 保留 `data-wb-changed` 无箭头）并逐格读盘核对；并用重复主键（两个"阿岚"）表断言 swap 影响 **4 行**（旧 bug 会少报成 3 行）。建 fixture 用真 python `create(mode=upload)`，外勤登记表.csv 供 extract。
+- **#62 浮窗 FAB/面板美化（`6f24905`）**：① FAB `data-wb-fab` 由纯色 emoji 改为**品牌蓝渐变圆钮（56×56）+ 内联 SVG 图标**（去掉跨平台不一致的 ⚙ emoji）+ 双层柔和投影 + hover 上浮微动效；② 面板 `data-workbench-panel` 改**渐变标题栏**（含状态指示点 + 圆形收起钮 ✕）、精致圆角 14/描边/大投影、内容区留白；③ 去掉正文里与标题栏重复的『表格工作台』标题（改为无障碍隐藏占位，保 `body-react-element`/`render-children`/`panel-data-pipeline`/`click-loop` 等测试仍能查到字样）。纯视觉改动，`data-*` 契约与三态渲染逻辑不变。
+
+**测试基线（2026-11-19，#61/#62）**：`npm test` 453 tests / 432 pass / 0 fail / 21 skipped（+5 为五动作实机 e2e）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：`5f52068`（affectedRows + 五动作 e2e）、`6f24905`（FAB/面板美化）。
 
 ## 边界与已知瑕疵（接手须知）
 
