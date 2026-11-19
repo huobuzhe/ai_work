@@ -168,10 +168,11 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 - **缺口 A — extract 在真实面板不可用（来源文件永远校验失败）**：`lib/panel-bridge.js::defaultReadTable` 此前只回 `{columns,rows}`、**不产出 `sources`**；而 `lib/index.mjs:68/72` 建 handler 时未覆盖 `readTable` → 引擎 `extract` 的跨表检查（`lib/engine.js:737` `state.sources[来源文件]` 必须存在）永远报「来源文件不在声明式数据源里」。修复：新增 `collectSiblingSources(file)`，`defaultReadTable` 把主表**同目录**下的 `.csv`/`.xlsx` 兄弟文件读成 `sources[文件名]={columns,rows}`（默认约定：extract 的「来源文件」即同目录兄弟文件，如 `外勤登记表.csv`）。
 - **缺口 B — function 确认后数值读回为空（未重算）**：`xlsx_bridge.py apply` 只把公式字符串（`=B2*C2`）写进单元格、**不计算**；而 `defaultReadTable`/`read-values` 用 `data_only=True` 读**缓存值**，新写公式无缓存 → 「应发」列读回为空（看似没算，实际公式已正确落盘）。`acceptance:formula` 能过是因为它**额外**调了 bundled LibreOffice Kit 重算，真实面板 confirm 走 `defaultApplyTable` 少了这一步。修复：新增 `defaultRecalc(file)`（调 bundled LibreOffice Kit `recalculate`，因 Kit 要求输入/输出路径不同，先算到临时文件再 `copyFileSync` 回写），`makeActionHandler` 在**写出的单元格含公式**（`after` 以 `=` 开头）时就地重算；`recalcOk`/`recalcError` 随响应回传。
+- **缺口 C — 主键重复时写错行（五动作 e2e 用带重复姓名表时暴露，是既有 bug 非 #57 引入）**：`scripts/xlsx_bridge.py::apply` 建 `row_of` 按主键值索引，重复主键只留**最后一次出现** → 写回全落到那一行、首个重复行永远改不到（swap/conditional/function/extract 在含重复姓名的表上均错一行）。引擎 `lib/engine.js:882-884` 本就在 `preview.cells` 里带 `rowIndex`（该物理行下标）专为此设计，但桥此前忽略。修复：`apply` 优先用 `cell['rowIndex']`（Excel 行号 = rowIndex+2）精确定位，无 rowIndex 时回落主键值定位（向后兼容）。
 
-**回归测试**：`test/panel-seams-5kinds.test.js`（3 例，真 python 桥 + 真 LibreOffice）——① defaultReadTable 把同目录 CSV 读成 sources 且 extract 全链写盘正确；② function 预览产物为公式字符串、confirm 后 `recalcOk:true` 且应发读回=工时×时薪；③ swap 等纯值动作不触发重算。
+**回归测试**：`test/panel-seams-5kinds.test.js`（4 例，真 python 桥 + 真 LibreOffice）——① defaultReadTable 把同目录 CSV 读成 sources 且 extract 全链写盘正确；② function 预览产物为公式字符串、confirm 后 `recalcOk:true` 且应发读回=工时×时薪；③ swap 等纯值动作不触发重算；④ 主键重复时按 rowIndex 精确写回、首个重复行也被改到（缺口 C 回归）。
 
-**测试基线（2026-11-19，#57）**：`npm test` 435 tests / 414 pass / 0 fail / 21 skipped（+3 为 #57 接缝回归，含真 LibreOffice 重算用例）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：见下方「第四波」commit（panel-bridge 接缝修复 + panel-seams-5kinds 测试）。
+**测试基线（2026-11-19，#57）**：`npm test` 436 tests / 415 pass / 0 fail / 21 skipped（+4 为 #57 接缝回归，含真 LibreOffice 重算用例）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：见下方「第四波」commit（panel-bridge 接缝修复 + xlsx_bridge rowIndex 修复 + panel-seams-5kinds 测试）。
 
 ## 边界与已知瑕疵（接手须知）
 

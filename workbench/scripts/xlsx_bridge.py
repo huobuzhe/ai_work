@@ -82,12 +82,22 @@ def apply(path, cells_json):
     for ri in range(2, ws.max_row + 1):
         v = ws.cell(row=ri, column=pk_col).value
         if v is not None: row_of[str(v)] = ri
+    # 主键可能重复：row_of 只留最后一次出现，写回会全部落到那最后一行、首个重复行永远改不到。
+    # 引擎的 preview.cells 已带 rowIndex（该行在 state.rows 里的下标，对应表体数据行 0-based），
+    # 优先用它精确定位物理行（Excel 行号 = rowIndex + 2：+1 跳表头、+1 转 1-based）。
+    # 无 rowIndex（旧调用/非引擎产物）时回落按主键值定位，保持向后兼容。
     for c in cells:
         col = c['col']
         if col not in header:
             header.append(col); ws.cell(row=1, column=len(header), value=col)
         ci = header.index(col) + 1
-        ri = row_of.get(str(c['row']))
+        ri = None
+        if c.get('rowIndex') is not None:
+            ri = int(c['rowIndex']) + 2
+            if ri < 2 or ri > ws.max_row + 1:
+                ri = None
+        if ri is None:
+            ri = row_of.get(str(c['row']))
         if ri is None: continue
         ws.cell(row=ri, column=ci, value=c['after'])
     wb.save(path); print('OK')

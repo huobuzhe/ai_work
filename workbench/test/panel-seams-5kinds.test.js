@@ -150,3 +150,32 @@ test('无公式时不触发重算（swap 等纯值动作 recalcOk 为 undefined�
   assert.equal(c.writtenOk, true);
   assert.equal(c.recalcOk, undefined, '纯值动作不该触发重算');
 });
+
+test('缺口C 修复：主键重复时按 rowIndex 精确写回，首个重复行也被改到', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-dup-pk-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  let file;
+  try {
+    file = makeTable(dir, {
+      primaryKey: '姓名',
+      columns: { 姓名: 'text', 工时: 'number', 时薪: 'number' }, name: '重复主键',
+      rows: [
+        { 姓名: '阿岚', 工时: 160, 时薪: 80 },
+        { 姓名: '柏舟', 工时: 176, 时薪: 90 },
+        { 姓名: '阿岚', 工时: 100, 时薪: 50 }   // 重复主键：旧 apply 会把两次写都落到这一行
+      ]
+    });
+  } catch (e) { t.skip('python/openpyxl 不可用：' + e.message); return; }
+  const h = makeHandler();
+  act(h, file, { type: 'understand', text: '对调工时和时薪两列' });
+  let v = act(h, file, { type: 'preview' });
+  assert.equal(v.stage, 'PREVIEWED', 'swap 预览应通过：' + v.note);
+  const c = act(h, file, { type: 'confirm' });
+  assert.equal(c.writtenOk, true);
+  // 三行都应被对调（旧实现下第一个 阿岚 行不会被改到）
+  const disk = pyReadValues(file);
+  assert.deepEqual(
+    disk.rows.map((r) => [r['姓名'], String(r['工时']), String(r['时薪'])]),
+    [['阿岚', '80', '160'], ['柏舟', '90', '176'], ['阿岚', '50', '100']]
+  );
+});
