@@ -66,6 +66,27 @@ const KINDS = {
     paramSpec: [
       { key: '保留策略', 类型: '枚举', 必填: true, 默认值: '首条', 约束: { enum: ['首条', '末条'] } }
     ]
+  },
+  // ⑥ replace（日常常用）：把某列中的「查找文本」替换成「替换为」。
+  // 语义：在 scope 范围内逐行对目标列做子串替换；查找为空时按「整列赋值为替换值」处理（便于批量改）。
+  replace: {
+    label: '⑥ 文本替换', short: '文本替换',
+    medium: '结构化动作：把一列里的某段文字替换成另一段',
+    paramSpec: [
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '部门', 约束: { mustExist: true } },
+      { key: '查找', 类型: 'text', 必填: false, 默认值: '' },
+      { key: '替换为', 类型: 'text', 必填: false, 默认值: '' }
+    ]
+  },
+  // ⑦ fill（日常常用）：把某列的空单元格填上一个值（scope 范围内）。
+  // 语义：目标列在该行为空/仅空白时，写入「填充值」；已有值不动（只看空、不覆盖）。
+  fill: {
+    label: '⑦ 空值填充', short: '空值填充',
+    medium: '结构化动作：把一列里的空单元格填上默认值',
+    paramSpec: [
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '备注', 约束: { newColumn: true } },
+      { key: '填充值', 类型: 'text', 必填: true, 默认值: '待补' }
+    ]
   }
 };
 
@@ -655,6 +676,16 @@ function stepsFor(kind, p) {
     '按主键把记录分组',
     '每组只保留「' + p.保留策略 + '」，其余重复组的可见列清空'
   ];
+  if (kind === 'replace') return [
+    scopeStep,
+    '在「' + p.目标列 + '」列里查找「' + (p.查找 || '') + '」',
+    '替换成「' + (p.替换为 || '') + '」后写回' + (p.查找 ? '（子串替换）' : '（整列赋值）')
+  ];
+  if (kind === 'fill') return [
+    scopeStep,
+    '在「' + p.目标列 + '」列里找空单元格',
+    '把空的填成「' + p.填充值 + '」，已有值不动'
+  ];
   return [];
 }
 function explanationFor(kind, p, sentence) {
@@ -995,6 +1026,26 @@ function preview(state, draft) {
         if (col === pk) return;
         add(r, col, beforeOf(state, r, col), '', false, 'dedupe');
       });
+    });
+  } else if (draft.kind === 'replace') {
+    // ⑥ 文本替换：在「目标列」里把「查找」子串替换成「替换为」；查找为空时整列赋值为替换值。
+    state.rows.forEach(function (r) {
+      if (!inScope(r)) return;
+      const before = beforeOf(state, r, p.目标列);
+      const cur = r[p.目标列] == null ? '' : String(r[p.目标列]);
+      let after;
+      if (!p.查找) after = String(p.替换为 == null ? '' : p.替换为);
+      else after = cur.split(String(p.查找)).join(String(p.替换为 == null ? '' : p.替换为));
+      if (after !== cur) add(r, p.目标列, before, after, false, 'replace');
+    });
+  } else if (draft.kind === 'fill') {
+    // ⑦ 空值填充：目标列在该行为空/仅空白时写入填充值；已有值不动。
+    state.rows.forEach(function (r) {
+      if (!inScope(r)) return;
+      const cur = r[p.目标列] == null ? '' : String(r[p.目标列]);
+      if (String(cur).trim() === '') {
+        add(r, p.目标列, beforeOf(state, r, p.目标列), String(p.填充值 == null ? '' : p.填充值), false, 'fill');
+      }
     });
   }
   // 影响行数按「行」去重，不能只按主键值（重复主键会把两行塌成一行、少报影响行数）。

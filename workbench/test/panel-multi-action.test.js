@@ -144,7 +144,7 @@ function hasPython() {
   return false;
 }
 
-const ACTIONS = ['extract', 'swap', 'conditional', 'function', 'dedupe'];
+const ACTIONS = ['extract', 'swap', 'conditional', 'function', 'dedupe', 'replace', 'fill'];
 
 for (const kind of ACTIONS) {
   test('实机跑通 QUICK「' + kind + '」：点一键动作→预览→确认执行→读回磁盘核对', async (t) => {
@@ -201,10 +201,36 @@ for (const kind of ACTIONS) {
     const openPanel = findByAttr(tree, 'data-workbench-panel', '1');
     assert.notEqual(openPanel.props.style.display, 'none', kind + ': 点浮窗按钮后面板应展开');
 
-    // 点 QUICK 一键动作
+    // 点 QUICK 动作 chip → 打开通用配置表单（用户自选字段）
     const qbtn = findByAttr(tree, 'data-wb-quick', kind);
-    assert.ok(qbtn && qbtn.props.onClick, kind + ': 应有一键动作按钮');
+    assert.ok(qbtn && qbtn.props.onClick, kind + ': 应有动作按钮');
     qbtn.props.onClick({ preventDefault() {} });
+    await waitTick(10);
+    shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+    // 通用表单应出现
+    const form = findByAttr(tree, 'data-wb-form', kind);
+    assert.ok(form, kind + ': 点动作应打开通用配置表单 data-wb-form');
+    // 按 kind 选择字段（模拟用户从下拉里选列）
+    const formFieldVals = {
+      extract: { 来源文件: '外勤登记表.csv', 匹配列: '姓名', 取哪一列: '邮箱', 写到: '备注' },
+      swap: { 字段A: '工时', 字段B: '时薪' },
+      conditional: { 动作: '增加', 目标列: '备注', 值: '加班' },
+      function: { 表达式: '工时 * 时薪', 输出列: '应发' },
+      dedupe: { 保留策略: '首条' },
+      replace: { 目标列: '部门', 查找: '销售', 替换为: '市场' },
+      fill: { 目标列: '备注', 填充值: '待补' }
+    }[kind] || {};
+    Object.keys(formFieldVals).forEach(function (k) {
+      const el = findByAttr(tree, 'data-wb-field', k);
+      assert.ok(el && el.props.onChange, kind + ': 表单应有字段 ' + k);
+      el.props.onChange({ preventDefault() {}, target: { value: formFieldVals[k] } });
+    });
+    await waitTick(5);
+    shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+    // 点表单「预览」
+    const formPv = findByAttr(tree, 'data-wb-form-preview', '1');
+    assert.ok(formPv && formPv.props.onClick, kind + ': 表单应有预览按钮');
+    formPv.props.onClick({ preventDefault() {} });
     await waitTick(20);
     shim.beginRender(); tree = body(mkProps()); shim.finishRender();
     const pvText = textOf(tree).join(' ');
@@ -262,6 +288,16 @@ for (const kind of ACTIONS) {
       // 从外勤登记表.csv 取邮箱 → 备注列
       assert.equal(String(allaRows[0].备注), 'alan@corp.com', 'extract 阿岚 备注=alan@corp.com');
       assert.equal(String(findFirst((r) => r.姓名 === '柏舟').备注), 'bo@corp.com', 'extract 柏舟 备注=bo@corp.com');
+    } else if (kind === 'replace') {
+      // 部门里「销售」→「市场」：阿岚行1 部门 销售→市场；其余不动
+      assert.equal(String(allaRows[0].部门), '市场', 'replace 阿岚行1 部门 销售→市场');
+      assert.equal(String(findFirst((r) => r.姓名 === '柏舟').部门), '技术', 'replace 柏舟 部门 技术 不动');
+    } else if (kind === 'fill') {
+      // 空备注填「待补」：所有行的空备注都应被填上
+      rows.forEach(function (r) {
+        if (String(r.备注 || '').trim() === '') { /* 应无空 */ }
+        assert.notEqual(String(r.备注 || '').trim(), '', 'fill 后不应再有空备注（' + r.姓名 + '）');
+      });
     }
   });
 }

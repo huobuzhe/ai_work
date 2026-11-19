@@ -16,6 +16,43 @@ window.__ModuleLoader__.load({
 const TAB_ID = 'workbench.tab';
 const TAB_KIND = 'workbench';
 
+// 通用动作表单元数据（UI 专用）：每种动作的字段定义，供面板渲染下拉框/输入框。
+// type：'column'=从当前表列选（下拉）；'enum'=枚举下拉；'text'=文本输入。
+// 与引擎 KINDS.paramSpec 保持同步（列名/枚举/文本语义一致）；此处只作渲染，校验仍由引擎封闭派生。
+const ACTION_FORMS = [
+  { kind: 'extract', label: '提取字段', fields: [
+    { key: '来源文件', type: 'text', def: '外勤登记表.csv' },
+    { key: '匹配列', type: 'column', def: '姓名' },
+    { key: '取哪一列', type: 'text', def: '邮箱' },
+    { key: '写到', type: 'column', def: '邮箱' }
+  ] },
+  { kind: 'swap', label: '调换两列', fields: [
+    { key: '字段A', type: 'column', def: '' },
+    { key: '字段B', type: 'column', def: '' }
+  ] },
+  { kind: 'conditional', label: '条件改动', fields: [
+    { key: '动作', type: 'enum', options: ['增加', '删去', '删除', '清空'], def: '增加' },
+    { key: '目标列', type: 'column', def: '备注' },
+    { key: '值', type: 'text', def: '加班' }
+  ] },
+  { kind: 'function', label: '公式计算', fields: [
+    { key: '表达式', type: 'text', def: '工时 * 时薪' },
+    { key: '输出列', type: 'column', def: '应发' }
+  ] },
+  { kind: 'dedupe', label: '按主键去重', fields: [
+    { key: '保留策略', type: 'enum', options: ['首条', '末条'], def: '首条' }
+  ] },
+  { kind: 'replace', label: '文本替换', fields: [
+    { key: '目标列', type: 'column', def: '' },
+    { key: '查找', type: 'text', def: '' },
+    { key: '替换为', type: 'text', def: '' }
+  ] },
+  { kind: 'fill', label: '空值填充', fields: [
+    { key: '目标列', type: 'column', def: '备注' },
+    { key: '填充值', type: 'text', def: '待补' }
+  ] }
+];
+
 /**
  * 预览卡投影（纯函数，无 DOM / 无 React）：把引擎产出的 state.preview 映射成
  * 一个可序列化的「解释与影响预览卡」视图模型，供宿主渲染。
@@ -140,7 +177,7 @@ function projectPreviewCard(state) {
 // kind → 中文短名（预览卡第①段展示用）。为保持 client 不依赖引擎而手工镜像 KINDS.short；
 // 新增/改名 kind 时须同步此处（已如实记录为 low 漂移风险，非第二套校验逻辑）。
 function labelOfKind(kind) {
-  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重' };
+  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充' };
   return map[kind] || kind;
 }
 
@@ -274,41 +311,119 @@ function renderWorkbenchPanel(hostState) {
       mkAction('confirm', '确认执行', canConfirm),
       mkAction('solidify', '固化为按钮', canSolidify)
     ] }, 'btnrow');
-    // 五个动作一键化（用户 m06260「把这5个按钮实现」）：每个动作一个快捷按钮，
-    // 点击发 QUICK（跳过理解、直接出「解释+影响预览」），用户再点「确认执行」即写盘。
-    // QUICK 的列名参数由 Host panel-session.normalizeDraft 映射到真实列，故此处给通用缺省即可。
-    var QUICK_ACTIONS = [
-      { kind: 'extract', label: '提取字段' },
-      { kind: 'swap', label: '调换两列' },
-      { kind: 'conditional', label: '条件改动' },
-      { kind: 'function', label: '公式计算' },
-      { kind: 'dedupe', label: '按主键去重' }
-    ];
-    var quickBtns = QUICK_ACTIONS.map(function (qa) {
+    // 通用动作按钮（用户 m08197）：不再写死字段——每个动作 chip 点开一个「配置表单」，
+    // 由使用者自己从当前表的列里选字段、填值、设条件，再点「预览」。字段来源=引擎 paramSpec 镜像（ACTION_FORMS）。
+    var quickBtns = ACTION_FORMS.map(function (qa) {
+      var isActive = (hostState && hostState.activeKind === qa.kind);
       return jsx('button', {
         type: 'button',
         'data-wb-quick': qa.kind,
-        title: '一键发起「' + qa.label + '」→ 直接给出解释与影响预览',
+        title: '「' + qa.label + '」：点开配置字段后预览',
         disabled: busy ? true : undefined,
         onClick: function (ev) {
           try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
-          try { onAction('quick', { kind: qa.kind }); } catch (_) {}
+          try { hostState.onPickKind && hostState.onPickKind(qa.kind); } catch (_) {}
         },
         style: {
-          padding: '5px 11px', borderRadius: 999, border: '1px solid #d6e2f5',
-          background: '#f0f6ff', color: '#2563eb', fontSize: 12, fontWeight: 500,
+          padding: '5px 11px', borderRadius: 999, border: '1px solid ' + (isActive ? '#2563eb' : '#d6e2f5'),
+          background: isActive ? '#2563eb' : '#f0f6ff', color: isActive ? '#fff' : '#2563eb', fontSize: 12, fontWeight: 500,
           cursor: busy ? 'not-allowed' : 'pointer', transition: 'all .15s'
         },
-        onMouseEnter: function (ev) { try { if (ev && ev.currentTarget && !busy) { ev.currentTarget.style.background = '#e0edff'; ev.currentTarget.style.borderColor = '#9dc0f5'; } } catch (_) {} },
-        onMouseLeave: function (ev) { try { if (ev && ev.currentTarget) { ev.currentTarget.style.background = '#f0f6ff'; ev.currentTarget.style.borderColor = '#d6e2f5'; } } catch (_) {} },
+        onMouseEnter: function (ev) { try { if (ev && ev.currentTarget && !busy && !isActive) { ev.currentTarget.style.background = '#e0edff'; ev.currentTarget.style.borderColor = '#9dc0f5'; } } catch (_) {} },
+        onMouseLeave: function (ev) { try { if (ev && ev.currentTarget && !isActive) { ev.currentTarget.style.background = '#f0f6ff'; ev.currentTarget.style.borderColor = '#d6e2f5'; } } catch (_) {} },
         children: qa.label
       }, 'quick' + qa.kind);
     });
     var quickRow = jsxs('div', { 'data-wb-quickbar': '1', style: { marginBottom: 10 }, children: [
-      jsx('div', { style: { fontSize: 11, color: '#6b7280', marginBottom: 6, letterSpacing: 0.2 }, children: '一键动作（直接出预览，再确认执行即写盘）' }, 'quicklbl'),
+      jsx('div', { style: { fontSize: 11, color: '#6b7280', marginBottom: 6, letterSpacing: 0.2 }, children: '选一个动作 · 配置字段 · 预览 · 确认执行' }, 'quicklbl'),
       jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: quickBtns }, 'quickrow')
     ] }, 'quickbar');
     children.push(quickRow);
+    // 通用动作配置表单：选中某 kind 后展开，字段从当前表列里选（下拉），条件可填（scope=match）。
+    var activeKind = hostState && hostState.activeKind ? hostState.activeKind : '';
+    if (activeKind) {
+      var formMeta = null;
+      for (var fi = 0; fi < ACTION_FORMS.length; fi++) { if (ACTION_FORMS[fi].kind === activeKind) { formMeta = ACTION_FORMS[fi]; break; } }
+      var cols = [];
+      try { cols = (hostState && hostState.table && Array.isArray(hostState.table.columns)) ? hostState.table.columns : []; } catch (_) { cols = []; }
+      var fv = (hostState && hostState.formValues) ? hostState.formValues : {};
+      var fieldRowStyle = { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 };
+      var labelStyle = { fontSize: 12, color: '#425466', width: 68, flex: '0 0 auto' };
+      var inputStyle = { flex: '1 1 auto', padding: '5px 8px', border: '1px solid #d0d7de', borderRadius: 6, fontSize: 12, background: '#fff', color: '#1f2328', outline: 'none' };
+      var fieldEls = formMeta ? formMeta.fields.map(function (f) {
+        var curVal = fv[f.key] !== undefined ? fv[f.key] : f.def;
+        var ctrl;
+        if (f.type === 'column' || f.type === 'enum') {
+          var opts = (f.type === 'enum') ? (f.options || []) : cols;
+          var optEls = (f.type === 'column') ? [jsx('option', { value: '', children: '（请选择）' }, 'opt-empty')] : [];
+          opts.forEach(function (o, oi) {
+            optEls.push(jsx('option', { value: String(o), selected: String(o) === String(curVal) ? true : undefined, children: String(o) }, 'opt' + oi));
+          });
+          ctrl = jsx('select', {
+            'data-wb-field': f.key,
+            value: String(curVal == null ? '' : curVal),
+            onChange: function (ev) { try { hostState.onFormChange && hostState.onFormChange(f.key, ev.target.value); } catch (_) {} },
+            style: inputStyle
+          }, 'sel-' + f.key, optEls);
+        } else {
+          ctrl = jsx('input', {
+            'data-wb-field': f.key,
+            type: 'text',
+            value: String(curVal == null ? '' : curVal),
+            onChange: function (ev) { try { hostState.onFormChange && hostState.onFormChange(f.key, ev.target.value); } catch (_) {} },
+            style: inputStyle
+          }, 'inp-' + f.key);
+        }
+        return jsxs('div', { style: fieldRowStyle, children: [
+          jsx('div', { style: labelStyle, children: f.key }, 'lb-' + f.key),
+          ctrl
+        ] }, 'frow-' + f.key);
+      }) : [];
+      // 公共字段：作用范围（scope）+ 条件。conditional 默认 match，其余默认 all。
+      var scopeVal = fv.scope !== undefined ? fv.scope : 'all';
+      var condVal = fv['条件'] !== undefined ? fv['条件'] : '';
+      var scopeSel = jsx('select', {
+        'data-wb-field': 'scope',
+        value: String(scopeVal),
+        onChange: function (ev) { try { hostState.onFormChange && hostState.onFormChange('scope', ev.target.value); } catch (_) {} },
+        style: inputStyle
+      }, 'sel-scope', [
+        jsx('option', { value: 'all', selected: scopeVal === 'all' ? true : undefined, children: '全部记录' }, 'sc-all'),
+        jsx('option', { value: 'match', selected: scopeVal === 'match' ? true : undefined, children: '满足条件' }, 'sc-match')
+      ]);
+      var scopeRow = jsxs('div', { style: fieldRowStyle, children: [jsx('div', { style: labelStyle, children: '作用范围' }, 'lb-scope'), scopeSel] }, 'frow-scope');
+      var condRows = (String(scopeVal) === 'match') ? [jsxs('div', { style: fieldRowStyle, children: [
+        jsx('div', { style: labelStyle, children: '条件' }, 'lb-cond'),
+        jsx('input', {
+          'data-wb-field': '条件', type: 'text', value: String(condVal == null ? '' : condVal),
+          placeholder: '如：工时 > 150',
+          onChange: function (ev) { try { hostState.onFormChange && hostState.onFormChange('条件', ev.target.value); } catch (_) {} },
+          style: inputStyle
+        }, 'inp-cond')
+      ] }, 'frow-cond')] : [];
+      var formBtns = jsxs('div', { style: { display: 'flex', gap: 8, marginTop: 8 }, children: [
+        jsx('button', {
+          type: 'button', 'data-wb-form-preview': '1',
+          onClick: function (ev) { try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {} try { hostState.onFormPreview && hostState.onFormPreview(); } catch (_) {} },
+          style: { padding: '6px 16px', borderRadius: 7, border: '1px solid #2563eb', background: 'linear-gradient(135deg,#3b82f6,#2563eb)', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer' },
+          children: '预览'
+        }, 'form-preview'),
+        jsx('button', {
+          type: 'button', 'data-wb-form-cancel': '1',
+          onClick: function (ev) { try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {} try { hostState.onFormCancel && hostState.onFormCancel(); } catch (_) {} },
+          style: { padding: '6px 14px', borderRadius: 7, border: '1px solid #d0d7de', background: '#fff', color: '#425466', fontSize: 13, cursor: 'pointer' },
+          children: '取消'
+        }, 'form-cancel')
+      ] }, 'form-btns');
+      var formBox = jsxs('div', {
+        'data-wb-form': activeKind,
+        style: { padding: 10, marginBottom: 10, border: '1px solid #d6e2f5', borderRadius: 8, background: '#f8fbff' },
+        children: [
+          jsx('div', { style: { fontSize: 12, fontWeight: 600, color: '#2563eb', marginBottom: 8 }, children: '配置「' + (formMeta ? formMeta.label : activeKind) + '」' }, 'form-title')
+        ].concat(fieldEls).concat([scopeRow]).concat(condRows).concat([formBtns])
+      }, 'form');
+      children.push(formBox);
+    }
     children.push(jsxs('div', { 'data-wb-newrecipe': '1', style: { marginBottom: 10 }, children: [inputEl, btnRow] }, 'newrecipe'));
     // 状态提示（note）：把引擎/宿主给的提示如实显示。
     if (hostState && typeof hostState.note === 'string' && hostState.note) {
@@ -1030,6 +1145,8 @@ function registerWorkbenchPanel(ctx) {
           var createdNotice = '', setCreatedNotice = function () {};
           var blankName = '', setBlankName = function () {};
           var blankColumns = '', setBlankColumns = function () {};
+          var activeKind = '', setActiveKind = function () {};
+          var formValues = {}, setFormValues = function () {};
           if (hooksOk) {
             try {
               var tplTuple = React.useState([]);
@@ -1040,6 +1157,11 @@ function registerWorkbenchPanel(ctx) {
               blankName = bnTuple[0]; setBlankName = bnTuple[1];
               var bcTuple = React.useState('');
               blankColumns = bcTuple[0]; setBlankColumns = bcTuple[1];
+              // 通用动作配置表单状态：选中的动作 kind + 各字段当前值（用户自选列/条件，不再写死字段）。
+              var akTuple = React.useState('');
+              activeKind = akTuple[0]; setActiveKind = akTuple[1];
+              var fvTuple = React.useState({});
+              formValues = fvTuple[0]; setFormValues = fvTuple[1];
               React.useEffect(function () {
                 var alive = true;
                 try {
@@ -1077,6 +1199,32 @@ function registerWorkbenchPanel(ctx) {
             if (!String(columns || '').trim()) { setCreatedNotice('新建失败：请填写列名（逗号分隔）'); return; }
             doCreate({ mode: 'blank', name: (name || '').trim() || undefined, columns: columns }, '新建表格');
           };
+          // 通用动作配置表单回调：选动作→初始化字段值；改字段；按当前字段值发 QUICK 预览。
+          var onPickKind = function (kind) {
+            try {
+              setActiveKind(function (prev) { return prev === kind ? '' : kind; });
+              var meta = null;
+              for (var i = 0; i < ACTION_FORMS.length; i++) { if (ACTION_FORMS[i].kind === kind) { meta = ACTION_FORMS[i]; break; } }
+              var init = {};
+              if (meta) { meta.fields.forEach(function (f) { init[f.key] = f.def; }); }
+              init.scope = (kind === 'conditional') ? 'match' : 'all';
+              init['条件'] = (kind === 'conditional') ? '工时 > 150' : '';
+              setFormValues(init);
+            } catch (_) {}
+          };
+          var onFormChange = function (key, val) {
+            try { setFormValues(function (prev) { var o = Object.assign({}, prev); o[key] = val; return o; }); } catch (_) {}
+          };
+          var onFormPreview = function () {
+            try {
+              var kind = activeKind;
+              if (!kind) return;
+              var params = Object.assign({}, formValues);
+              setActiveKind('');
+              runAction('quick', { kind: kind, params: params });
+            } catch (_) {}
+          };
+          var onFormCancel = function () { try { setActiveKind(''); } catch (_) {} };
           try {
             return renderWorkbenchPanel(Object.assign({}, effective, {
               onButtonClick: onClick,
@@ -1095,7 +1243,13 @@ function registerWorkbenchPanel(ctx) {
               blankColumns: blankColumns,
               onBlankName: function (v) { try { setBlankName(v); } catch (_) {} },
               onBlankColumns: function (v) { try { setBlankColumns(v); } catch (_) {} },
-              createdNotice: createdNotice
+              createdNotice: createdNotice,
+              activeKind: activeKind,
+              formValues: formValues,
+              onPickKind: onPickKind,
+              onFormChange: onFormChange,
+              onFormPreview: onFormPreview,
+              onFormCancel: onFormCancel
             }));
           } catch (renderErr) {
             // 上线健壮性兜底：面板渲染期任何意外异常都不得冒泡击穿宿主视图。
