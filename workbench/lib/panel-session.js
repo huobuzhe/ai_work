@@ -271,11 +271,31 @@ function createSessionStore(opts) {
   function toView(file, st) {
     const buttons = (st.buttons || []).map(function (b) { return Object.assign({}, b); });
     const registryButtons = (st.registryButtons || []).map(function (b) { return Object.assign({}, b); });
+    // 表格化预览支持：把整张表（columns + rows）以及「应用变更后」的 afterRows 一并给出，
+    // 令面板渲染成真正的表格网格（修改前/修改后），不再逐格「第X行 列：a → b」文本。
+    let preview = st.preview || null;
+    if (preview) {
+      const columns = (st.columns || []).slice();
+      const rows = (st.rows || []).slice();
+      // 由 preview.cells 的 rowIndex + col 组装 afterRows（浅拷贝每行，只覆盖受影响格）。
+      let afterRows = null;
+      try {
+        afterRows = rows.map(function (r) { return Object.assign({}, r); });
+        const cells = Array.isArray(preview.cells) ? preview.cells : [];
+        for (const c of cells) {
+          const ri = (c.rowIndex != null) ? c.rowIndex : -1;
+          if (ri >= 0 && ri < afterRows.length && c.col != null) {
+            afterRows[ri][c.col] = c.after;
+          }
+        }
+      } catch (_) { afterRows = null; }
+      preview = Object.assign({}, preview, { columns: columns, rows: rows, afterRows: afterRows });
+    }
     return {
       stage: st.stage || 'IDLE',
       input: st.input || '',
       draft: st.draft || null,
-      preview: st.preview || null,
+      preview: preview,
       note: st.note || '',
       noteTone: st.noteTone || 'info',
       buttons: buttons,

@@ -35,7 +35,7 @@ function projectPreviewCard(state) {
   const ok = !pv.invalid;
   const cells = (pv.cells || []).map(function (c) {
     return { row: c.row, col: c.col, before: c.before, after: c.after,
-      invalid: c.invalid, source: c.source };
+      invalid: c.invalid, source: c.source, rowIndex: c.rowIndex };
   });
 
   // 预览卡 = 5 步管线第 ② 步的 view-model 骨架（票 #14），共六段：①②③④⑤ 是主五段，
@@ -87,7 +87,11 @@ function projectPreviewCard(state) {
       affectedRows: pv.affectedRows,
       totalRows: pv.totalRows,
       disclosure: pv.disclosure || null,
-      swapBanner: pv.swapBanner || ''
+      swapBanner: pv.swapBanner || '',
+      // 表格化预览所需的整表信息（修改前列 + 修改后整表）；由 toView 注入到 preview 上。
+      columns: Array.isArray(pv.columns) ? pv.columns.slice() : [],
+      rows: Array.isArray(pv.rows) ? pv.rows.slice() : [],
+      afterRows: Array.isArray(pv.afterRows) ? pv.afterRows.slice() : null
     },
     // ⑤ 确认 / 取消：没有合法预览（校验未过或非 PREVIEWED）时禁用确认
     confirm: {
@@ -332,10 +336,53 @@ function renderWorkbenchPanel(hostState) {
       var cName = hostState.clickedName || '';
       lineEls.unshift(jsx('div', { 'data-workbench-clicked': '1', style: { color: '#0a7', fontSize: 12, marginBottom: 4 }, children: '✓ 已按「' + (cName || '当前配方') + '」重算预览' }, 'clicked'));
     }
-    // 票 #46：把「会改哪些格子」的逐格 before → after 明细真正渲染出来（用户 m02849：
-    // 只给行数看不出会变啥）。上限 20 格，超出给「还有 N 格」提示，避免面板过长。
-    const cells = (preview && Array.isArray(preview.cells)) ? preview.cells : [];
-    if (cells.length > 0) {
+    // 表格化影响预览（用户 m06723：不要「第阿岚行 时薪：80 → x」这种逐格文字，要真正表格）。
+    // 用整表信息（修改前列 + 修改后行）渲染网格；受影响的格子高亮。数据来自 sections.impact。
+    const impact = (preview && preview.sections && preview.sections.impact) ? preview.sections.impact : {};
+    const cells = Array.isArray(impact.cells) ? impact.cells : ((preview && Array.isArray(preview.cells)) ? preview.cells : []);
+    const pvCols = Array.isArray(impact.columns) ? impact.columns : [];
+    const pvRows = Array.isArray(impact.rows) ? impact.rows : [];
+    const pvAfter = Array.isArray(impact.afterRows) ? impact.afterRows : null;
+    if (pvCols.length > 0 && pvRows.length > 0) {
+      // 受影响格索引：rowIndex + '|' + col → cell
+      const cellMap = {};
+      cells.forEach(function (c) { if (c.rowIndex != null && c.col != null) cellMap[c.rowIndex + '|' + c.col] = c; });
+      const CAP = 50;
+      const shownRows = pvRows.slice(0, CAP);
+      const thStyle = { border: '1px solid #d0d0d0', padding: '3px 6px', background: '#f4f4f4', fontSize: 12, textAlign: 'left', whiteSpace: 'nowrap' };
+      const tdStyle = { border: '1px solid #e2e2e2', padding: '3px 6px', fontSize: 12, whiteSpace: 'nowrap' };
+      const tdChanged = Object.assign({}, tdStyle, { background: '#fff6e0', color: '#8a5a00', fontWeight: 'bold' });
+      const head = jsxs('tr', { children: pvCols.map(function (col, ci) { return jsx('th', { style: thStyle, children: String(col) }, 'h' + ci); }) }, 'hrow');
+      const bodyRows = shownRows.map(function (r, ri) {
+        const tds = pvCols.map(function (col, ci) {
+          const ch = cellMap[ri + '|' + col];
+          if (ch) {
+            const afterVal = (pvAfter && pvAfter[ri] && pvAfter[ri][col] !== undefined) ? pvAfter[ri][col] : ch.after;
+            return jsx('td', {
+              'data-wb-changed': String(ri) + '|' + col,
+              style: tdChanged,
+              children: String(ch.before) + ' → ' + String(afterVal)
+            }, 'c' + ri + '_' + ci);
+          }
+          return jsx('td', { style: tdStyle, children: (r && r[col] != null) ? String(r[col]) : '' }, 'c' + ri + '_' + ci);
+        });
+        return jsx('tr', { children: tds }, 'r' + ri);
+      });
+      const tableEl = jsxs('table', {
+        'data-workbench-table': '1',
+        style: { borderCollapse: 'collapse', fontSize: 12, width: '100%' },
+        children: [jsx('thead', { children: head }, 'thead'), jsx('tbody', { children: bodyRows }, 'tbody')]
+      }, 'impacttable');
+      if (pvRows.length > CAP) {
+        bodyRows.push(jsx('div', { style: { opacity: 0.7, fontSize: 12 }, children: '还有 ' + (pvRows.length - CAP) + ' 行……' }, 'rowmore'));
+      }
+      children.push(jsxs('div', {
+        'data-workbench-cells': String(cells.length),
+        style: { marginBottom: 8, maxHeight: 220, overflow: 'auto', border: '1px solid #eee' },
+        children: [tableEl]
+      }, 'cellbox'));
+    } else if (cells.length > 0) {
+      // 回退：没有整表信息时，退回逐格文字（旧行为）。
       const CAP = 20;
       const shown = cells.slice(0, CAP);
       const cellEls = shown.map(function (c, i) {

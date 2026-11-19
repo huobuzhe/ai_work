@@ -282,3 +282,53 @@ test('浮窗外壳：展开态面板 display:flex 可见', () => {
   assert.equal(panel.props.style.display, 'flex', '展开态面板 visibility 应为 flex');
   assert.equal(panel.props.style.position, 'fixed', '面板须 position:fixed 浮窗');
 });
+
+// ---------- 表格化影响预览（用户 m06723：要真正的表格，不要「第X行 列：a → b」文字） ----------
+// projectPreviewCard 的 impact 段须带整表信息（columns / rows / afterRows），且 cells 保留 rowIndex，
+// 供 client 渲染成网格（受影响格高亮 before→after）。toView 负责把 columns/rows/afterRows 注入 preview。
+test('表格化预览：toView 给 preview 注入 columns/rows/afterRows', () => {
+  const { createSessionStore } = require('../lib/panel-session');
+  let s = sampleState();
+  s = E.reduce(s, { type: 'QUICK', kind: 'swap', params: { 字段A: '工时', 字段B: '时薪' } });
+  const store = createSessionStore({ loadButtons: () => null, saveButtons: () => true, loadRegistry: () => [] });
+  // 直接走 store.view 拿到带 columns/rows/afterRows 的 preview
+  const v = store.view('dummy.xlsx', { columns: s.columns, rows: s.rows, primaryKey: s.primaryKey });
+  // 上面是空态；改为用 applyAction 真正产出预览
+  const v2 = store.applyAction('t2.xlsx', { columns: s.columns, rows: s.rows, primaryKey: s.primaryKey }, { type: 'quick', kind: 'swap' });
+  assert.ok(v2.preview, 'QUICK swap 应产出预览');
+  assert.ok(Array.isArray(v2.preview.columns) && v2.preview.columns.length > 0, 'preview 应带 columns');
+  assert.ok(Array.isArray(v2.preview.rows) && v2.preview.rows.length > 0, 'preview 应带 rows');
+  assert.ok(Array.isArray(v2.preview.afterRows), 'preview 应带 afterRows');
+  // afterRows 应用了变更（工时/时薪对调）
+  const after0 = v2.preview.afterRows[0];
+  const before0 = v2.preview.rows[0];
+  assert.notEqual(String(after0['工时']), String(before0['工时']), 'afterRows 应已应用对调（工时变化）');
+});
+
+test('表格化预览：projectPreviewCard.impact 带 columns/rows/afterRows，cells 保留 rowIndex', () => {
+  let s = sampleState();
+  s = E.reduce(s, { type: 'QUICK', kind: 'swap', params: { 字段A: '工时', 字段B: '时薪' } });
+  // 补上 toView 注入的整表字段（真实链路由 store 注入；此处直接给 preview 加，模拟 store 输出）
+  s.preview = Object.assign({}, s.preview, { columns: s.columns, rows: s.rows,
+    afterRows: s.rows.map(function (r) { return Object.assign({}, r); }) });
+  const card = C.projectPreviewCard(s);
+  assert.ok(card, '应有预览卡');
+  const im = card.sections.impact;
+  assert.ok(Array.isArray(im.columns) && im.columns.length > 0, 'impact 应带 columns');
+  assert.ok(Array.isArray(im.rows) && im.rows.length > 0, 'impact 应带 rows');
+  assert.ok(Array.isArray(im.afterRows), 'impact 应带 afterRows');
+  assert.ok(im.cells.length > 0 && im.cells[0].rowIndex !== undefined,
+    'cells 应保留 rowIndex（表格高亮定位用）');
+});
+
+test('表格化预览：renderWorkbenchPanel 渲染出真表格 data-workbench-table（含高亮格）', () => {
+  let s = sampleState();
+  s = E.reduce(s, { type: 'QUICK', kind: 'swap', params: { 字段A: '工时', 字段B: '时薪' } });
+  s.preview = Object.assign({}, s.preview, {
+    columns: s.columns, rows: s.rows,
+    afterRows: s.rows.map(function (r) { return Object.assign({}, r); })
+  });
+  const tree = shimRender(s);
+  const table = findEl(tree, 'data-workbench-table', '1');
+  assert.ok(table, '影响预览应渲染成真表格 data-workbench-table（不是逐格文字 div）');
+});
