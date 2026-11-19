@@ -199,6 +199,17 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 
 **测试基线（2026-11-19，#61/#62）**：`npm test` 453 tests / 432 pass / 0 fail / 21 skipped（+5 为五动作实机 e2e）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：`5f52068`（affectedRows + 五动作 e2e）、`6f24905`（FAB/面板美化）、`2ad4d07`（控件统一美化）、`60a0de2`（渲染异常兜底）。
 
+## 交付后增量（第七波：打开文件显示原表 + replace/fill 两新动作 + 通用字段配置表单 + 空白表自选主键，2026-11-19 补记）
+
+用户 m08197（verbatim）：『图1打开文件还是空白，我要的打开文件还是原来的 Excel 表，里面有个浮窗…只有5个按钮太少了，你给我继续添加几个日常常用的功能按钮，把一键动作按钮做成通用的按钮，不是只能用特定的字段，而是由使用者自己选择字段（可以选择一个字段的部分信息，而不是字段的全部信息，条件筛选）…新建表格也是要灵活点。』
+
+- **打开文件显示原表（fcfc8f）**：此前 workbench tab body 只渲染 position:fixed 浮层，pane 自身流式区域为空=打开文件一片空白。修复：enderWorkbenchPanel 拆为「流式主区域 mainPane（data-workbench-main，填满 pane，渲染原表/预览/执行后表格）」+「浮窗按钮/面板（fixed 覆盖层）」；abOpen 默认 false（打开只露右下角浮窗按钮，点开才展开功能面板）。踩坑：jsxs(type,props,children,key) 的 children 必须放进 props.children，否则子节点丢失、面板空白。
+- **两新动作 replace / fill（ 0039f）**：lib/engine.js 新增 ⑥eplace（文本替换：目标列/查找/替换为，子串替换；查找为空时整列赋值）与 ⑦ill（空值填充：目标列/填充值，空或仅空白才填、已有值不动），各带 paramSpec + stepsFor + preview 分支；校验仍由 paramSpec 机械派生（封闭白名单）。
+- **通用动作配置表单（ 0039f）**：client 动作 chip 不再写死字段——点 chip 打开配置表单（data-wb-form），按 ACTION_FORMS 渲染列下拉（列来自当前表 hostState.table.columns）、枚举下拉、文本输入 + 作用范围（全部/满足条件）+ 条件输入；点「预览」发 QUICK 带显式 params（{kind, params}），使用者可自选列、选部分列、加条件筛选。labelOfKind 补 replace/fill 防漂移。
+- **空白表自选主键（0f56f5）**：空白建表原固定首列作主键，面板新增「主键列」输入框（data-wb-newblank-pk），可指定任意一列作主键（留空默认首列）；uildCreateSpec 的 primaryKey 校验（列不在清单则报错）本就支持，本次仅把 UI→/create 透传接通。
+
+**测试基线（2026-11-19，第七波）**：pm test 464 tests / 443 pass / 0 fail / 21 skipped（+8 replace-fill +2 panel-multi-action 扩到 7 动作）；两 acceptance 绿（engineMatchesFile:true / valuesMatch:true）。关键 commit：fcfc8f（原表流式主区域）、 0039f（replace/fill + 通用表单）、0f56f5（空白表主键）。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
