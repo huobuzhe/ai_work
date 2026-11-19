@@ -227,6 +227,18 @@ function renderWorkbenchPanel(hostState) {
     const canSolidify = stage === 'EXECUTED';
     const busy = !!(hostState && hostState.actionBusy);
     const mkAction = function (type, label, enabled, extraStyle) {
+      // 主操作按钮（理解/预览/确认执行/固化为按钮）：统一现代描边按钮；确认执行为主色实心。
+      const isPrimary = type === 'confirm';
+      const baseStyle = isPrimary ? {
+        padding: '7px 14px', borderRadius: 8, border: '1px solid #2563eb',
+        background: enabled ? 'linear-gradient(135deg,#3b82f6,#2563eb)' : '#eef2f8',
+        color: enabled ? '#fff' : '#9aa4b2', fontWeight: 600, cursor: enabled ? 'pointer' : 'not-allowed',
+        fontSize: 13, boxShadow: enabled ? '0 2px 8px rgba(37,99,235,0.3)' : 'none', transition: 'all .15s'
+      } : {
+        padding: '7px 14px', borderRadius: 8, border: '1px solid #d0d7de',
+        background: enabled ? '#fff' : '#f6f8fa', color: enabled ? '#24292f' : '#9aa4b2',
+        fontWeight: 500, cursor: enabled ? 'pointer' : 'not-allowed', fontSize: 13, transition: 'all .15s'
+      };
       return jsx('button', {
         type: 'button',
         'data-wb-action': type,
@@ -235,7 +247,7 @@ function renderWorkbenchPanel(hostState) {
           try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
           try { onAction(type, {}); } catch (_) {}
         },
-        style: Object.assign({ marginRight: 6 }, extraStyle || {}),
+        style: Object.assign(baseStyle, extraStyle || {}),
         children: label
       }, 'act' + type);
     };
@@ -248,7 +260,7 @@ function renderWorkbenchPanel(hostState) {
       onKeyDown: function (ev) {
         try { if (ev && ev.key === 'Enter') { ev.preventDefault(); onAction('understand', {}); } } catch (_) {}
       },
-      style: { width: '100%', boxSizing: 'border-box', marginBottom: 6 }
+      style: { width: '100%', boxSizing: 'border-box', marginBottom: 8, padding: '8px 10px', border: '1px solid #d0d7de', borderRadius: 8, fontSize: 13, outline: 'none', background: '#fff', color: '#1f2328' }
     }, 'wbinput');
     const btnRow = jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }, children: [
       mkAction('understand', '理解', true),
@@ -276,13 +288,19 @@ function renderWorkbenchPanel(hostState) {
           try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
           try { onAction('quick', { kind: qa.kind }); } catch (_) {}
         },
-        style: { marginRight: 6, marginBottom: 4 },
+        style: {
+          padding: '5px 11px', borderRadius: 999, border: '1px solid #d6e2f5',
+          background: '#f0f6ff', color: '#2563eb', fontSize: 12, fontWeight: 500,
+          cursor: busy ? 'not-allowed' : 'pointer', transition: 'all .15s'
+        },
+        onMouseEnter: function (ev) { try { if (ev && ev.currentTarget && !busy) { ev.currentTarget.style.background = '#e0edff'; ev.currentTarget.style.borderColor = '#9dc0f5'; } } catch (_) {} },
+        onMouseLeave: function (ev) { try { if (ev && ev.currentTarget) { ev.currentTarget.style.background = '#f0f6ff'; ev.currentTarget.style.borderColor = '#d6e2f5'; } } catch (_) {} },
         children: qa.label
       }, 'quick' + qa.kind);
     });
-    var quickRow = jsxs('div', { 'data-wb-quickbar': '1', style: { marginBottom: 8 }, children: [
-      jsx('div', { style: { fontSize: 11, opacity: 0.65, marginBottom: 4 }, children: '一键动作（直接出预览，再确认执行即写盘）' }, 'quicklbl'),
-      jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 4 }, children: quickBtns }, 'quickrow')
+    var quickRow = jsxs('div', { 'data-wb-quickbar': '1', style: { marginBottom: 10 }, children: [
+      jsx('div', { style: { fontSize: 11, color: '#6b7280', marginBottom: 6, letterSpacing: 0.2 }, children: '一键动作（直接出预览，再确认执行即写盘）' }, 'quicklbl'),
+      jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: quickBtns }, 'quickrow')
     ] }, 'quickbar');
     children.push(quickRow);
     children.push(jsxs('div', { 'data-wb-newrecipe': '1', style: { marginBottom: 10 }, children: [inputEl, btnRow] }, 'newrecipe'));
@@ -467,6 +485,8 @@ function renderWorkbenchPanel(hostState) {
     // 仅在宿主提供 onButtonAction 时渲染（旧调用保持纯点击语义，向后兼容）。
     const onButtonAction = hostState && typeof hostState.onButtonAction === 'function'
       ? hostState.onButtonAction : null;
+    const btnStyle = { padding: '5px 11px', borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', color: '#24292f', fontSize: 12, fontWeight: 500, cursor: 'pointer', transition: 'all .15s' };
+    const mgmtStyle = { padding: '3px 8px', borderRadius: 6, border: '1px solid #d8dee4', background: '#f6f8fa', color: '#4b5563', fontSize: 11, cursor: 'pointer' };
     const btns = library.buttons.map(function (b, i) {
       const clickEl = jsx('button', {
         type: 'button',
@@ -476,16 +496,20 @@ function renderWorkbenchPanel(hostState) {
           try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
           try { if (onButtonClick) onButtonClick(b.id); } catch (_) {}
         },
+        style: btnStyle,
+        onMouseEnter: function (ev) { try { if (ev && ev.currentTarget) { ev.currentTarget.style.borderColor = '#9dc0f5'; ev.currentTarget.style.background = '#f0f6ff'; } } catch (_) {} },
+        onMouseLeave: function (ev) { try { if (ev && ev.currentTarget) { ev.currentTarget.style.borderColor = '#d0d7de'; ev.currentTarget.style.background = '#fff'; } } catch (_) {} },
         children: b.name
       }, 'btn' + i);
       if (!onButtonAction) return clickEl;
       const mgmt = jsx('span', {
         'data-workbench-btn-mgmt': b.id,
-        style: { display: 'inline-flex', gap: 4, marginLeft: 4 },
+        style: { display: 'inline-flex', gap: 3, marginLeft: 4 },
         children: [
           jsx('button', {
             type: 'button', 'data-wb-btn-run': b.id, title: '一键运行（参数未改直接执行并写入磁盘）',
             onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { onButtonAction('run', b.id); } catch (_) {} },
+            style: mgmtStyle,
             children: '▶运行'
           }, 'run' + i),
           jsx('button', {
@@ -494,6 +518,7 @@ function renderWorkbenchPanel(hostState) {
               try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {}
               try { var nn = (typeof window !== 'undefined' && window.prompt) ? window.prompt('新的按钮名', b.name) : null; if (nn != null && String(nn).trim()) onButtonAction('rename', b.id, { name: String(nn).trim() }); } catch (_) {}
             },
+            style: mgmtStyle,
             children: '重命名'
           }, 'ren' + i),
           jsx('button', {
@@ -519,16 +544,18 @@ function renderWorkbenchPanel(hostState) {
                 if (Object.keys(next).length) onButtonAction('params', b.id, { params: next });
               } catch (_) {}
             },
+            style: mgmtStyle,
             children: '改参数'
           }, 'prm' + i),
           jsx('button', {
             type: 'button', 'data-wb-btn-delete': b.id, title: '删除',
             onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { onButtonAction('delete', b.id); } catch (_) {} },
+            style: Object.assign({}, mgmtStyle, { color: '#b42318', borderColor: '#f0c9c5', background: '#fff5f4' }),
             children: '删除'
           }, 'del' + i)
         ]
       }, 'mgmt' + i);
-      return jsx('span', { 'data-workbench-button-row': b.id, style: { display: 'inline-flex', alignItems: 'center', marginRight: 8, marginBottom: 4 }, children: [clickEl, mgmt] }, 'row' + i);
+      return jsx('span', { 'data-workbench-button-row': b.id, style: { display: 'inline-flex', alignItems: 'center', marginRight: 4, marginBottom: 6 }, children: [clickEl, mgmt] }, 'row' + i);
     });
     children.push(jsxs('div', { 'data-workbench-library': String(library.total), style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: btns }, 'lib'));
   }
@@ -552,7 +579,7 @@ function renderWorkbenchPanel(hostState) {
             try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
             try { onCreate(tname); } catch (_) {}
           },
-          style: { marginRight: 6, marginBottom: 4 },
+          style: { padding: '5px 11px', borderRadius: 8, border: '1px solid #d0d7de', background: '#fff', color: '#24292f', fontSize: 12, cursor: 'pointer', marginRight: 6, marginBottom: 4 },
           children: '新建「' + tname + '」'
         }, 'ntb' + i);
       });
@@ -568,18 +595,19 @@ function renderWorkbenchPanel(hostState) {
           try { if (ev && typeof ev.preventDefault === 'function') ev.preventDefault(); } catch (_) {}
           try { onCreateBlank(blankName, blankColumns); } catch (_) {}
         },
-        style: { marginLeft: 6 },
+        style: { padding: '5px 11px', borderRadius: 8, border: '1px solid #2563eb', background: '#2563eb', color: '#fff', fontSize: 12, fontWeight: 500, cursor: 'pointer', marginLeft: 6 },
         children: '新建空白表'
       }, 'ntblankbtn');
+      const ntInputStyle = { padding: '5px 8px', border: '1px solid #d0d7de', borderRadius: 6, fontSize: 12, outline: 'none', color: '#1f2328' };
       const nameInput = jsx('input', {
         type: 'text', 'data-wb-newblank-name': '1', placeholder: '表格名（可空）', value: blankName,
         onChange: function (ev) { try { hostState.onBlankName && hostState.onBlankName(ev.target.value); } catch (_) {} },
-        style: { width: 90, marginRight: 4 }
+        style: Object.assign({}, ntInputStyle, { width: 90, marginRight: 4 })
       }, 'ntbn');
       const colInput = jsx('input', {
         type: 'text', 'data-wb-newblank-columns': '1', placeholder: '列名，逗号分隔（首列作主键）', value: blankColumns,
         onChange: function (ev) { try { hostState.onBlankColumns && hostState.onBlankColumns(ev.target.value); } catch (_) {} },
-        style: { width: 160 }
+        style: Object.assign({}, ntInputStyle, { width: 180 })
       }, 'ntbc');
       ntChildren.push(jsx('div', { style: { fontSize: 11, opacity: 0.6, margin: '6px 0 2px' }, children: '空白表' }, 'ntblbl'));
       ntChildren.push(jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 4 }, children: [nameInput, colInput, btn] }, 'ntblankrow'));
