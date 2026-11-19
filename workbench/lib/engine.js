@@ -956,8 +956,13 @@ function preview(state, draft) {
       });
     });
   }
+  // 影响行数按「行」去重，不能只按主键值（重复主键会把两行塌成一行、少报影响行数）。
+  // 优先用 rowIndex（state.rows 下标，重复主键也能区分），无 rowIndex 时回落主键值。
   const rowSet = {};
-  cells.forEach(function (c) { rowSet[c.row] = true; });
+  cells.forEach(function (c) {
+    const key = (c.rowIndex != null) ? ('#' + c.rowIndex) : ('k:' + c.row);
+    rowSet[key] = true;
+  });
   const affectedRows = Object.keys(rowSet).length;
   let summary = affectedRows === 0
     ? '影响 0 行 / 共 ' + totalRows + ' 行；没有任何单元格会变 —— 条件没命中任何记录。零命中允许确认。'
