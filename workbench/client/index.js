@@ -1152,14 +1152,26 @@ function registerWorkbenchOverlay(ctx) {
               }
             } catch (_) { snap = null; }
             var addr = pickActiveSheetFile(snap);
-            if (!addr || !addr.path) return null;
+            var rt0 = null;
+            try { rt0 = require('react/jsx-runtime'); } catch (_) { rt0 = null; }
+            // 未命中当前打开的表格：仍渲染一个「待命」悬浮钮（不可展开），
+            // 保证用户在任何时候都能看到右下角按钮存在，避免「没有浮窗」的困惑。
+            // 点它给出提示「先打开 .xlsx / .csv 文件」。
+            if (!addr || !addr.path) {
+              if (!rt0) return null;
+              return rt0.jsx('button', {
+                type: 'button', 'data-wb-fab': '1', 'data-wb-fab-idle': '1',
+                title: '表格工作台：先打开 .xlsx / .xls / .csv 文件后可用',
+                style: { position: 'fixed', right: 24, bottom: 24, width: 52, height: 52, borderRadius: '50%', border: '1px dashed rgba(37,99,235,0.45)', background: 'rgba(37,99,235,0.10)', color: 'rgba(37,99,235,0.55)', zIndex: 2147482000, cursor: 'not-allowed', boxShadow: '0 2px 8px rgba(0,0,0,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 },
+                children: '⚙'
+              }, 'fab-idle');
+            }
             // 复用既有 panel body（内含全部 hooks/动作/表单逻辑），叠加模式：只出 fab+panel。
             // 以 React 元素方式渲染（不能在渲染树外直接当函数调用，否则 hooks 规则被破坏）。
             try {
-              var rt = require('react/jsx-runtime');
               var Comp = WorkbenchPanelBodyRef;
               if (typeof Comp !== 'function') return null;
-              return rt.jsx(Comp, { address: addr, overlay: true }, 'wb-overlay-' + addr.path);
+              return rt0.jsx(Comp, { address: addr, overlay: true }, 'wb-overlay-' + addr.path);
             } catch (e) {
               try {
                 var rt2 = require('react/jsx-runtime');
