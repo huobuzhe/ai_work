@@ -80,11 +80,19 @@ test('factory 导出的注册函数经 sidebarRightTabs + slots 契约挂载常�
   assert.ok(Array.isArray(calls.tabs[0].patterns), 'tab.patterns 应为数组');
   assert.equal(calls.tabs[0].patterns.length, 0, 'tab 不得用 patterns 抢占任何文件（含 *.xlsx/*.csv）');
 
+  // 阶段 0：全局浮层 shell.overlay 注册常驻悬浮按钮宿主（用户 m08845 / 问题2：
+  // 不再抢占 xlsx 主视图，改为 shell.overlay 叠加浮窗按钮）。
+  assert.ok(calls.slotInjects.indexOf('shell.overlay') !== -1, '必须注册 shell.overlay 全局浮层');
+  var overlay = calls.slots.filter(function (s) { return s.spec && s.spec.name === 'shell.overlay'; });
+  assert.equal(overlay.length, 1, 'shell.overlay 应恰有一条注册');
+  assert.equal(overlay[0].spec.id, 'dsh-workbench-fab');
+  assert.equal(typeof overlay[0].body, 'function', 'overlay 宿主必须是函数组件');
+
   // 阶段 2：面板 body 注册到 sidebar.right.pane.tab
-  assert.equal(calls.slots.length, 1);
-  assert.equal(calls.slots[0].spec.name, 'sidebar.right.pane.tab');
-  assert.equal(calls.slots[0].spec.key, calls.tabs[0].id, 'slot key 必须等于 tab id');
-  assert.equal(typeof calls.slots[0].body, 'function', '面板 body 必须是函数');
+  var paneTabs = calls.slots.filter(function (s) { return s.spec && s.spec.name === 'sidebar.right.pane.tab'; });
+  assert.equal(paneTabs.length, 1);
+  assert.equal(paneTabs[0].spec.key, calls.tabs[0].id, 'slot key 必须等于 tab id');
+  assert.equal(typeof paneTabs[0].body, 'function', '面板 body 必须是函数');
 
   // 返回注册描述，供宿主/测试核对
   assert.equal(result.tabId, calls.tabs[0].id);

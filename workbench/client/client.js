@@ -936,7 +936,14 @@ function renderWorkbenchPanel(hostState) {
             style: { display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600, fontSize: 14, letterSpacing: 0.2 },
             children: [
               jsx('span', { style: { width: 8, height: 8, borderRadius: '50%', background: '#fff', opacity: 0.9, display: 'inline-block' } }, 'dot'),
-              jsx('span', { children: '表格工作台' }, 'fabtitle')
+              jsx('span', { children: '表格工作台' }, 'fabtitle'),
+              // 当前文件路径（overlay 模式从 props.address.path 传入），显示在标题下方便于用户确认作用对象。
+              (function () {
+                var pth = hostState && hostState.address && hostState.address.path ? hostState.address.path : '';
+                if (!pth) return null;
+                var base = pth.split(/[\\/]/).pop() || pth;
+                return jsx('span', { 'data-wb-fab-file': '1', title: pth, style: { fontWeight: 400, fontSize: 11, opacity: 0.88, marginLeft: 4, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } , children: base }, 'fabfile');
+              })()
             ]
           }, 'fabti'),
           jsx('button', {
@@ -1111,31 +1118,45 @@ function pickActiveSheetFile(snap) {
 }
 
 function registerWorkbenchOverlay(ctx) {
-  // shell.overlay 是宿主全局浮层 slot（better-sidebar client.js:18921 亦用它注册告警条），
-  // 渲染在整个 shell 之上、不占用任何 sidebar 布局。在这里挂我们的悬浮按钮。
-  ctx.inject(['betterSidebar'], function (injected) {
-    var sidebar = injected.get ? injected.get('betterSidebar') : injected.betterSidebar;
-    if (!sidebar || typeof sidebar.getSnapshot !== 'function') return;
-    injected.effect(function () {
-      return injected.slots.inject('shell.overlay', function () {
-        return injected.slots.register(
+  // 全局浮层：用 shell.overlay slot 挂悬浮按钮，渲染在整个 shell 之上、不占任何 sidebar 布局。
+  //
+  // 重要经验（2026-11-20 修复「浮窗按钮不出现」）：
+  //   ① 必须用**根 ctx** 注册 slots（ctx.slots.inject / ctx.slots.register）+ ctx.effect，
+  //      对齐 better-sidebar 自己的 registerContextDiagnosticsUI 写法（client.js:18876-18896
+  //      直接用传入的根 ctx.slots），不要在 `ctx.inject(['betterSidebar'], injected=>…)` 的
+  //      子作用域里注册——那个子 ctx 的 slots 注册时机 / 生命周期与根 ctx 不同，会导致 overlay
+  //      条目注册不上、右上角永远没有浮窗按钮。
+  //   ② betterSidebar 服务只用来**读当前打开的文件**（getSnapshot/subscribe），用 ctx.get 同步取，
+  //      取不到只是拿不到文件、不阻止按钮出现（按钮常驻、文件命中与否由 pickActiveSheetFile 决定）。
+  var sidebar = null;
+  try { sidebar = ctx.get ? ctx.get('betterSidebar') : null; } catch (_) { sidebar = null; }
+
+  // 常驻浮窗按钮的挂载点：宿主 shell.overlay。用根 ctx 注册（见上经验①）。
+  try {
+    ctx.effect(function () {
+      return ctx.slots.inject('shell.overlay', function () {
+        return ctx.slots.register(
           { name: 'shell.overlay', id: 'dsh-workbench-fab', order: 60, registrant: 'dsh-workbench', inject: function () { return {}; } },
           function WorkbenchOverlayHost(props) {
             var React = null;
             try { React = require('react'); } catch (_) { React = null; }
-            var snap = { state: undefined, sessionId: undefined };
-            var hooksOk = false;
+            // 订阅 betterSidebar 快照拿「当前活跃 editor tab 的文件路径」。
+            // hooks 必须**无条件**调用（rules of hooks）——sidebar 缺失时给空订阅/空快照，
+            // 渲染与否在下面按有无文件决定。
+            var snap = null;
             try {
               if (React && typeof React.useSyncExternalStore === 'function') {
-                snap = React.useSyncExternalStore(
-                  function (onChange) { return sidebar.subscribe ? sidebar.subscribe(onChange) : function () {}; },
-                  function () { return sidebar.getSnapshot(); }
-                );
-                hooksOk = true;
-              } else if (typeof sidebar.getSnapshot === 'function') {
+                var sub = (sidebar && typeof sidebar.subscribe === 'function')
+                  ? function (onChange) { return sidebar.subscribe(onChange); }
+                  : function () { return function () {}; };
+                var getS = (sidebar && typeof sidebar.getSnapshot === 'function')
+                  ? function () { return sidebar.getSnapshot(); }
+                  : function () { return null; };
+                snap = React.useSyncExternalStore(sub, getS);
+              } else if (sidebar && typeof sidebar.getSnapshot === 'function') {
                 snap = sidebar.getSnapshot();
               }
-            } catch (_) { hooksOk = hooksOk; }
+            } catch (_) { snap = null; }
             var addr = pickActiveSheetFile(snap);
             if (!addr || !addr.path) return null;
             // 复用既有 panel body（内含全部 hooks/动作/表单逻辑），叠加模式：只出 fab+panel。
@@ -1155,7 +1176,9 @@ function registerWorkbenchOverlay(ctx) {
         );
       });
     }, 'workbench: global fab overlay');
-  });
+  } catch (e) {
+    try { console.error('[workbench] registerWorkbenchOverlay failed:', (e && e.stack) || e); } catch (_) {}
+  }
 }
 
 // 供 overlay 复用 panel body（避免重复实现整套 hooks/动作）。延迟绑定：registerWorkbenchPanel 里赋值。
@@ -1446,6 +1469,7 @@ function registerWorkbenchPanel(ctx) {
           try {
             return renderWorkbenchPanel(Object.assign({}, effective, {
               overlay: !!(props && props.overlay),
+              address: (props && props.address) || null,
               onButtonClick: onClick,
               onButtonAction: onButtonAction,
               inputText: inputText,
