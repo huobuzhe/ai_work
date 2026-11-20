@@ -916,7 +916,7 @@ function renderWorkbenchPanel(hostState) {
     'data-workbench-panel': '1',
     style: {
       position: 'fixed', right: 24, bottom: 92, zIndex: 2147482001, pointerEvents: 'auto',
-      width: 384, maxWidth: 'calc(100vw - 48px)', maxHeight: '72vh',
+      width: (hostState && hostState.overlay === true) ? 480 : 384, maxWidth: 'calc(100vw - 48px)', maxHeight: (hostState && hostState.overlay === true) ? '82vh' : '72vh',
       display: fabOpen ? 'flex' : 'none', flexDirection: 'column',
       background: '#fff', color: '#1f2328', border: '1px solid #e3e7ec',
       borderRadius: 14, boxShadow: '0 18px 48px rgba(15,23,42,0.22), 0 4px 12px rgba(15,23,42,0.10)',
@@ -956,10 +956,25 @@ function renderWorkbenchPanel(hostState) {
         ]
       }, 'fabheader'),
       // 可滚动内容区
+      // overlay 模式：主视图是宿主原生表格，mainPane 被丢弃 → 预览/原表必须渲染进面板体内，
+      // 否则用户点「预览」只看得到摘要文字、看不到表格（用户 m10321）。此处把 summaryEl+mainTableEl
+      // 作为面板体顶部区块，紧接动作控件与按钮库。
       jsx('div', {
         'data-wb-fab-body': '1',
         style: { padding: 14, overflowY: 'auto', flex: '1 1 auto', minHeight: 0, background: '#fff' },
-        children: jsxs('div', { children: children }, 'fabin')
+        children: (function () {
+          var overlayMode = !!(hostState && hostState.overlay === true);
+          if (!overlayMode) return jsxs('div', { children: children }, 'fabin');
+          var tableBlock = (summaryEl || mainTableEl) ? jsx('div', {
+            'data-workbench-inline-table': '1',
+            style: { marginBottom: 12, border: '1px solid #eef1f5', borderRadius: 8, padding: 8, background: '#fbfcfd' },
+            children: [
+              summaryEl ? jsx('div', { style: { flex: '0 0 auto', marginBottom: 6 }, children: summaryEl }, 'msum') : null,
+              jsx('div', { style: { maxHeight: '40vh', overflow: 'auto' }, children: mainTableEl || jsx('div', { style: { opacity: 0.6, padding: 12 }, children: '暂无数据。' }, 'mnodata') }, 'mtbl')
+            ].filter(Boolean)
+          }, 'inlinetbl') : null;
+          return jsx('div', { children: [tableBlock, jsx('div', { children: children }, 'fabin')].filter(Boolean) }, 'fabov');
+        })()
       }, 'fabbody')
     ]
   }, 'panel');

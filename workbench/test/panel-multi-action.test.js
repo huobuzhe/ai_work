@@ -308,3 +308,83 @@ for (const kind of ACTIONS) {
     }
   });
 }
+
+// 用户 m10321：overlay（浮窗叠加）模式下，主视图是宿主原生表格、mainPane 被丢弃，
+// 预览表格必须渲染进**面板体内**（data-workbench-inline-table），否则点「预览」只看得到
+// 摘要文字、看不到表格，执行后也看不到高亮。本测试守护该渲染路径。
+test('overlay 模式：预览表格渲染进浮窗面板体内（data-workbench-inline-table），执行后高亮保留', async (t) => {
+  if (!hasPython()) { t.skip('python/openpyxl 不可用'); return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-overlay-'));
+  let file;
+  try { file = makeFixture(dir, '演示_overlay'); }
+  catch (e) { fs.rmSync(dir, { recursive: true, force: true }); t.skip('建 fixture 失败：' + e.message); return; }
+  const actionHandler = makeActionHandler({
+    readTable: defaultReadTable,
+    applyTable: defaultApplyTable,
+    resolveFile: (f) => f,
+    store: createSessionStore({ loadButtons: () => null, saveButtons: () => true, loadRegistry: () => [] })
+  });
+  const { shim, body } = loadBody();
+  global.fetch = async (url, init) => {
+    const u = String(url);
+    if (u.includes('/workbench-api/action')) {
+      const res = actionHandler({ method: 'POST', url: '/workbench-api/action', body: init.body });
+      return { json: async () => res.body };
+    }
+    if (u.includes('/workbench-api/state')) {
+      const tbl = defaultReadTable(file);
+      return { json: async () => ({ file, columns: tbl.columns, rowCount: tbl.rows.length, preview: null, stage: 'IDLE', table: { columns: tbl.columns, rows: tbl.rows }, isDefaultDraft: false, registryButtons: [], buttons: [] }) };
+    }
+    return { json: async () => ({}) };
+  };
+  t.after(() => { shim.runCleanups(); delete global.fetch; fs.rmSync(dir, { recursive: true, force: true }); });
+
+  // overlay 模式：address 由外部宿主传入，body 不再用 useTabInfo 取文件。
+  const mkProps = () => ({
+    overlay: true,
+    address: { scope: 'session', sessionId: 's1', path: file },
+    fabOpen: true
+  });
+  shim.reset(); shim.beginRender();
+  let tree = body(mkProps()); shim.finishRender();
+  await waitTick(0);
+  shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+
+  // overlay 模式不应有流式主区域 mainPane（宿主原生表占主视图）
+  assert.ok(!findByAttr(tree, 'data-workbench-main', '1'), 'overlay: 不应渲染流式主区域 data-workbench-main（主视图交给宿主原生表）');
+
+  // 点 QUICK swap → 填字段 → 预览
+  const qbtn = findByAttr(tree, 'data-wb-quick', 'swap');
+  assert.ok(qbtn && qbtn.props.onClick, 'overlay: 应有 swap 动作按钮');
+  qbtn.props.onClick({ preventDefault() {} });
+  await waitTick(10);
+  shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+  const fA = findByAttr(tree, 'data-wb-field', '字段A');
+  fA.props.onChange({ preventDefault() {}, target: { value: '工时' } });
+  const fB = findByAttr(tree, 'data-wb-field', '字段B');
+  fB.props.onChange({ preventDefault() {}, target: { value: '时薪' } });
+  await waitTick(5);
+  shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+  const formPv = findByAttr(tree, 'data-wb-form-preview', '1');
+  formPv.props.onClick({ preventDefault() {} });
+  await waitTick(20);
+  shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+
+  // 核心断言：预览表格必须出现在面板体内
+  assert.ok(findByAttr(tree, 'data-workbench-inline-table', '1'), 'overlay: 预览表格应渲染进面板体 data-workbench-inline-table');
+  assert.ok(findByAttr(tree, 'data-workbench-table', '1'), 'overlay: 预览应渲染成表格 data-workbench-table');
+  const pvText = textOf(tree).join(' ');
+  assert.match(pvText, /影响 \d+ 行/, 'overlay: 预览应显示影响行数');
+  assert.match(pvText, /→/, 'overlay: 预览表格应带 before→after 箭头');
+
+  // 确认执行 → 高亮保留、箭头去掉
+  const confirmBtn = findByAttr(tree, 'data-wb-action', 'confirm');
+  assert.ok(confirmBtn && !confirmBtn.props.disabled, 'overlay: 确认按钮应可用');
+  confirmBtn.props.onClick({ preventDefault() {} });
+  await waitTick(40);
+  shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+  const afterText = textOf(tree).join(' ');
+  assert.match(afterText, /已写入磁盘/, 'overlay: 确认后应提示已写入磁盘');
+  assert.ok(findAll(tree, 'data-wb-changed').length > 0, 'overlay: 执行后受影响格应保留 data-wb-changed 高亮');
+  assert.doesNotMatch(afterText, /→/, 'overlay: 执行后表格应去掉 before→after 箭头');
+});
