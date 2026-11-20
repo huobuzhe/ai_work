@@ -56,7 +56,18 @@ def _dump(path, data_only):
     for r in grid[1:]:
         if all(v is None for v in r): continue
         rows.append({columns[i]: ('' if i >= len(r) or r[i] is None else r[i]) for i in range(len(columns))})
-    print(json.dumps({'columns': columns, 'rows': rows}, ensure_ascii=False))
+    # ③ 回写单元格底色：把每格填充色（solid fgColor.rgb 的后 6 位）一并带出，供端到端验证用。
+    fills = []
+    for row in ws.iter_rows():
+        for c in row:
+            try:
+                if c.fill and c.fill.fgColor and c.fill.fill_type == 'solid' and c.fill.fgColor.rgb:
+                    rgb = str(c.fill.fgColor.rgb)
+                    if rgb and rgb not in ('00000000', '0'):
+                        fills.append({'ref': c.coordinate, 'rgb': rgb[-6:]})
+            except Exception:
+                pass
+    print(json.dumps({'columns': columns, 'rows': rows, 'fills': fills}, ensure_ascii=False))
 
 def read_xlsx(path):
     _dump(path, data_only=False)
@@ -100,6 +111,9 @@ def apply(path, cells_json):
             ri = row_of.get(str(c['row']))
         if ri is None: continue
         _set_cell(ws, ri, ci, c['after'])
+        # ③ 回写单元格底色：cell 带 highlight（yellow/red/green/blue）时刷 PatternFill，只改填充色不改值。
+        if c.get('highlight'):
+            _set_fill(ws, ri, ci, c['highlight'])
     # 用户 m07859 图4：写回后 Excel 网格线变虚线 / 视觉与原表不同。
     # 根因：原表是 openpyxl 生成的，sheetView 里**没有** showGridLines（缺省），
     # 不同渲染器（WPS）缺省会画成虚线/浅灰网格。这里显式打开实线网格，保证写回后
@@ -111,9 +125,6 @@ def apply(path, cells_json):
     wb.save(path); print('OK')
 
 def _set_cell(ws, ri, ci, value):
-    """写入一个单元格值；尽量保留该单元格原有样式（字体/数字格式/边框），只换值。
-    openpyxl 直接 ws.cell(...).value= 本身即保留样式；此函数是对「新列/新行」的兜底：
-    新列补表头时复制表头样式，新数据格复制同列上一行样式，避免视觉与原表割裂。"""
     from copy import copy
     cell = ws.cell(row=ri, column=ci)
     if cell.value is None and ri > 1:
@@ -126,6 +137,24 @@ def _set_cell(ws, ri, ci, value):
         except Exception:
             pass
     cell.value = value
+
+
+# highlight 底色映射：语义色 → 柔和 RGB（避免纯色刺眼）。openpyxl PatternFill fgColor 需 6 位十六进制。
+_HIGHLIGHT_RGB = {
+    'yellow': 'FFEB9C',  # 柔和黄
+    'red': 'FFC7CE',     # 柔和红
+    'green': 'C6EFCE',   # 柔和绿
+    'blue': 'BDD7EE',    # 柔和蓝
+}
+
+
+def _set_fill(ws, ri, ci, color):
+    """③ 回写单元格底色：给单元格刷 PatternFill（只改填充色，不动值/字体/边框）。未知色忽略。"""
+    rgb = _HIGHLIGHT_RGB.get(str(color))
+    if not rgb:
+        return
+    from openpyxl.styles import PatternFill
+    ws.cell(row=ri, column=ci).fill = PatternFill(fill_type='solid', start_color=rgb, end_color=rgb)
 
 
 def create(path, structure_json):

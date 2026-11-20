@@ -130,6 +130,17 @@ const KINDS = {
       { key: '排序列', 类型: '列名', 必填: true, 默认值: '工时', 约束: { mustExist: true } },
       { key: '方向', 类型: '枚举', 必填: true, 默认值: 'asc', 约束: { enum: ['asc', 'desc'] } }
     ]
+  },
+  // ⑫ highlight 回写单元格底色（「便宜增量」之一）：给「目标列」满足条件的行刷底色，不改任何值。
+  // paramSpec：目标列（mustExist）+ 条件（可空=整列）+ 底色（黄/红/绿/蓝）。确认后 python 桥刷 PatternFill。
+  highlight: {
+    label: '⑫ 单元格标色', short: '单元格标色',
+    medium: '结构化动作：给一列满足条件的单元格刷底色（不改值）',
+    paramSpec: [
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '工时', 约束: { mustExist: true } },
+      { key: '条件', 类型: 'text', 必填: false, 默认值: '' },
+      { key: '底色', 类型: '枚举', 必填: true, 默认值: 'yellow', 约束: { enum: ['yellow', 'red', 'green', 'blue'] } }
+    ]
   }
 };
 
@@ -741,6 +752,11 @@ function stepsFor(kind, p) {
     '按「' + p.排序列 + '」' + (p.方向 === 'desc' ? '降序' : '升序') + '重新排列整表行顺序',
     '行内容不变，只改行的先后顺序（确认后写回整表）'
   ];
+  if (kind === 'highlight') return [
+    scopeStep,
+    '在「' + p.目标列 + '」列上' + (p.条件 ? '筛出满足「' + p.条件 + '」的行' : '取全部行'),
+    '给这些单元格刷上底色（' + p.底色 + '），不改任何值'
+  ];
   if (kind === 'affix') return [
     scopeStep,
     '给「' + p.目标列 + '」列每格文本' + (p.位置 === 'suffix' ? '末尾追加' : '开头加上') + '「' + p.文本 + '」'
@@ -827,6 +843,7 @@ function understand(sentence) {
   else if (/大写|小写|大小写|upper|lower/.test(s)) kind = 'case';
   else if (/前缀|后缀|加前缀|加后缀|affix/.test(s)) kind = 'affix';
   else if (/排序|按.*排|升序|降序|sort/.test(s)) kind = 'sort';
+  else if (/标色|底色|背景色|高亮|涂色|标黄|标红|highlight/.test(s)) kind = 'highlight';
   else if (/替换|换成|改成/.test(s)) kind = 'replace';
   else if (/填充|空值|补齐|补空/.test(s)) kind = 'fill';
   if (!kind) return { error: '没匹配到任何一种功能（本版只是关键词匹配，不是真 LLM）' };
@@ -1011,8 +1028,10 @@ function preview(state, draft) {
     // 记录该行在 state.rows 中的下标。applyCells 优先用它精确定位（重复主键也能清对行）；
     // 无 index 命中（row 不是 state.rows 里的同一对象）时回落按主键值定位，向后兼容。
     const rowIndex = state.rows.indexOf(row);
-    cells.push({ row: String(row[pk]), col, before, after, invalid: !!invalid, source: source || draft.kind,
-      rowIndex: rowIndex === -1 ? undefined : rowIndex });
+    const cell = { row: String(row[pk]), col, before, after, invalid: !!invalid, source: source || draft.kind,
+      rowIndex: rowIndex === -1 ? undefined : rowIndex };
+    cells.push(cell);
+    return cell;
   };
   const scopeCond = p.scope === 'match' ? parseCondition(p.条件, state) : null;
   const inScope = function (r) { return !scopeCond || matches(r, scopeCond); };
@@ -1179,6 +1198,18 @@ function preview(state, draft) {
       return desc ? -cmp : cmp;
     });
     previewMeta.sortOrder = idx;
+  } else if (draft.kind === 'highlight') {
+    // ⑫ 单元格标色：不改值，只给目标列满足条件的行产一格（after=原值 + highlight=底色）。
+    // 条件走 matches()；条件空=整列全部行。写盘时 python 桥按 highlight 刷 PatternFill。
+    const col = p.目标列;
+    const color = p.底色;
+    const cond = p.条件 ? parseCondition(p.条件, state) : null;
+    state.rows.forEach(function (r, ri) {
+      if (!inScope(r)) return;
+      if (cond && !matches(r, cond)) return;
+      const cell = add(r, col, beforeOf(state, r, col), beforeOf(state, r, col), false, 'highlight');
+      cell.highlight = color;
+    });
   }
   // 影响行数按「行」去重，不能只按主键值（重复主键会把两行塌成一行、少报影响行数）。
   // 优先用 rowIndex（state.rows 下标，重复主键也能区分），无 rowIndex 时回落主键值。

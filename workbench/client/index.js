@@ -156,6 +156,11 @@ const ACTION_FORMS = [
   { kind: 'sort', label: '按列排序', fields: [
     { key: '排序列', type: 'column', def: '' },
     { key: '方向', type: 'enum', options: ['asc', 'desc'], def: 'asc' }
+  ] },
+  { kind: 'highlight', label: '单元格标色', fields: [
+    { key: '目标列', type: 'column', def: '' },
+    { key: '条件', type: 'text', def: '' },
+    { key: '底色', type: 'enum', options: ['yellow', 'red', 'green', 'blue'], def: 'yellow' }
   ] }
 ];
 
@@ -283,7 +288,7 @@ function projectPreviewCard(state) {
 // kind → 中文短名（预览卡第①段展示用）。为保持 client 不依赖引擎而手工镜像 KINDS.short；
 // 新增/改名 kind 时须同步此处（已如实记录为 low 漂移风险，非第二套校验逻辑）。
 function labelOfKind(kind) {
-  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充', trim: '去首尾空格', 'case': '英文大小写', affix: '加前缀后缀', sort: '按列排序' };
+  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充', trim: '去首尾空格', 'case': '英文大小写', affix: '加前缀后缀', sort: '按列排序', highlight: '单元格标色' };
   return map[kind] || kind;
 }
 
