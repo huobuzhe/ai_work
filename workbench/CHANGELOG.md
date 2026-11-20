@@ -2,6 +2,11 @@
 
 本文件记录 `dsh-workbench`（表格工作台）的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### 新增（Added）
+- `sort` **按列排序**：按任意列升序/降序重排整表**行顺序**（行内容不变、只改先后）；支持数值列按数值、文本列按字典序，排序稳定（同值保原序）。确认后经 `xlsx_bridge.py sort` 重排物理行序写盘，预览即显示排序后的表。
+
 ## [1.0.0] - 2026-11-20
 
 首个可上线版本。核心形态：宿主打开 xlsx/xls/csv 时**原表原样显示**（宿主原生可编辑网格），右下角多一个**不遮挡的浮窗按钮**，点开是「表格工作台」浮窗面板——一句话或一键动作 → 逐格预览 → 确认才落盘。
@@ -37,7 +42,7 @@
 
 ### 已知边界（Known limits）
 - 输入框是**关键词匹配的「假编译器」，不是 LLM**：只认 10 类动作，不认自由改述/多动作/复杂条件。
-- `dedupe` 只清空重复行、不物理删行；`function` 仅两操作数四则；无排序/透视/图表/翻译/分类等（见 `docs/research/inputbox-vs-ai-sheets.md` 对标）。
+- `dedupe` 只清空重复行、不物理删行；`function` 仅两操作数四则；排序已支持（`sort`，按单列升降序），但无透视/图表/翻译/分类等（见 `docs/research/inputbox-vs-ai-sheets.md` 对标）。
 - 云端适配（飞书/腾讯）能力位保守记录、未全验证。
 
 [1.0.0]: https://github.com/huobuzhe/ai_work/tree/master/workbench

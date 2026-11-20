@@ -204,6 +204,41 @@ def probe(path):
         'openable': openable, 'encrypted': encrypted, 'hasMacro': has_macro
     }, ensure_ascii=False))
 
+def sort(path, order_json):
+    """按 order 数组（新行序，元素是表体数据行 0-based 下标）重排整表物理行顺序。
+    行内容与单元格样式原样保留，只改行的先后。表头不动。
+    order 语义与 lib/engine.js 的 preview.sortOrder 一致：order[k] = 原第几行数据被放到新第 k 行。
+    """
+    from openpyxl import load_workbook
+    with open(order_json, encoding='utf-8') as f:
+        order = json.load(f)
+    wb = load_workbook(path); ws = wb.active
+    n_data = ws.max_row - 1  # 表头占第 1 行
+    if not isinstance(order, list) or len(order) != n_data:
+        raise SystemExit('sort: order 长度 %r 与数据行数 %r 不符' % (
+            len(order) if isinstance(order, list) else order, n_data))
+    if sorted(order) != list(range(n_data)):
+        raise SystemExit('sort: order 不是 0..%d 的排列' % (n_data - 1))
+    ncol = ws.max_column
+    # 读全量数据行到内存
+    snapshot = []
+    for k in range(n_data):
+        src_row = k + 2
+        row_vals = [ws.cell(row=src_row, column=c).value for c in range(1, ncol + 1)]
+        snapshot.append(row_vals)
+    # 按 order 回写（值）
+    for new_k, old_k in enumerate(order):
+        dst_row = new_k + 2
+        vals = snapshot[old_k]
+        for c in range(1, ncol + 1):
+            ws.cell(row=dst_row, column=c).value = vals[c - 1]
+    try:
+        ws.sheet_view.showGridLines = True
+    except Exception:
+        pass
+    wb.save(path); print('OK')
+
+
 if __name__ == '__main__':
     cmd = sys.argv[1]
     if cmd == 'init-main': init_main(sys.argv[2])
@@ -212,6 +247,7 @@ if __name__ == '__main__':
     elif cmd == 'read-values': read_values(sys.argv[2])
     elif cmd == 'read-csv': read_csv(sys.argv[2])
     elif cmd == 'apply': apply(sys.argv[2], sys.argv[3])
+    elif cmd == 'sort': sort(sys.argv[2], sys.argv[3])
     elif cmd == 'create': create(sys.argv[2], sys.argv[3])
     elif cmd == 'probe': probe(sys.argv[2])
     else: raise SystemExit('unknown command: ' + cmd)

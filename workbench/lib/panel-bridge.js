@@ -24,14 +24,36 @@ const { createSessionStore } = require('./panel-session');
  * @param {string} file 绝对路径
  * @param {object[]} cells 引擎 preview 产出的单元格改动（[{col,row,after,...}]）
  */
-function defaultApplyTable(file, cells) {
+function defaultApplyTable(file, cells, sortOrder) {
   const { spawnSync } = require('child_process');
   const fs = require('fs');
   const os = require('os');
   const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
+  const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+
+  // 结构性动作（sort）：给了 sortOrder（新行序下标数组）→ 走整表重排命令，不逐格改值。
+  if (Array.isArray(sortOrder) && sortOrder.length) {
+    const tmpOrder = path.join(os.tmpdir(), 'workbench-sort-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.json');
+    fs.writeFileSync(tmpOrder, JSON.stringify(sortOrder), 'utf8');
+    let lastErr = null;
+    try {
+      for (const bin of candidates) {
+        const r = spawnSync(bin, [bridge, 'sort', file, tmpOrder], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+        if (r.error) { lastErr = r.error; continue; }
+        if (r.status !== 0) {
+          lastErr = new Error('xlsx_bridge sort exit ' + r.status + ': ' + (r.stderr || '').trim());
+          continue;
+        }
+        return { ok: true, cellsWritten: 0, reordered: sortOrder.length };
+      }
+      throw lastErr || new Error('找不到可用的 python 解释器');
+    } finally {
+      try { fs.unlinkSync(tmpOrder); } catch (_) {}
+    }
+  }
+
   const tmp = path.join(os.tmpdir(), 'workbench-apply-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.json');
   fs.writeFileSync(tmp, JSON.stringify(cells || []), 'utf8');
-  const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
   let lastErr = null;
   try {
     for (const bin of candidates) {
@@ -502,9 +524,11 @@ function makeActionHandler(deps) {
     const isExecute = (actTypeUpper === 'CONFIRM' || actTypeUpper === 'RUN_BUTTON');
     if (isExecute && vm.stage === 'EXECUTED' && beforeStage !== 'EXECUTED' && vm.preview && vm.preview.cells) {
       try {
-        const r = applyTable(absPath, vm.preview.cells);
+        // 结构性动作（sort）：preview 里带 sortOrder（新行序下标数组）时，落盘走「整表重排」而非逐格改值。
+        const r = applyTable(absPath, vm.preview.cells, vm.preview.sortOrder);
         wrote.writtenOk = true;
         wrote.writtenCells = (r && r.cellsWritten != null) ? r.cellsWritten : vm.preview.cells.length;
+        if (r && r.reordered != null) wrote.reordered = r.reordered;
         // 接缝缺口修复（function 动作）：若写出的单元格里有公式（after 以 = 开头），
         // 立刻就地重算，让缓存值落盘 → 面板/文件里「应发」等列能马上看到算出来的数，
         // 而不是空空如也（apply 只写公式字符串、不计算；read 用 data_only 读缓存值）。

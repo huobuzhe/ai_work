@@ -151,6 +151,10 @@ const ACTION_FORMS = [
     { key: '目标列', type: 'column', def: '' },
     { key: '位置', type: 'enum', options: ['prefix', 'suffix'], def: 'prefix' },
     { key: '文本', type: 'text', def: '#' }
+  ] },
+  { kind: 'sort', label: '按列排序', fields: [
+    { key: '排序列', type: 'column', def: '' },
+    { key: '方向', type: 'enum', options: ['asc', 'desc'], def: 'asc' }
   ] }
 ];
 
@@ -278,7 +282,7 @@ function projectPreviewCard(state) {
 // kind → 中文短名（预览卡第①段展示用）。为保持 client 不依赖引擎而手工镜像 KINDS.short；
 // 新增/改名 kind 时须同步此处（已如实记录为 low 漂移风险，非第二套校验逻辑）。
 function labelOfKind(kind) {
-  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充', trim: '去首尾空格', 'case': '英文大小写', affix: '加前缀后缀' };
+  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充', trim: '去首尾空格', 'case': '英文大小写', affix: '加前缀后缀', sort: '按列排序' };
   return map[kind] || kind;
 }
 
@@ -599,7 +603,10 @@ function renderWorkbenchPanel(hostState) {
       const cellMap = {};
       cells.forEach(function (c) { if (c.rowIndex != null && c.col != null) cellMap[c.rowIndex + '|' + c.col] = c; });
       const CAP = 50;
-      const shownRows = pvRows.slice(0, CAP);
+      // 结构性动作（sort）：没有单元格变化、但有整表行序重排。此时以「排好序后的 afterRows」作为展示行，
+      // 让用户在确认前直接看到排序效果（否则会显示原顺序、看不到排序）。
+      const hasSortOrder = Array.isArray(preview && preview.sortOrder) && preview.sortOrder.length === pvRows.length && cells.length === 0;
+      const shownRows = (hasSortOrder && pvAfter ? pvAfter : pvRows).slice(0, CAP);
       const thStyle = { border: '1px solid #dbe3ee', padding: '6px 10px', background: '#eef3fb', fontSize: 12, fontWeight: 600, textAlign: 'left', whiteSpace: 'nowrap', color: '#1e3a5f' };
       const tdStyle = { border: '1px solid #edf0f4', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap', color: '#303133' };
       const tdNum = Object.assign({}, tdStyle, { textAlign: 'right', fontVariantNumeric: 'tabular-nums' });

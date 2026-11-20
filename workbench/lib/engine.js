@@ -117,6 +117,17 @@ const KINDS = {
       { key: '位置', 类型: '枚举', 必填: true, 默认值: 'prefix', 约束: { enum: ['prefix', 'suffix'] } },
       { key: '文本', 类型: 'text', 必填: true, 默认值: '#' }
     ]
+  },
+  // ⑪ sort（日常常用，「便宜增量」之一）：按某列升序 / 降序重排整表行顺序。
+  // 结构性动作：不改任何单元格的值，只改行的先后顺序。预览产 preview.sortOrder（新行序下标数组），
+  // 确认后 applyCells 依 sortOrder 重排 rows。排序列必须存在（mustExist）；字符串按码点稳定排序（同值保原序）。
+  sort: {
+    label: '⑪ 按列排序', short: '按列排序',
+    medium: '结构化动作：按一列排序、重排整表行顺序（行内容不变，只改先后）',
+    paramSpec: [
+      { key: '排序列', 类型: '列名', 必填: true, 默认值: '工时', 约束: { mustExist: true } },
+      { key: '方向', 类型: '枚举', 必填: true, 默认值: 'asc', 约束: { enum: ['asc', 'desc'] } }
+    ]
   }
 };
 
@@ -813,6 +824,7 @@ function understand(sentence) {
   else if (/空格|首尾|trim|去空/.test(s)) kind = 'trim';
   else if (/大写|小写|大小写|upper|lower/.test(s)) kind = 'case';
   else if (/前缀|后缀|加前缀|加后缀|affix/.test(s)) kind = 'affix';
+  else if (/排序|按.*排|升序|降序|sort/.test(s)) kind = 'sort';
   else if (/替换|换成|改成/.test(s)) kind = 'replace';
   else if (/填充|空值|补齐|补空/.test(s)) kind = 'fill';
   if (!kind) return { error: '没匹配到任何一种功能（本版只是关键词匹配，不是真 LLM）' };
@@ -1135,6 +1147,24 @@ function preview(state, draft) {
       const after = p.位置 === 'suffix' ? (cur + txt) : (txt + cur);
       if (after !== cur) add(r, p.目标列, beforeOf(state, r, p.目标列), after, false, 'affix');
     });
+  } else if (draft.kind === 'sort') {
+    // ⑪ 排序：结构性动作——不改任何单元格，只产 preview.sortOrder（新行序下标数组）。
+    // 稳定排序：同值时保持原相对序（用下标兜底比较）。数值列按数值比，其余按字符串比（可空值排最前）。
+    const col = p.排序列;
+    const desc = p.方向 === 'desc';
+    const idx = state.rows.map(function (r, i) { return i; });
+    const valOf = function (i) { return state.rows[i][col]; };
+    const numOf = function (v) { const n = Number(v); return isFinite(n) && v !== '' && v !== null && v !== undefined ? n : null; };
+    idx.sort(function (a, b) {
+      const va = valOf(a), vb = valOf(b);
+      const na = numOf(va), nb = numOf(vb);
+      let cmp;
+      if (na !== null && nb !== null) cmp = na - nb;
+      else cmp = String(va == null ? '' : va).localeCompare(String(vb == null ? '' : vb));
+      if (cmp === 0) cmp = a - b; // 稳定：同值保持原相对序
+      return desc ? -cmp : cmp;
+    });
+    previewMeta.sortOrder = idx;
   }
   // 影响行数按「行」去重，不能只按主键值（重复主键会把两行塌成一行、少报影响行数）。
   // 优先用 rowIndex（state.rows 下标，重复主键也能区分），无 rowIndex 时回落主键值。
@@ -1162,12 +1192,17 @@ function preview(state, draft) {
 }
 
 // 纯函数：把预览里的格子落到一份新表格上
-function applyCells(state, cells) {
+// sortOrder（可选）：结构性动作（sort）的新行序下标数组——给了则按它重排 rows（不改任何单元格值）。
+function applyCells(state, cells, sortOrder) {
   const pk = state.primaryKey || '姓名';
   const columns = state.columns.slice();
-  cells.forEach(function (c) { if (columns.indexOf(c.col) === -1) columns.push(c.col); });
-  const rows = state.rows.map(function (r) { return Object.assign({}, r); });
-  cells.forEach(function (c) {
+  (cells || []).forEach(function (c) { if (columns.indexOf(c.col) === -1) columns.push(c.col); });
+  let rows = state.rows.map(function (r) { return Object.assign({}, r); });
+  // 结构性动作：先按 sortOrder 重排整表行序（行内容对象不变，只改先后）。
+  if (Array.isArray(sortOrder) && sortOrder.length === rows.length) {
+    rows = sortOrder.map(function (i) { return rows[i]; });
+  }
+  (cells || []).forEach(function (c) {
     // 优先按行索引精确定位（重复主键也能清对行）；无有效 rowIndex 时回落按主键值定位（向后兼容）。
     const byIndex = (typeof c.rowIndex === 'number' && c.rowIndex >= 0 && c.rowIndex < rows.length)
       ? rows[c.rowIndex]
@@ -1354,7 +1389,7 @@ function reduce(state, action) {
       const reconfirm = validate(state.draft, state);
       if (!reconfirm.ok)
         return guard(state, '拦住了：配方在执行前重新校验未通过（' + reconfirm.errors.join('；') + '）。');
-      const applied = applyCells(state, state.preview.cells);
+      const applied = applyCells(state, state.preview.cells, state.preview.sortOrder);
       return set(state, {
         columns: applied.columns, rows: applied.rows, stage: 'EXECUTED',
         note: '用户已确认，执行完成：改了 ' + state.preview.cells.length + ' 个单元格。', noteTone: 'ok',
@@ -1441,7 +1476,7 @@ function reduce(state, action) {
           log: push(state, '按钮参数改动 → 退回预览确认：' + changedParams.join('、'), 'warn')
         });
       }
-      const applied = applyCells(state, pv.cells);
+      const applied = applyCells(state, pv.cells, pv.sortOrder);
       // 票 #15 / 用户故事 18/32：重跑更新运行态标记（上次影响行数 / 空跑），不写回仓库。
       // 票 #16：预置按钮也在对应来源数组里更新标记（p* 在 registryButtons、b* 在 buttons）。
       const stamp = function (x) {

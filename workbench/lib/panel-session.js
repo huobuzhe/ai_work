@@ -292,6 +292,14 @@ function createSessionStore(opts) {
           }
         }
       } catch (_) { afterRows = null; }
+      // 结构性动作（sort）：preview.sortOrder 给出新行序下标数组。
+      // 预览要展示「排好序后的表」——afterRows 按 sortOrder 重排（行内容不变），
+      // 让用户在确认前就看到排序效果；同时保留 sortOrder 供写盘（defaultApplyTable）使用。
+      if (Array.isArray(preview.sortOrder) && preview.sortOrder.length === afterRows.length) {
+        try {
+          afterRows = preview.sortOrder.map(function (i) { return Object.assign({}, rows[i]); });
+        } catch (_) {}
+      }
       // 若预览会新增列（如 function 的「应发」），这些列在原 columns 里没有 → 追加到展示列，
       // 否则预览表格看不到新列、受影响的「新增格」也无处渲染（用户 m07024：公式结果列看不到）。
       let previewColumns = columns.slice();
