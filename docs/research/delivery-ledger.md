@@ -253,6 +253,15 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **修法**（workbench/client/index.js）：① 新增 `WB_SIDEBAR_RIGHT` / `WB_SR_LISTENERS` / `_wbSetSidebarRight(s)`；用 `ctx.inject(['sidebarRight'], cb)` 异步取得服务（取到即通知组件）。② 新增 `pickActiveSheetFromSidebarRight(src)`——`src.active()` 取 `contentId`，`parseFileAddress` 归一为 `{scope,sessionId,path}`，仅当 `.xlsx/.xls/.csv` 才命中。③ `WorkbenchOverlayHost` 改 `useState`+`useEffect` 轮询 `active()`，`address` 命中才传给 `WorkbenchPanelBodyRef`。后端 `/workbench-api/state|action?file=<relpath>&sessionId=<id>` 已有 `resolveFile`（`lib/index.mjs` 用 `sessions.get(SessionId).header.cwd` 解析成绝对路径），所以传 session-relative 路径即可。弃用 `betterSidebar`/`pickActiveSheetFile`（保留导出兼容）。
 - **验证**：① 新增 panel-smoke 回归 `pickActiveSheetFromSidebarRight：从 active().contentId 解析当前表格文件`（session 相对路径/含中文/ csv 命中、非表格不命中、空不命中）。② 实机真实渲染（react-dom/server 渲 overlay 宿主 + 假 sidebarRight 返回真实 contentId 格式 + 假 fetch）→ 输出确认 `has FAB: true`、`表格工作台 title: true`、**`title shows filename: true`（演示_动作_swap.xlsx）**，证明 address 已正确解析。全量 npm test 476 tests/455 pass/0 fail/21 skipped；acceptance engineMatchesFile:true、acceptance:formula allNumeric:true/valuesMatch:true。commit f7964af（44 上：77f3546/61fc894 为同题前两版尝试，已被 f7964af 取代）。
 
+## 交付后增量（第十三波：修复浮窗「预览后没有表格」——overlay 模式把表格渲染进面板体，用户 m10321，2026-11-20 补记）
+
+上一波修好 `address` 后，字段下拉与标题文件名都正常；用户反馈新问题：**点「预览」后只有摘要文字（影响 N 行），看不到表格**；确认执行后数据确实对调落盘，但**看不到高亮**。
+
+- **根因**：`renderWorkbenchPanel` 在 **`overlay:true`** 模式下（宿主原生表格占主视图时）走了一个早返回分支，只返回 `[fab, panel]`，把承载表格的 **`mainPane`（`data-workbench-main`，内含 `mainTableEl` 预览/原表网格）整个丢弃了**。于是面板体里只有动作控件与摘要行，表格网格永远不渲染。
+- **修法**（workbench/client/index.js）：overlay 模式下面板体（`data-wb-fab-body`）顶部新增 **`data-workbench-inline-table`** 区块，把 `summaryEl` + `mainTableEl` 渲染进面板体内（非 overlay 分支保持原样）。面板宽度 overlay 下 384→480、maxHeight 72vh→82vh，容得下表格。
+- **踩坑（务必记住）**：JSX 运行时的 `jsxs(type, props, key)` **第三参是 key 不是 children**——children 必须放进 `props.children`。首次改动误把 children 数组当第 3 参传入，`data-workbench-inline-table` 元素生成但**其子节点（表格）全丢**，测试表现为「有 inline-table、无 table」。改回 `props.children` 后正常。
+- **验证**：新增 `panel-multi-action.test.js` 的 **overlay 模式回归**（`overlay:true`+`address`+`fabOpen:true`）：断言预览时 `data-workbench-inline-table` 与 `data-workbench-table` 都在、有 `→` 箭头；确认执行后 `data-wb-changed` 高亮保留且**无箭头**。另用 react-dom/server 真实渲染 overlay 面板截图确认：执行后表格 工时/时薪 列（80/160、90/176、75/150）黄色高亮、无箭头。全量 npm test **477 tests/456 pass/0 fail/21 skipped**；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。commit 4160209。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
