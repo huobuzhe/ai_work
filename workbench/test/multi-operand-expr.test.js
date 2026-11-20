@@ -81,3 +81,42 @@ test('function 预览端到端：多操作数表达式写公式串', () => {
   const c0 = s.preview.cells.find((c) => c.col === '应发' && c.rowIndex === 0);
   assert.equal(String(c0.after).replace(/\s/g, ''), '=(B2*C2)+D2');
 });
+
+// 回归（真机 e2e 发现）：面板一键动作把用户自选的新输出列名（如「合计」，表里还不存在）
+// 误改成「应发」。根因：panel-session.preNormalizeQuickParams 的 function 分支
+// 用 !has(输出列) 判断「未指定」，但新列名本来就不在表里 → 被误判成未指定。修成只在空/主键时兜底。
+test('面板 QUICK：用户自选新输出列名（新列，未存在于表中）应被保留，不被改成「应发」', () => {
+  const PS = require('../lib/panel-session');
+  const store = PS.createSessionStore({ loadButtons: () => null, saveButtons: () => true, loadRegistry: () => [] });
+  const table = {
+    primaryKey: '姓名',
+    columns: ['姓名', '部门', '工时', '时薪', '奖金', '备注'],
+    rows: [{ 姓名: '阿岚', 部门: '销售', 工时: 160, 时薪: 80, 奖金: 500, 备注: '' }]
+  };
+  // 模拟真实面板：QUICK + 用户自选输出列「合计」（表中尚无此列）
+  const vm = store.applyAction('F:/x/合计.xlsx', table, {
+    type: 'QUICK', kind: 'function', params: { 表达式: '(工时 + 时薪) * 2', 输出列: '合计' }
+  });
+  assert.equal(vm.stage, 'PREVIEWED');
+  const cols = vm.preview.cells.map((c) => c.col);
+  assert.ok(cols.indexOf('合计') !== -1, '应在「合计」列产出单元格，实际列=' + cols.join(','));
+  assert.ok(cols.indexOf('应发') === -1, '不应产生「应发」列（用户指定的是「合计」）');
+  const c0 = vm.preview.cells.find((c) => c.col === '合计' && c.rowIndex === 0);
+  assert.equal(c0.after, 480); // (160+80)*2
+});
+
+test('面板 QUICK：未指定输出列（空）时仍兜底成「应发」（保持历史默认行为）', () => {
+  const PS = require('../lib/panel-session');
+  const store = PS.createSessionStore({ loadButtons: () => null, saveButtons: () => true, loadRegistry: () => [] });
+  const table = {
+    primaryKey: '姓名',
+    columns: ['姓名', '部门', '工时', '时薪'],
+    rows: [{ 姓名: '阿岚', 部门: '销售', 工时: 160, 时薪: 80 }]
+  };
+  const vm = store.applyAction('F:/x/y.xlsx', table, {
+    type: 'QUICK', kind: 'function', params: { 表达式: '工时 * 时薪', 输出列: '' }
+  });
+  assert.equal(vm.stage, 'PREVIEWED');
+  const cols = vm.preview.cells.map((c) => c.col);
+  assert.ok(cols.indexOf('应发') !== -1, '未指定时应兜底成「应发」，实际=' + cols.join(','));
+});
