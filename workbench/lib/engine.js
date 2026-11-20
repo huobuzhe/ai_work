@@ -68,7 +68,10 @@ const KINDS = {
     ]
   },
   // ⑥ replace（日常常用）：把某列中的「查找文本」替换成「替换为」。
-  // 语义：在 scope 范围内逐行对目标列做子串替换；查找为空时按「整列赋值为替换值」处理（便于批量改）。
+  // 语义：在 scope 范围内逐行对目标列做子串替换。
+  //   查找为空、替换为非空 → 整列赋值为替换值（批量改，属合法用法）；
+  //   查找为空且替换为也为空 → 会清空整列，属误操作（用户 m10775 实机发现），引擎层予以拦截不产出格子。
+  // 故「查找」保持非必填，真正的拦截由 preview 分支对「查找空且替换为空」的判断负责。
   replace: {
     label: '⑥ 文本替换', short: '文本替换',
     medium: '结构化动作：把一列里的某段文字替换成另一段',
@@ -1077,14 +1080,25 @@ function preview(state, draft) {
       });
     });
   } else if (draft.kind === 'replace') {
-    // ⑥ 文本替换：在「目标列」里把「查找」子串替换成「替换为」；查找为空时整列赋值为替换值。
+    // ⑥ 文本替换：在「目标列」里把「查找」子串替换成「替换为」。
+    // 查找为空、替换为非空 → 整列赋值为替换值（批量改）。
+    // 查找为空且替换为也为空 → 会清空整列，属误操作（用户 m10775 实机发现），此处明确拦截：
+    // 返回 invalid 预览、不产出任何单元格，避免静默把一列抹成空。
+    const findStr = String(p.查找 == null ? '' : p.查找);
+    const repStr = String(p.替换为 == null ? '' : p.替换为);
+    if (!findStr && !repStr) {
+      return Object.assign({ cells: [], summary: '「查找」和「替换为」都为空：替换不会改动任何单元格（不执行）。',
+        affectedRows: 0, totalRows: state.rows.length, invalid: true, disabled: false,
+        errors: ['「查找」与「替换为」不能同时为空'], issues: [], capabilityBlockers: [],
+        disclosure: null, swapBanner: '', paramSpec: paramSpec }, adapterMeta);
+    }
     state.rows.forEach(function (r) {
       if (!inScope(r)) return;
       const before = beforeOf(state, r, p.目标列);
       const cur = r[p.目标列] == null ? '' : String(r[p.目标列]);
       let after;
-      if (!p.查找) after = String(p.替换为 == null ? '' : p.替换为);
-      else after = cur.split(String(p.查找)).join(String(p.替换为 == null ? '' : p.替换为));
+      if (!findStr) after = repStr;
+      else after = cur.split(findStr).join(repStr);
       if (after !== cur) add(r, p.目标列, before, after, false, 'replace');
     });
   } else if (draft.kind === 'fill') {

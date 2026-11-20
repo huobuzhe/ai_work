@@ -48,6 +48,16 @@ test('replace：查找为空时整列赋值（全部改为同一值）', functio
   st.preview.cells.forEach(function (c) { assert.equal(c.after, '统一'); });
 });
 
+test('replace：查找与替换为同时为空 —— 拦截、不清空整列、不改动任何格（用户 m10775 实机隐患）', function () {
+  const s = E.initial(DATA);
+  const st = E.reduce(s, { type: 'QUICK', kind: 'replace', params: { 目标列: '部门', 查找: '', 替换为: '' } });
+  // 不得进入 PREVIEWED；不得产生任何“把部门抹成空”的改动
+  assert.notEqual(st.stage, 'PREVIEWED', '空+空替换不应进入可预览态');
+  assert.ok(!st.preview || !st.preview.cells || st.preview.cells.length === 0, '空+空替换不应产出任何单元格');
+  // 数据行保持原值（未被清空）
+  st.rows.forEach(function (r) { assert.notEqual(String(r['部门']), '', '部门列不应被清空'); });
+});
+
 test('replace：带 scope=match 只替换满足条件的行', function () {
   const s = E.initial(DATA);
   const st = E.reduce(s, { type: 'QUICK', kind: 'replace', params: { 目标列: '部门', 查找: '部', 替换为: '', scope: 'match', 条件: '工时 > 150' } });
