@@ -95,6 +95,28 @@ node scripts/build-preview.js          # 默认写回 preview/index.html
 
 > **一句话记忆**：A 是「出口指错文件」、B 是「导出形状写错」、C 是「开了空文件」、D 是「被崩溃恢复按钮踢出清单」。A、B 是代码 / 包配置问题（本仓已修，一般不会复发）；C、D 是环境 / 操作问题（重装或换文件即可）。
 
+#### 方式二补充二：装到另一套 DSH 配置（换机器 / 换 profile）
+
+上面的坑全是在「本机现网 profile」修好的。若你要把工作台搬到**另一台机器**或**同一台机的另一个 profile**，按下面四步接线即可（宿主不认 npm 上发布的包，靠 profile 的 `link:` 依赖 + bundle 清单加载本地目录）：
+
+1. **确认入口形状对**（否则会静默不挂载或崩溃，见坑 A/B）：
+   - `workbench/package.json` 的 `"main": "lib/index.mjs"`、`"exports": { ".": { "default": "./lib/index.mjs" }, ... }`；
+   - `lib/index.mjs` 里**只有具名 `export const name` + `export function apply`，不要 `export default`**。
+2. **在目标 profile 目录接线**（`<profile>` 例：`~/.dsh/profiles/desktop`）：
+   - 编辑该 profile 的 `package.json`：`dependencies` 加一条 `"dsh-workbench": "link:<工作台绝对路径>"`（Windows 用正斜杠 `link:F:/ai_work/workbench`）；
+   - 把 `"dsh-workbench"` 追加进该 profile 的 `dsh.profile.bundles` 数组；
+   - 建目录链接：`node_modules/dsh-workbench` 指向工作台目录（Windows：`cmd /c mklink /J node_modules\dsh-workbench F:\ai_work\workbench`；macOS/Linux：`ln -s`）。
+3. **确认 bundle patch 就位**：`workbench/cordis.patch.yml`（声明 `dsh.bundle.patch`）。宿主启动时读 profile 的 bundles → 对每个包 `loader.import(包名)` → 取 `exports["."]` 的 `apply` 挂载。
+4. **重启宿主、打开一个真实 xlsx**：右下角应出现蓝色 ⚙ 浮窗按钮；点开是「表格工作台」浮窗（标题带当前文件名），宿主原生表格照常可编辑、不被遮挡。
+
+装好后跑一次自检确认环境 OK：
+```bash
+cd <工作台绝对路径>
+npm run selfcheck      # 只读、不联网，检查包结构/构建产物/引擎 10 动作/scripts
+```
+
+> 若换机器后「浮窗按钮不出现」：先查 `sidebarRight` 服务是否由宿主提供（本插件靠 `ctx.inject(['sidebarRight'])` 取当前文件；取不到时不报错但浮窗会退化）。这是宿主版本差异，见坑 A/B 的对齐原则。
+
 ### 方式三（最快验证）：不进宿主，直接用命令行跑「大脑」
 
 想确认「某句话会不会被理解成某个动作、会影响哪些格子」，一条命令就够。**操作步骤：**

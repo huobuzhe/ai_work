@@ -1,8 +1,30 @@
 {
   "name": "dsh-workbench",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "表格工作台：把建表与日常繁琐表格操作收进按钮与输入框（第一刀=本地 Excel 零凭据闭环）。规格 #8 / 票 #9。",
+  "description": "表格工作台：把建表与日常繁琐表格操作收进「一句话 + 10 个一键动作」，改前逐格预览、确认才落盘（本地 Excel 零凭据闭环）。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "workbench",
+    "excel",
+    "xlsx",
+    "spreadsheet",
+    "表格",
+    "自动化",
+    "local-first"
+  ],
+  "author": "huobuzhe",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huobuzhe/ai_work.git",
+    "directory": "workbench"
+  },
+  "bugs": {
+    "url": "https://github.com/huobuzhe/ai_work/issues"
+  },
+  "homepage": "https://github.com/huobuzhe/ai_work/tree/master/workbench#readme",
   "type": "commonjs",
   "main": "lib/index.mjs",
   "exports": {
@@ -24,6 +46,7 @@
     "preview",
     "cordis.patch.yml",
     "README.md",
+    "CHANGELOG.md",
     "SMOKE.md",
     "capability-matrix.md"
   ],
@@ -39,7 +62,8 @@
     "acceptance:formula": "node scripts/acceptance-formula.js",
     "test:capability": "node --test test/capability-matrix.test.js",
     "capability:probe": "node scripts/capability-probe.js --run-local --write-matrix",
-    "build:preview": "node scripts/build-preview.js"
+    "build:preview": "node scripts/build-preview.js",
+    "selfcheck": "node scripts/selfcheck.mjs"
   },
   "engines": {
     "node": ">=22"
