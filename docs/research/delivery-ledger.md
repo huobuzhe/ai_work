@@ -244,6 +244,14 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **测试**：panel-smoke 新增回归守护 `overlay 宿主无论是否命中文件都渲染可点浮窗（不出现 data-wb-fab-idle 死钮）`——断言 overlay 模式（address=null 与 address=有文件两种）渲染树里均无 `data-wb-fab-idle`。全量 npm test 475 tests/454 pass/0 fail/21 skipped；acceptance engineMatchesFile:true、acceptance:formula allNumeric:true/valuesMatch:true。commit 8847f74。
 - **视觉验证**：headless Edge 渲染 overlay 真实组件树（react/react-dom/server）→ 右下角蓝色渐变⚙ FAB + 展开面板（标题栏「表格工作台 演示_动作_swap.xlsx」+ 10 个动作芯片 + 输入框 + 理解/预览/确认执行/固化为按钮），见截图确认。
 
+## 交付后增量（第十二波：修复浮窗字段下拉为空——betterSidebar 改 ctx.inject 异步取得，用户 m09985，2026-11-20 补记）
+
+点开浮窗后（第十一波修复生效），用户反馈**配置表单里「字段A/字段B」下拉没有任何列名可选**（字段A「（请选择）」、字段B「（无选项）」），而右侧原生表明明有 姓名/部门/工时/时薪 列；面板标题也**缺文件名后缀**——两处都指向 `hostState.address` 为 null。
+
+- **根因**：`registerWorkbenchOverlay` 原先在 apply 时用 `ctx.get('betterSidebar')` **同步**取服务。若 better-sidebar 在本插件**之后**才 `ctx.provide("betterSidebar", service)`，同步 `ctx.get` 返回 undefined → `sidebar` 永远 null → 快照读不到 → `pickActiveSheetFile` 永远 undefined → `address` 恒 null → `usePanelData` 拿不到文件 → `vm.table` 为 null → 表单列下拉 `cols=[]` 空。（`ctx.get` 只在提供者已注册后可用，不等待。）
+- **修法**（workbench/client/index.js）：① 新增模块级 `WB_SIDEBAR` / `WB_SIDEBAR_LISTENERS` / `_wbSetSidebar(s)`；改用 **`ctx.inject(['betterSidebar'], cb)`** 异步取得服务（对齐 dsh-univer-office:23374 的等就绪写法），取得后写入 `WB_SIDEBAR` 并逐个回调 listener 触发重渲染；保留同步 `ctx.get` 兜底。② `WorkbenchOverlayHost` 的 `useSyncExternalStore` 订阅改为：回调推入 `WB_SIDEBAR_LISTENERS`，并由 `getS` 读 `WB_SIDEBAR.getSnapshot()`（缺失时给 null/空订阅，无条件调 hooks）。③ `pickActiveSheetFile` 增加：`tab.path` 形如 `dsh-resource://file/...` 时用 `parseFileAddress` 归一为 `{scope,sessionId,path}`。
+- **测试**：panel-multi-action 新增回归守护——swap 展开配置表单后，`data-wb-field='字段A'` 的 `props.options` 必含当前表列「工时」（锁死「下拉不能为空」）。全量 npm test 475 tests/454 pass/0 fail/21 skipped；acceptance engineMatchesFile:true、acceptance:formula allNumeric:true/valuesMatch:true。commit 77f3546。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
