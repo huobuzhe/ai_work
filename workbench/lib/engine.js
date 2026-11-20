@@ -613,9 +613,127 @@ function matches(row, cond) {
   return compareByOp(cond.op, String(raw == null ? '' : raw), cond.value);
 }
 
-// ---- 公式字符串生成（票 #11：不实现求值器，只生成公式读回缓存）----
-// 规格 #8：function kind 的产物是「公式字符串 + 命名参数」，实际计算交给
-// 本地计算引擎（LibreOffice）重算后读回缓存值；引擎本身绝不做 JS 数值求值。
+// ---- 表达式解析（多操作数：任意项 + - * /、括号、优先级、一元负号）----
+// 共享同一个词法/语法分析器，产出 AST；toFormula 把 AST 渲染成 A1 公式串，
+// computeValue 把 AST 用该行实际数值求值。文法（优先级从低到高）：
+//   expr   := term (('+'|'-') term)*
+//   term   := unary (('*'|'/') unary)*
+//   unary  := '-' unary | primary
+//   primary:= number | column | '(' expr ')'
+// 归一化：全角 × 当 *、− 当 -、去空白。任何非法 token / 未知列 / 括号不匹配 → 返回 null。
+function _tokenizeExpr(expr) {
+  const s = String(expr == null ? '' : expr).replace(/\s+/g, '').replace(/×/g, '*').replace(/[−–]/g, '-');
+  if (!s) return null;
+  const tokens = [];
+  let i = 0;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === '(' || ch === ')' || ch === '+' || ch === '-' || ch === '*' || ch === '/') {
+      tokens.push({ t: ch }); i++; continue;
+    }
+    const numM = /^\d+(\.\d+)?/.exec(s.slice(i));
+    if (numM) { tokens.push({ t: 'num', v: Number(numM[0]) }); i += numM[0].length; continue; }
+    const idM = /^[\u4e00-\u9fffA-Za-z_][\u4e00-\u9fffA-Za-z0-9_]*/.exec(s.slice(i));
+    if (idM) { tokens.push({ t: 'id', v: idM[0] }); i += idM[0].length; continue; }
+    return null; // 非法字符（如 ^）
+  }
+  return tokens;
+}
+function _parseExprTokens(tokens) {
+  let pos = 0;
+  function peek() { return tokens[pos]; }
+  function eat(t) { if (tokens[pos] && tokens[pos].t === t) { pos++; return true; } return false; }
+  function parseExpr() {
+    let node = parseTerm();
+    if (!node) return null;
+    while (peek() && (peek().t === '+' || peek().t === '-')) {
+      const op = tokens[pos++].t;
+      const right = parseTerm();
+      if (!right) return null;
+      node = { type: 'bin', op: op, left: node, right: right };
+    }
+    return node;
+  }
+  function parseTerm() {
+    let node = parseUnary();
+    if (!node) return null;
+    while (peek() && (peek().t === '*' || peek().t === '/')) {
+      const op = tokens[pos++].t;
+      const right = parseUnary();
+      if (!right) return null;
+      node = { type: 'bin', op: op, left: node, right: right };
+    }
+    return node;
+  }
+  function parseUnary() {
+    if (peek() && peek().t === '-') {
+      pos++;
+      const operand = parseUnary();
+      if (!operand) return null;
+      return { type: 'neg', v: operand };
+    }
+    if (peek() && peek().t === '+') { pos++; return parseUnary(); }
+    return parsePrimary();
+  }
+  function parsePrimary() {
+    const tk = peek();
+    if (!tk) return null;
+    if (tk.t === '(') {
+      pos++;
+      const node = parseExpr();
+      if (!node) return null;
+      if (!eat(')')) return null; // 括号不匹配
+      return node;
+    }
+    if (tk.t === 'num') { pos++; return { type: 'num', v: tk.v }; }
+    if (tk.t === 'id') { pos++; return { type: 'col', name: tk.v }; }
+    return null;
+  }
+  const ast = parseExpr();
+  if (!ast) return null;
+  if (pos !== tokens.length) return null; // 剩余 token → 非法（如尾随运算符）
+  return ast;
+}
+function parseExpr(expr) {
+  const tokens = _tokenizeExpr(expr);
+  if (!tokens) return null;
+  return _parseExprTokens(tokens);
+}
+function _exprColumns(ast, out) {
+  if (!ast) return out;
+  if (ast.type === 'col') out.push(ast.name);
+  else if (ast.type === 'neg') _exprColumns(ast.v, out);
+  else if (ast.type === 'bin') { _exprColumns(ast.left, out); _exprColumns(ast.right, out); }
+  return out;
+}
+function _renderFormula(ast, cols, rowNum) {
+  if (!ast) return null;
+  if (ast.type === 'num') return String(ast.v);
+  if (ast.type === 'col') {
+    const i = cols.indexOf(ast.name);
+    if (i === -1) return null;
+    return columnLetter(i) + rowNum;
+  }
+  if (ast.type === 'neg') {
+    const inner = _renderFormula(ast.v, cols, rowNum);
+    return inner == null ? null : '(-' + inner + ')';
+  }
+  if (ast.type === 'bin') {
+    const l = _renderFormula(ast.left, cols, rowNum);
+    const r = _renderFormula(ast.right, cols, rowNum);
+    return (l == null || r == null) ? null : '(' + l + ast.op + r + ')';
+  }
+  return null;
+}
+// 顶层渲染：AST 根若是 bin，去掉最外层多余括号（子运算各自带括号）。
+function _renderFormulaTop(ast, cols, rowNum) {
+  if (ast && ast.type === 'bin') {
+    const l = _renderFormula(ast.left, cols, rowNum);
+    const r = _renderFormula(ast.right, cols, rowNum);
+    return (l == null || r == null) ? null : l + ast.op + r;
+  }
+  return _renderFormula(ast, cols, rowNum);
+}
 function columnLetter(n) { // 0-based 列序 → A/B/C…（支持多字母列）
   let s = '';
   let i = n + 1;
@@ -627,55 +745,55 @@ function columnLetter(n) { // 0-based 列序 → A/B/C…（支持多字母列�
   return s;
 }
 function toFormula(expr, state, rowIndex) {
-  const s = String(expr == null ? '' : expr).replace(/\s+/g, '').replace(/×/g, '*').replace(/−/g, '-');
-  const m = /^([^*+\-]+)([*+\-])([^*+\-]+)$/.exec(s);
-  if (!m) return null;
-  const rowNum = (rowIndex || 0) + 2; // 第 1 行是表头，数据从第 2 行起
+  const ast = parseExpr(expr);
+  if (!ast) return null;
   const cols = (state && state.columns) || [];
-  const operand = function (tok) {
-    if (/^\d+(\.\d+)?$/.test(tok)) return tok;                         // 数字字面量（分隔符已排除 '-'，负号不单独支持）
-    if (!/^[\u4e00-\u9fffA-Za-z_][\u4e00-\u9fffA-Za-z0-9_]*$/.test(tok)) return null; // 非法 token（含比较运算符）
-    const i = cols.indexOf(tok);
-    if (i === -1) return null;                                          // 未知列名
-    return columnLetter(i) + rowNum;
-  };
-  const l = operand(m[1]), r = operand(m[3]);
-  if (!l || !r) return null;
-  return '=' + l + m[2] + r;
+  const rowNum = (rowIndex || 0) + 2; // 第 1 行是表头，数据从第 2 行起
+  // 校验所有列名存在
+  const used = _exprColumns(ast, []);
+  for (let k = 0; k < used.length; k++) { if (cols.indexOf(used[k]) === -1) return null; }
+  const body = _renderFormulaTop(ast, cols, rowNum);
+  if (body == null) return null;
+  return '=' + body;
 }
-// ---- 数值求值（与 toFormula 同文法；用户 m07859 选「存算好的真实数字」）----
-// 与 toFormula 共享同一个 operand/operator 文法，但这里把操作数解析成**该行实际单元格数值**并做算术，
-// 产出可直接写入单元格的数字（预览与磁盘都显示真实数字，而非 =C2*D2 公式文本）。
-// 诚实边界：只支持「操作数 单运算符 操作数」的二元算术（与 toFormula 完全一致的范围），
-// 不支持括号/多运算符——超出范围返回 null（调用方回落公式或空）。
+// ---- 数值求值（与 toFormula 共享同一 AST；用户 m07859 选「存算好的真实数字」）----
+// 多操作数：任意项 + - * /、括号、优先级、一元负号（与 toFormula 完全一致的范围）。
+// 用该行实际单元格数值实算，产出可直接写入单元格的数字。
+// 任一处不可算（非数值单元格/未知列/括号不匹配/除以零）→ 返回 null（调用方回落公式或空）。
+function _evalAst(ast, row, cols) {
+  if (!ast) return null;
+  if (ast.type === 'num') return ast.v;
+  if (ast.type === 'col') {
+    if (cols.indexOf(ast.name) === -1) return null;
+    const raw = row[ast.name];
+    if (raw === null || raw === undefined || raw === '') return null;
+    const n = Number(raw);
+    return isFinite(n) ? n : null;
+  }
+  if (ast.type === 'neg') { const v = _evalAst(ast.v, row, cols); return v == null ? null : -v; }
+  if (ast.type === 'bin') {
+    const a = _evalAst(ast.left, row, cols);
+    const b = _evalAst(ast.right, row, cols);
+    if (a == null || b == null) return null;
+    if (ast.op === '+') return a + b;
+    if (ast.op === '-') return a - b;
+    if (ast.op === '*') return a * b;
+    if (ast.op === '/') { if (b === 0) return null; return a / b; }
+    return null;
+  }
+  return null;
+}
 function computeValue(expr, state, rowIndex) {
-  const s = String(expr == null ? '' : expr).replace(/\s+/g, '').replace(/×/g, '*').replace(/−/g, '-');
-  const m = /^([^*+\-]+)([*+\-])([^*+\-]+)$/.exec(s);
-  if (!m) return null;
+  const ast = parseExpr(expr);
+  if (!ast) return null;
   const rows = (state && state.rows) || [];
   const row = rows[rowIndex || 0] || null;
   if (!row) return null;
   const cols = (state && state.columns) || [];
-  const operandValue = function (tok) {
-    if (/^\d+(\.\d+)?$/.test(tok)) return Number(tok);         // 数字字面量
-    if (!/^[\u4e00-\u9fffA-Za-z_][\u4e00-\u9fffA-Za-z0-9_]*$/.test(tok)) return null;
-    if (cols.indexOf(tok) === -1) return null;                 // 未知列名
-    const raw = row[tok];
-    if (raw === null || raw === undefined || raw === '') return null;
-    const n = Number(raw);
-    return isFinite(n) ? n : null;                             // 非数值单元格 → 无法算
-  };
-  const a = operandValue(m[1]), b = operandValue(m[3]);
-  if (a === null || b === null) return null;
-  const op = m[2];
-  let v;
-  if (op === '*') v = a * b;
-  else if (op === '+') v = a + b;
-  else if (op === '-') v = a - b;
-  else return null;
-  // 消除浮点误差（如 0.1*3=0.30000000000000004）：保留最多 10 位小数再去尾零。
-  const rounded = Math.round(v * 1e10) / 1e10;
-  return rounded;
+  const v = _evalAst(ast, row, cols);
+  if (v == null || !isFinite(v)) return null;
+  // 消除浮点误差（如 0.1*3=0.30000000000000004）：保留最多 10 位小数。
+  return Math.round(v * 1e10) / 1e10;
 }
 // 从「…算成应发 / 写成 X / 得到 X」里抽输出列名（命名参数），抽不到返回 null。
 function extractOutputColumn(sentence) {
