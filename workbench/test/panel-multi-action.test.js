@@ -225,6 +225,13 @@ for (const kind of ACTIONS) {
       assert.ok(el && el.props.onChange, kind + ': 表单应有字段 ' + k);
       el.props.onChange({ preventDefault() {}, target: { value: formFieldVals[k] } });
     });
+    // 用户 m10022：字段A/B 下拉必须能选到当前表的真实列名（不能是空下拉）。
+    // 回归守护：column 型字段的下拉 options 必须包含当前表列（如 swap 的 字段A 含「工时」）。
+    if (kind === 'swap') {
+      const fA = findByAttr(tree, 'data-wb-field', '字段A');
+      assert.ok(Array.isArray(fA.props.options) && fA.props.options.indexOf('工时') !== -1,
+        'swap 字段A 下拉选项应包含当前表列「工时」，实际=' + JSON.stringify(fA && fA.props && fA.props.options));
+    }
     await waitTick(5);
     shim.beginRender(); tree = body(mkProps()); shim.finishRender();
     // 点表单「预览」

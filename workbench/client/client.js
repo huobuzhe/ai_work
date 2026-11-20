@@ -1128,23 +1128,51 @@ function pickActiveSheetFile(snap) {
       }
     }
     if (typeof p !== 'string' || !/\.(xlsx|xls|csv)$/i.test(p)) return undefined;
+    // tab.path 可能是绝对路径，也可能是 dsh-resource://file/... 地址——后者用 parseFileAddress 归一。
+    if (p.indexOf(FILE_ADDRESS_PREFIX) === 0) {
+      var parsed = parseFileAddress(p);
+      if (parsed && parsed.path) {
+        return { scope: parsed.scope || 'session', sessionId: parsed.sessionId || snap.sessionId, path: parsed.path };
+      }
+    }
     return { scope: 'session', sessionId: snap.sessionId, path: p };
   } catch (_) { return undefined; }
+}
+
+var WB_SIDEBAR = null;          // betterSidebar 服务引用（通过 inject 异步就绪）
+var WB_SIDEBAR_LISTENERS = [];  // 服务就绪/变化时通知 React 重渲染
+function _wbSetSidebar(s) {
+  if (s && s !== WB_SIDEBAR) {
+    WB_SIDEBAR = s;
+    try { WB_SIDEBAR_LISTENERS.forEach(function (fn) { try { fn(); } catch (_) {} }); } catch (_) {}
+  }
 }
 
 function registerWorkbenchOverlay(ctx) {
   // 全局浮层：用 shell.overlay slot 挂悬浮按钮，渲染在整个 shell 之上、不占任何 sidebar 布局。
   //
-  // 重要经验（2026-11-20 修复「浮窗按钮不出现」）：
+  // 重要经验（2026-11-20）：
   //   ① 必须用**根 ctx** 注册 slots（ctx.slots.inject / ctx.slots.register）+ ctx.effect，
-  //      对齐 better-sidebar 自己的 registerContextDiagnosticsUI 写法（client.js:18876-18896
-  //      直接用传入的根 ctx.slots），不要在 `ctx.inject(['betterSidebar'], injected=>…)` 的
-  //      子作用域里注册——那个子 ctx 的 slots 注册时机 / 生命周期与根 ctx 不同，会导致 overlay
-  //      条目注册不上、右上角永远没有浮窗按钮。
-  //   ② betterSidebar 服务只用来**读当前打开的文件**（getSnapshot/subscribe），用 ctx.get 同步取，
-  //      取不到只是拿不到文件、不阻止按钮出现（按钮常驻、文件命中与否由 pickActiveSheetFile 决定）。
-  var sidebar = null;
-  try { sidebar = ctx.get ? ctx.get('betterSidebar') : null; } catch (_) { sidebar = null; }
+  //      对齐 better-sidebar 自己的 registerContextDiagnosticsUI 写法，不要在子作用域里注册
+  //      （子 ctx 的 slots 注册时机/生命周期不同 → overlay 条目注册不上、按钮永不出现）。
+  //   ② betterSidebar 服务用 **ctx.inject(['betterSidebar'], cb)** 异步取得（不能只在 apply 时
+  //      用 ctx.get 同步取——若 better-sidebar 在本插件之后 provide，同步 ctx.get 返回 undefined，
+  //      sidebar 永远 null → 快照读不到 → 拿不到当前文件 → 面板里字段下拉永远空）。取得后写入
+  //      WB_SIDEBAR 并通知组件重渲染。（univer-office 同样用 inject(['betterSidebar'],…) 等就绪。）
+  try {
+    if (ctx && typeof ctx.inject === 'function') {
+      ctx.inject(['betterSidebar'], function (sidebarCtx) {
+        try {
+          var s = null;
+          try { s = sidebarCtx && typeof sidebarCtx.get === 'function' ? sidebarCtx.get('betterSidebar') : null; } catch (_) { s = null; }
+          if (!s) { try { s = sidebarCtx && sidebarCtx.betterSidebar; } catch (_) { s = null; } }
+          _wbSetSidebar(s);
+        } catch (_) {}
+      });
+    }
+  } catch (_) {}
+  // 兜底：万一 inject 不可用，再尝试同步 ctx.get（某些加载顺序下也可用）。
+  if (!WB_SIDEBAR) { try { _wbSetSidebar(ctx && ctx.get ? ctx.get('betterSidebar') : null); } catch (_) {} }
 
   // 常驻浮窗按钮的挂载点：宿主 shell.overlay。用根 ctx 注册（见上经验①）。
   try {
@@ -1156,20 +1184,35 @@ function registerWorkbenchOverlay(ctx) {
             var React = null;
             try { React = require('react'); } catch (_) { React = null; }
             // 订阅 betterSidebar 快照拿「当前活跃 editor tab 的文件路径」。
-            // hooks 必须**无条件**调用（rules of hooks）——sidebar 缺失时给空订阅/空快照，
-            // 渲染与否在下面按有无文件决定。
+            // hooks 必须**无条件**调用（rules of hooks）。sidebar 由 WB_SIDEBAR 提供
+            //（apply 时可能还没就绪，经 ctx.inject 就绪后由 WB_SIDEBAR_LISTENERS 触发本组件重渲染）。
             var snap = null;
             try {
               if (React && typeof React.useSyncExternalStore === 'function') {
-                var sub = (sidebar && typeof sidebar.subscribe === 'function')
-                  ? function (onChange) { return sidebar.subscribe(onChange); }
-                  : function () { return function () {}; };
-                var getS = (sidebar && typeof sidebar.getSnapshot === 'function')
-                  ? function () { return sidebar.getSnapshot(); }
-                  : function () { return null; };
+                // 就绪通知：WB_SIDEBAR_LISTENERS 在服务到达时回调 onChange → 触发重读快照。
+                var sub = function (onChange) {
+                  var died = false;
+                  WB_SIDEBAR_LISTENERS.push(onChange);
+                  var unsubStore = function () {};
+                  if (WB_SIDEBAR && typeof WB_SIDEBAR.subscribe === 'function') {
+                    try { unsubStore = WB_SIDEBAR.subscribe(onChange) || function () {}; } catch (_) {}
+                  }
+                  return function () {
+                    if (died) return; died = true;
+                    var ix = WB_SIDEBAR_LISTENERS.indexOf(onChange);
+                    if (ix >= 0) WB_SIDEBAR_LISTENERS.splice(ix, 1);
+                    try { unsubStore(); } catch (_) {}
+                  };
+                };
+                var getS = function () {
+                  if (WB_SIDEBAR && typeof WB_SIDEBAR.getSnapshot === 'function') {
+                    try { return WB_SIDEBAR.getSnapshot(); } catch (_) { return null; }
+                  }
+                  return null;
+                };
                 snap = React.useSyncExternalStore(sub, getS);
-              } else if (sidebar && typeof sidebar.getSnapshot === 'function') {
-                snap = sidebar.getSnapshot();
+              } else if (WB_SIDEBAR && typeof WB_SIDEBAR.getSnapshot === 'function') {
+                snap = WB_SIDEBAR.getSnapshot();
               }
             } catch (_) { snap = null; }
             var addr = pickActiveSheetFile(snap);
