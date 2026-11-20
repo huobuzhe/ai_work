@@ -225,6 +225,16 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **问题1 修法**：新增 `WbDropdown` 自定义下拉组件（按钮 + 打开时 `getBoundingClientRect` 定位的 `position:fixed` 选项列表→脱离面板 overflow 裁剪；高 z-index、点击外部/选中即收；支持字符串或 {value,label} 选项）。配置表单与作用范围选择均改用 WbDropdown。
 - **测试**：panel-smoke 补 `pickActiveSheetFile` 单测（xlsx/csv 命中、txt/空快照不命中）+ tab.patterns 必须为空的架构断言；panel-projection 补「叠加模式只渲染 fab+panel、不渲染 data-workbench-main/原表」断言。全量 npm test 474 tests/453 pass/0 fail/21 skipped；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。
 
+## 交付后增量（第十波：修复浮窗按钮不出现——shell.overlay 改根 ctx 注册，用户 m09352，2026-11-20 补记）
+
+用户重启宿主后打开 演示_动作_swap.xlsx 反馈「还是没有浮窗」：宿主原生表格视图已正常（第九波 patterns:[] 生效），但右下角悬浮按钮没出现。
+
+- **根因**：`registerWorkbenchOverlay` 把 `shell.overlay` 注册写在了 `ctx.inject(['betterSidebar'], injected => { injected.effect(() => injected.slots.inject('shell.overlay', ...)) })` 的**子作用域**里。子 ctx 的 slots 注册时机/生命周期与根 ctx 不同，overlay 条目注册不上 → 常驻悬浮按钮永远不出现。
+- **修法**：改在**根 ctx** 上注册——`ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({name:'shell.overlay', id:'dsh-workbench-fab', order:60, registrant:'dsh-workbench', inject:()=>({})}, WorkbenchOverlayHost)))`。这与 dsh-pocket 的 `shell.overlay` 注册写法**逐字一致**（dsh-pocket/client/client.js:1959 直接用根 `ctx.slots.inject('shell.overlay', () => ctx.slots.register(...))`，不经任何子 ctx），是已验证可用的兄弟插件范式。`betterSidebar` 服务改用 `ctx.get('betterSidebar')` 同步取，只用来读当前文件快照（取不到只影响能否解析文件，不阻止按钮出现）。
+- **顺带**：overlay 面板标题栏在「表格工作台」后追加当前文件名（`data-wb-fab-file`，title 显全路径），便于用户确认作用对象；浮层渲染异常时兜底返回红色告警浮钮（`data-workbench-error-fallback`），不白屏。
+- **测试**：panel-smoke 补断言——`shell.overlay` 必须被注册（`calls.slotInjects` 含 'shell.overlay'，恰一条注册、id='dsh-workbench-fab'、body 为函数），面板 body 仍注册到 `sidebar.right.pane.tab` 且 key=tab id。全量 npm test 474 tests/453 pass/0 fail/21 skipped；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。commit 8ba5f9b。
+- **验证手段局限**：宿主 token 按进程随机生成、不落盘，agent 无法自攻真实认证 URL；本修复以「与 dsh-pocket 逐字一致 + headless 渲染 overlay 面板（fab/panel/10 芯片/文件名标题齐全）」为证据，最终真机以用户重启后目视为准。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
