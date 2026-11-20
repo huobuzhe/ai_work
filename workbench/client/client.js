@@ -1139,13 +1139,38 @@ function pickActiveSheetFile(snap) {
   } catch (_) { return undefined; }
 }
 
-var WB_SIDEBAR = null;          // betterSidebar 服务引用（通过 inject 异步就绪）
-var WB_SIDEBAR_LISTENERS = [];  // 服务就绪/变化时通知 React 重渲染
-function _wbSetSidebar(s) {
-  if (s && s !== WB_SIDEBAR) {
-    WB_SIDEBAR = s;
-    try { WB_SIDEBAR_LISTENERS.forEach(function (fn) { try { fn(); } catch (_) {} }); } catch (_) {}
+// 2026-11-20 关键更正：**不要用 betterSidebar** 取当前文件。
+// better-sidebar 的 snapshot.bottomSplits 是它自己「底部工作台」的 leaf 树，
+// 其 makeDefaultState 注释明确写「The right column belongs to DSH's native Sidebar」——
+// 右侧文件面板的 xlsx tab 根本不在 betterSidebar 的树里，所以 pickActiveSheetFile(snap)
+// 永远返回 undefined → address 恒 null → 字段下拉空、标题无文件名。
+// 正确来源是宿主原生右栏服务 **`sidebarRight`**（dsh-client-ui-sidebar-right 提供）：
+//   sidebarRight.active() → 当前活跃 tab 记录 { id, kind, contentId, ... }，
+//   文件 tab 的 contentId = 'dsh-resource://file/session/<sessionId>/<relpath>'。
+// 该服务无公开的「布局变化」订阅，故用**轮询** active()（800ms，比对 contentId 变化）驱动重渲染。
+var WB_SIDEBAR_RIGHT = null;      // sidebarRight 服务引用
+var WB_SR_LISTENERS = [];         // 服务就绪时通知组件
+function _wbSetSidebarRight(s) {
+  if (s && s !== WB_SIDEBAR_RIGHT) {
+    WB_SIDEBAR_RIGHT = s;
+    try { WB_SR_LISTENERS.slice().forEach(function (fn) { try { fn(); } catch (_) {} }); } catch (_) {}
   }
+}
+
+// 从 sidebarRight.active() 的返回记录解析当前表格文件 → {scope,sessionId,path} 或 undefined。
+function pickActiveSheetFromSidebarRight(src) {
+  try {
+    if (!src || typeof src.active !== 'function') return undefined;
+    var rec = src.active();
+    if (!rec) return undefined;
+    var contentId = rec.contentId || rec.address;
+    if (typeof contentId !== 'string') return undefined;
+    if (contentId.indexOf(FILE_ADDRESS_PREFIX) !== 0) return undefined;
+    var parsed = parseFileAddress(contentId);
+    if (!parsed || !parsed.path) return undefined;
+    if (!/\.(xlsx|xls|csv)$/i.test(parsed.path)) return undefined;
+    return { scope: parsed.scope || 'session', sessionId: parsed.sessionId, path: parsed.path };
+  } catch (_) { return undefined; }
 }
 
 function registerWorkbenchOverlay(ctx) {
@@ -1155,24 +1180,21 @@ function registerWorkbenchOverlay(ctx) {
   //   ① 必须用**根 ctx** 注册 slots（ctx.slots.inject / ctx.slots.register）+ ctx.effect，
   //      对齐 better-sidebar 自己的 registerContextDiagnosticsUI 写法，不要在子作用域里注册
   //      （子 ctx 的 slots 注册时机/生命周期不同 → overlay 条目注册不上、按钮永不出现）。
-  //   ② betterSidebar 服务用 **ctx.inject(['betterSidebar'], cb)** 异步取得（不能只在 apply 时
-  //      用 ctx.get 同步取——若 better-sidebar 在本插件之后 provide，同步 ctx.get 返回 undefined，
-  //      sidebar 永远 null → 快照读不到 → 拿不到当前文件 → 面板里字段下拉永远空）。取得后写入
-  //      WB_SIDEBAR 并通知组件重渲染。（univer-office 同样用 inject(['betterSidebar'],…) 等就绪。）
+  //   ② 当前文件来自 **sidebarRight**（原生右栏服务），用 ctx.inject(['sidebarRight'], cb) 异步取得，
+  //      取到后写入 WB_SIDEBAR_RIGHT 并通知组件。随后组件内轮询 active() 拿当前 tab 的 contentId。
   try {
     if (ctx && typeof ctx.inject === 'function') {
-      ctx.inject(['betterSidebar'], function (sidebarCtx) {
+      ctx.inject(['sidebarRight'], function (srCtx) {
         try {
           var s = null;
-          try { s = sidebarCtx && typeof sidebarCtx.get === 'function' ? sidebarCtx.get('betterSidebar') : null; } catch (_) { s = null; }
-          if (!s) { try { s = sidebarCtx && sidebarCtx.betterSidebar; } catch (_) { s = null; } }
-          _wbSetSidebar(s);
+          try { s = srCtx && typeof srCtx.get === 'function' ? srCtx.get('sidebarRight') : null; } catch (_) { s = null; }
+          if (!s) { try { s = srCtx && srCtx.sidebarRight; } catch (_) { s = null; } }
+          _wbSetSidebarRight(s);
         } catch (_) {}
       });
     }
   } catch (_) {}
-  // 兜底：万一 inject 不可用，再尝试同步 ctx.get（某些加载顺序下也可用）。
-  if (!WB_SIDEBAR) { try { _wbSetSidebar(ctx && ctx.get ? ctx.get('betterSidebar') : null); } catch (_) {} }
+  if (!WB_SIDEBAR_RIGHT) { try { _wbSetSidebarRight(ctx && ctx.get ? ctx.get('sidebarRight') : null); } catch (_) {} }
 
   // 常驻浮窗按钮的挂载点：宿主 shell.overlay。用根 ctx 注册（见上经验①）。
   try {
@@ -1183,47 +1205,45 @@ function registerWorkbenchOverlay(ctx) {
           function WorkbenchOverlayHost(props) {
             var React = null;
             try { React = require('react'); } catch (_) { React = null; }
-            // 订阅 betterSidebar 快照拿「当前活跃 editor tab 的文件路径」。
-            // hooks 必须**无条件**调用（rules of hooks）。sidebar 由 WB_SIDEBAR 提供
-            //（apply 时可能还没就绪，经 ctx.inject 就绪后由 WB_SIDEBAR_LISTENERS 触发本组件重渲染）。
-            var snap = null;
-            try {
-              if (React && typeof React.useSyncExternalStore === 'function') {
-                // 就绪通知：WB_SIDEBAR_LISTENERS 在服务到达时回调 onChange → 触发重读快照。
-                var sub = function (onChange) {
-                  var died = false;
-                  WB_SIDEBAR_LISTENERS.push(onChange);
-                  var unsubStore = function () {};
-                  if (WB_SIDEBAR && typeof WB_SIDEBAR.subscribe === 'function') {
-                    try { unsubStore = WB_SIDEBAR.subscribe(onChange) || function () {}; } catch (_) {}
-                  }
-                  return function () {
-                    if (died) return; died = true;
-                    var ix = WB_SIDEBAR_LISTENERS.indexOf(onChange);
-                    if (ix >= 0) WB_SIDEBAR_LISTENERS.splice(ix, 1);
-                    try { unsubStore(); } catch (_) {}
-                  };
+            // 当前表格文件地址：轮询 sidebarRight.active()。
+            // hooks 必须**无条件**调用（rules of hooks）。
+            var addrState = React ? React.useState(function () { return pickActiveSheetFromSidebarRight(WB_SIDEBAR_RIGHT); }) : [null, function () {}];
+            var addr = addrState[0];
+            var setAddr = addrState[1];
+            // 服务就绪通知（sidebarRight 在本插件之后 provide 时，靠它把地址补上）。
+            if (React && typeof React.useEffect === 'function') {
+              React.useEffect(function () {
+                var compute = function () {
+                  var next = pickActiveSheetFromSidebarRight(WB_SIDEBAR_RIGHT);
+                  setAddr(function (prev) {
+                    var a = prev && prev.path ? prev.path + '|' + prev.sessionId : '';
+                    var b = next && next.path ? next.path + '|' + next.sessionId : '';
+                    return a === b ? prev : (next || null);
+                  });
                 };
-                var getS = function () {
-                  if (WB_SIDEBAR && typeof WB_SIDEBAR.getSnapshot === 'function') {
-                    try { return WB_SIDEBAR.getSnapshot(); } catch (_) { return null; }
-                  }
-                  return null;
+                compute();
+                // 服务就绪回调
+                WB_SR_LISTENERS.push(compute);
+                // 布局变化无公开订阅 → 轮询比对（800ms）。仅在文档可见时轮询，省资源。
+                var timer = null;
+                var tick = function () {
+                  if (typeof document !== 'undefined' && document.hidden) return;
+                  compute();
                 };
-                snap = React.useSyncExternalStore(sub, getS);
-              } else if (WB_SIDEBAR && typeof WB_SIDEBAR.getSnapshot === 'function') {
-                snap = WB_SIDEBAR.getSnapshot();
-              }
-            } catch (_) { snap = null; }
-            var addr = pickActiveSheetFile(snap);
+                try { timer = setInterval(tick, 800); } catch (_) { timer = null; }
+                return function () {
+                  var ix = WB_SR_LISTENERS.indexOf(compute);
+                  if (ix >= 0) WB_SR_LISTENERS.splice(ix, 1);
+                  if (timer) { try { clearInterval(timer); } catch (_) {} }
+                };
+              }, []);
+            }
             var rt0 = null;
             try { rt0 = require('react/jsx-runtime'); } catch (_) { rt0 = null; }
             if (!rt0) return null;
             // 无论是否命中当前文件，都渲染「可点开」的浮窗（蓝色 FAB + 面板）。
             // 命中文件 → 面板可用全部动作；未命中 → 面板显示「请先打开 .xlsx / .csv」提示。
-            // 这样按钮永远可见、永远可点，绝不出现「点不了」的死钮。
             // 复用既有 panel body（内含全部 hooks/动作/表单逻辑），叠加模式：只出 fab+panel。
-            // 以 React 元素方式渲染（不能在渲染树外直接当函数调用，否则 hooks 规则被破坏）。
             try {
               var Comp = WorkbenchPanelBodyRef;
               if (typeof Comp !== 'function') return null;
@@ -1583,7 +1603,7 @@ function registerWorkbenchPanel(ctx) {
   return { tabId: TAB_ID, kind: TAB_KIND, projectPreviewCard, projectButtonLibrary };
 }
 
-module.exports = { apply, inject, registerWorkbenchPanel, projectPreviewCard, projectButtonLibrary, renderWorkbenchPanel, parseFileAddress, pickActiveSheetFile, TAB_ID, TAB_KIND };
+module.exports = { apply, inject, registerWorkbenchPanel, projectPreviewCard, projectButtonLibrary, renderWorkbenchPanel, parseFileAddress, pickActiveSheetFile, pickActiveSheetFromSidebarRight, TAB_ID, TAB_KIND };
 
     return module.exports;
   }

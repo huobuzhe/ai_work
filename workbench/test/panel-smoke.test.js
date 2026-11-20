@@ -169,7 +169,32 @@ test('pickActiveSheetFile：从 betterSidebar 快照解析当前打开的 xlsx/c
   assert.equal(pick(null), undefined);
 });
 
-// 用户 m09834：浮窗按钮「点不了」——旧实现在未命中文件时渲染「待命死钮」（无 onClick，
+// 用户 m10124：字段下拉为空 / 标题无文件名——根因是取文件用错了服务。
+// betterSidebar 的 snapshot 是它自己的底部工作台树，右侧 xlsx tab 不在其中；正确来源是
+// 宿主原生右栏服务 sidebarRight.active()（返回 { contentId: 'dsh-resource://file/session/<id>/<path>' }）。
+// 回归守护：pickActiveSheetFromSidebarRight 必须从 active().contentId 解析出真实表格文件。
+test('pickActiveSheetFromSidebarRight：从 sidebarRight.active().contentId 解析当前表格文件', () => {
+  const def = loadBundle(); const mod = { exports: {} };
+  const exported = def.factory(function () { throw new Error('no external require'); }, mod.exports, mod);
+  const pick = exported.pickActiveSheetFromSidebarRight;
+  assert.equal(typeof pick, 'function', '必须导出 pickActiveSheetFromSidebarRight');
+  // session-scoped 文件地址（相对路径）→ 解析出 sessionId 与相对 path
+  const src1 = { active: function () { return { id: 'tab1', kind: 'doc', contentId: 'dsh-resource://file/session/sess-9/%E6%BC%94%E7%A4%BA_%E5%8A%A8%E4%BD%9C_swap.xlsx' }; } };
+  const r1 = pick(src1);
+  assert.ok(r1, '应解析出当前 xlsx');
+  assert.equal(r1.sessionId, 'sess-9');
+  assert.equal(r1.path, '演示_动作_swap.xlsx');
+  assert.equal(r1.scope, 'session');
+  // csv 命中
+  const src2 = { active: function () { return { contentId: 'dsh-resource://file/session/s/外勤登记表.csv' }; } };
+  assert.equal(pick(src2).path, '外勤登记表.csv');
+  // 非表格文件不命中
+  const src3 = { active: function () { return { contentId: 'dsh-resource://file/session/s/readme.md' }; } };
+  assert.equal(pick(src3), undefined);
+  // 无 active / 空
+  assert.equal(pick({}), undefined);
+  assert.equal(pick(null), undefined);
+});
   // cursor:not-allowed），用户点了没反应。回归守护：无论命中与否，overlay 宿主都必须渲染
   // **可点开**的浮窗（data-wb-fab 的真按钮 + 面板），绝不出现 data-wb-fab-idle 死钮。
 test('overlay 宿主无论是否命中文件都渲染可点浮窗（不出现 data-wb-fab-idle 死钮）', () => {
