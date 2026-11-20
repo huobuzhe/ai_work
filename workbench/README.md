@@ -1,5 +1,9 @@
 # dsh-workbench（表格工作台 · 第一刀）
 
+![version](https://img.shields.io/badge/version-1.1.0-blue) ![license](https://img.shields.io/badge/license-UNLICENSED-lightgrey) ![local--first](https://img.shields.io/badge/local--first-零凭据-green)
+
+**最新能力（v1.1.0）**：在宿主打开 xlsx/xls/csv 时**原表原样显示**（宿主原生可编辑网格）、右下角多一个**不遮挡的浮窗按钮**，点开「表格工作台」浮窗面板 → 一句话或一键动作 → **逐格预览 → 确认才落盘**。v1.1.0 起动作扩充到 **11 个一键动作**（extract / swap / conditional / function / dedupe / replace / fill / trim / case / affix / **sort 按列排序**），并新增 **function 写入方式=公式**（写 `=C2*D2` 公式串交本地重算）、**highlight 单元格标色**、**function 多操作数表达式**（任意项 `+ - * /`、括号、优先级、一元负号）。语义化版本，向前兼容。
+
 规格 [`#8`](https://github.com/huobuzhe/ai_work/issues/8) / 实施票 [`#9`](https://github.com/huobuzhe/ai_work/issues/9)、[`#11`](https://github.com/huobuzhe/ai_work/issues/11)、[`#12`](https://github.com/huobuzhe/ai_work/issues/12)、[`#13`](https://github.com/huobuzhe/ai_work/issues/13)、[`#14`](https://github.com/huobuzhe/ai_work/issues/14)、[`#15`](https://github.com/huobuzhe/ai_work/issues/15)、[`#16`](https://github.com/huobuzhe/ai_work/issues/16) 的可交付插件包。
 
 把建表与日常繁琐表格操作收进按钮与输入框。**本包实现 Slice 1 本地 Excel 零凭据端到端闭环：提取字段 extract（票 #9）+ 自定义函数计算 function（票 #11）+ 作用范围/条件对所有动作生效（票 #12）+ swap 半换边界与披露 / conditional 增删补齐（票 #13）+ 封闭校验系统与预览卡完整五段（票 #14）+ 按钮固化与一键重跑 / 按钮库生命周期（票 #15）+ 仓内按钮注册表统一入口（票 #16）+ 模板库与建表（票 #10）+ adapter 抽象层与能力位契约（票 #21，Slice 2 S1）+ 飞书 adapter 实装（票 #23，Slice 2 S3：建表/加字段/写记录/读回请求计划）**；并已交付 Slice 2 其余各票：腾讯 adapter 实装（S4 #24）+ 能力位端到端验尸（S5 #25）+ 按钮级权限分享明确 defer（S6 #26）+ 云端持凭据实测证据层（票 #27：飞书、腾讯均已持真实凭据真跑通「建表→写值→读回」链路，但公式能力位仍结构上 false，见 #27 段），Slice 2 六票（#21–#26）全部闭环。NL 一步编译成函数、AND/OR 语法、细粒度权限/分享实装等属后续 effort，不在本包范围。
