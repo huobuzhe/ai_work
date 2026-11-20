@@ -1502,6 +1502,22 @@ function registerWorkbenchPanel(ctx) {
               formValues = fvTuple[0]; setFormValues = fvTuple[1];
               var bpkTuple = React.useState('');
               blankPrimaryKey = bpkTuple[0]; setBlankPrimaryKey = bpkTuple[1];
+              // 用户 m10658：切到新文件时，工作台必须回到「最开始的默认状态」——不能残留上一个
+              // 文件动作产生的绿字提示(actionState)、输入框文字、选中的动作表单(activeKind/formValues)、
+              // 建表提示与建表表单草稿。usePanelData 只清了 override/slot，这些是面板 body 自己的
+              // React state，且 effective 合并时 actionState 优先级高于新文件的 vm，故必须在
+              // 文件地址变化时把它们全部重置为初始值，面板才会显示新表且是 IDLE 默认态。
+              var fileKey = (address && address.path) || '';
+              React.useEffect(function () {
+                try { setActionState(null); } catch (_) {}
+                try { setInputText(''); } catch (_) {}
+                try { setActiveKind(''); } catch (_) {}
+                try { setFormValues({}); } catch (_) {}
+                try { setCreatedNotice(''); } catch (_) {}
+                try { setBlankName(''); } catch (_) {}
+                try { setBlankColumns(''); } catch (_) {}
+                try { setBlankPrimaryKey(''); } catch (_) {}
+              }, [fileKey]);
               React.useEffect(function () {
                 var alive = true;
                 try {
