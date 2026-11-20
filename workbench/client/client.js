@@ -442,7 +442,10 @@ function renderWorkbenchPanel(hostState) {
       }, 'quick' + qa.kind);
     });
     var quickRow = jsxs('div', { 'data-wb-quickbar': '1', style: { marginBottom: 10 }, children: [
-      jsx('div', { style: { fontSize: 11, color: '#6b7280', marginBottom: 6, letterSpacing: 0.2 }, children: '选一个动作 · 配置字段 · 预览 · 确认执行' }, 'quicklbl'),
+      jsx('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 8, letterSpacing: 0.3, textTransform: 'none' }, children: [
+        jsx('span', { style: { width: 3, height: 12, borderRadius: 2, background: '#2563eb', display: 'inline-block' } }, 'qbar'),
+        jsx('span', { children: '选一个动作 · 配置字段 · 预览 · 确认执行' }, 'qlbl')
+      ] }, 'quicklbl'),
       jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: quickBtns }, 'quickrow')
     ] }, 'quickbar');
     children.push(quickRow);
@@ -603,8 +606,8 @@ function renderWorkbenchPanel(hostState) {
       cells.forEach(function (c) { if (c.rowIndex != null && c.col != null) cellMap[c.rowIndex + '|' + c.col] = c; });
       const CAP = 50;
       const shownRows = pvRows.slice(0, CAP);
-      const thStyle = { border: '1px solid #d9d9d9', padding: '5px 9px', background: '#f5f6f7', fontSize: 12, fontWeight: 600, textAlign: 'left', whiteSpace: 'nowrap', color: '#303133' };
-      const tdStyle = { border: '1px solid #e6e6e6', padding: '5px 9px', fontSize: 12, whiteSpace: 'nowrap', color: '#303133' };
+      const thStyle = { border: '1px solid #dbe3ee', padding: '6px 10px', background: '#eef3fb', fontSize: 12, fontWeight: 600, textAlign: 'left', whiteSpace: 'nowrap', color: '#1e3a5f' };
+      const tdStyle = { border: '1px solid #edf0f4', padding: '6px 10px', fontSize: 12, whiteSpace: 'nowrap', color: '#303133' };
       const tdNum = Object.assign({}, tdStyle, { textAlign: 'right', fontVariantNumeric: 'tabular-nums' });
       const tdChanged = Object.assign({}, tdStyle, { background: '#fff6e0', color: '#8a5a00', fontWeight: 'bold' });
       // 数值单元格右对齐，让表格看起来像规整的数据表（数字列不乱）。
@@ -651,7 +654,7 @@ function renderWorkbenchPanel(hostState) {
       }, 'impacttable');
       mainTableEl = jsxs('div', {
         'data-workbench-cells': String(cells.length),
-        style: { maxHeight: '100%', overflow: 'auto', border: '1px solid #eee', borderRadius: 6 },
+        style: { maxHeight: '100%', overflow: 'auto', border: '1px solid #eef1f5', borderRadius: 8, boxShadow: '0 1px 2px rgba(15,23,42,0.04)' },
         children: [tableEl]
       }, 'cellbox');
     } else if (cells.length > 0) {
@@ -797,7 +800,10 @@ function renderWorkbenchPanel(hostState) {
   const blankName = (hostState && hostState.blankName) || '';
   const blankColumns = (hostState && hostState.blankColumns) || '';
   if (onCreate || onCreateBlank) {
-    const ntChildren = [jsx('div', { style: { fontSize: 12, opacity: 0.75, marginBottom: 4 }, children: '新建表格' }, 'nth')];
+    const ntChildren = [jsx('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: '#475569', letterSpacing: 0.3, marginBottom: 6 }, children: [
+      jsx('span', { style: { width: 3, height: 12, borderRadius: 2, background: '#2563eb', display: 'inline-block' } }, 'ntbar'),
+      jsx('span', { children: '新建表格' }, 'ntlbl')
+    ] }, 'nth')];
     if (onCreate && templates.length > 0) {
       const tplBtns = templates.map(function (t, i) {
         const tname = (t && (t.name || t.file)) || ('模板' + i);
