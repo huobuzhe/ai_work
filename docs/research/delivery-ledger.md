@@ -262,6 +262,14 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **踩坑（务必记住）**：JSX 运行时的 `jsxs(type, props, key)` **第三参是 key 不是 children**——children 必须放进 `props.children`。首次改动误把 children 数组当第 3 参传入，`data-workbench-inline-table` 元素生成但**其子节点（表格）全丢**，测试表现为「有 inline-table、无 table」。改回 `props.children` 后正常。
 - **验证**：新增 `panel-multi-action.test.js` 的 **overlay 模式回归**（`overlay:true`+`address`+`fabOpen:true`）：断言预览时 `data-workbench-inline-table` 与 `data-workbench-table` 都在、有 `→` 箭头；确认执行后 `data-wb-changed` 高亮保留且**无箭头**。另用 react-dom/server 真实渲染 overlay 面板截图确认：执行后表格 工时/时薪 列（80/160、90/176、75/150）黄色高亮、无箭头。全量 npm test **477 tests/456 pass/0 fail/21 skipped**；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。commit 4160209。
 
+## 交付后增量（第十四波：修复切换文件后浮窗残留旧表——key 变化清 override/slot，用户 m10481，2026-11-20 补记）
+
+第十三波验收通过后，用户反馈新问题：**打开一个新表格，浮窗还显示上一个表格的预览/数据**（截图：浮窗标题已是新文件名，但内容仍是旧文件）。
+
+- **根因**：`usePanelData` 里的「点击-preview 覆盖层」`override` 与 `/state` 拉回的 `slot` 都**没有随文件切换（key=file|sessionId 变化）清空**。切文件后后端 `/state` 会重新拉新文件，但面板在渲染时优先用旧的 `override.preview`、且在新区拉回前 `slot` 仍是旧文件数据 → 两边对不上。
+- **修法**（workbench/client/index.js `usePanelData`）：新增 `React.useEffect(() => { setOverride(null); setSlot({data:null,error:null}); }, [key])`——文件一换就清掉旧覆盖层与旧数据，新文件 `/state` 到手前显示空态，绝不残留旧表。
+- **回归测试**：新增 `test/panel-file-switch.test.js`（自带依赖追踪的迷你 React，可模拟多次渲染/文件切换）：渲文件A（/state 有「应发」列预览）→ 切文件B → 断言面板文本不含「应发」（旧表不残留）。全量 **478 tests / 457 pass / 0 fail / 21 skipped**；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。commit 7edc0fa。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
