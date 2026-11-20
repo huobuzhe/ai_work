@@ -278,6 +278,14 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **修法**（workbench/client/index.js <code>WorkbenchPanelBody</code>）：新增 <code>var fileKey = (address && address.path) || ''</code> 与 <code>React.useEffect(() =&gt; { setActionState(null); setInputText(''); setActiveKind(''); setFormValues({}); setCreatedNotice(''); setBlankName(''); setBlankColumns(''); setBlankPrimaryKey(''); }, [fileKey])</code>——文件地址一变，把面板本地状态全部重置为初始值，回到 IDLE 默认态。
 - **回归测试**：<code>test/panel-file-switch.test.js</code> 新增用例——渲染文件A → **真实点『确认执行』**（触发 POST /workbench-api/action，让 actionState 带上「已写入磁盘」绿字）→ 断言绿字出现 → 切文件B → 断言「已写入磁盘」「重算预览」均被清掉、显示新文件表。做了**变异验证**：去掉修复，该用例必失败（<code># fail 1</code>）；加回修复通过。全量 **479 tests / 458 pass / 0 fail / 21 skipped**；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。commit 4ddf59e。
 
+## 交付后增量（第十六波：② 10 个动作实机全跑通 + replace 空+空清列隐患修复 + ④ 浮窗面板美化，用户 m10775，2026-11-20 补记）
+
+用户确认第十五波（切文件复位）通过后，要求推进剩余三项：②实机把 10 个动作都点一遍、④整体美化到可上线、③④文档/地图对齐。本波交付 ② 与 ④。
+
+- **② 10 个动作实机全跑通（10/10）**：写一次性探针脚本，用**真实 makeActionHandler + 真实 xlsx_bridge.py**（非桩）在临时演示表上把 10 个一键动作（extract/swap/conditional/function/dedupe/replace/fill/trim/case/affix）各驱动一遍 QUICK→CONFIRM，逐个回读磁盘逐格核对，**10/10 全部正确落盘**：swap 工时↔时薪对调、conditional 按条件标加班、function 算出应发（12800/15840/7200/11250）、dedupe 保留首条清其余、extract 从外勤登记表补邮箱、replace 销售→市场、fill 空值填待补、trim 去尾空格、case 英文大小写、affix 加前缀。探针用完即删，未提交。
+- **② 顺带修复一个真实隐患（replace 空+空清列）**：探针发现若用户把 replace 的「查找」和「替换为」**都留空**再预览/执行，会把**整列清空**（实机 wb.apply 后 部门 → ['','','','']）。修法（<code>lib/engine.js</code> replace 预览分支）：<code>if (!findStr &amp;&amp; !repStr)</code> 时返回 invalid 预览（<code>errors:['「查找」与「替换为」不能同时为空']</code>）、**不产出任何格、不改动数据**；「查找空 + 替换为非空」仍按整列赋值为替换值（合法批量改，保留）。补回归测试 <code>test/replace-fill.test.js</code>「空+空拦截、不清空整列」。commit <code>abe3246</code>。全量 **480 tests / 459 pass / 0 fail / 21 skipped**；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。
+- **④ 浮窗面板美化（可上线打磨）**（<code>client/index.js</code>，重编 <code>client/client.js</code>）：①预览/原表表头改**蓝灰底**（<code>background:#eef3fb</code>、<code>color:#1e3a5f</code>、边框 <code>#dbe3ee</code>），数据格边框 <code>#edf0f4</code>、内距 6px 10px，更清爽；②表格容器加**圆角 8 + 轻投影**（<code>boxShadow:0 1px 2px rgba(15,23,42,0.04)</code>）；③两个分区标题「选一个动作…」「新建表格」改为**带蓝色竖条强调 + 600 字重**的小节标题，层次更清楚。纯视觉，data-* 契约不变（全部投影/交互测试仍绿）。headless Edge 渲染真实组件树截图确认：蓝色渐变标题栏+文件名、影响摘要、表格黄底高亮+箭头、10 动作芯片、输入框、理解/预览/确认执行/固化为按钮、新建表格区、右下角蓝色⚙ FAB，整体专业可上线。commit <code>ac2cf0b</code>。全量 **480 tests / 459 pass / 0 fail / 21 skipped**；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
