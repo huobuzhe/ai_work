@@ -1049,6 +1049,14 @@ function usePanelData(React, address) {
   // 回到实时状态（避免覆盖层永远压住实时数据）。
   var overrideTuple = React.useState(null);
   var override = overrideTuple[0], setOverride = overrideTuple[1];
+  // 2026-11-20 修（用户 m10481「打开新表还显示旧表」）：文件一旦切换（key 变），
+  // 上一个文件留下的「点击-preview 覆盖层」必须清掉，否则面板会一直用旧文件的 override 预览，
+  // 而侧边原生表已是新文件 → 两边对不上，用户看到「表没刷新还是旧表」。
+  React.useEffect(function () {
+    setOverride(null);
+    // 同时把上一个文件的 /state 结果清掉，避免切换瞬间仍渲染旧文件的表格（新文件 /state 到手前显示空态）。
+    setSlot({ data: null, error: null });
+  }, [key]);
   React.useEffect(function () {
     if (!file) { setSlot({ data: null, error: null }); return undefined; }
     var alive = true;
