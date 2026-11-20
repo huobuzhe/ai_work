@@ -15,7 +15,7 @@
     "local-first"
   ],
   "author": "huobuzhe",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/huobuzhe/ai_work.git",
@@ -48,7 +48,9 @@
     "README.md",
     "CHANGELOG.md",
     "SMOKE.md",
-    "capability-matrix.md"
+    "capability-matrix.md",
+    "LICENSE",
+    "INSTALL.md"
   ],
   "scripts": {
     "build:client": "node scripts/build-client.mjs",

@@ -1,6 +1,6 @@
 # dsh-workbench（表格工作台 · 第一刀）
 
-![version](https://img.shields.io/badge/version-1.1.0-blue) ![license](https://img.shields.io/badge/license-UNLICENSED-lightgrey) ![local--first](https://img.shields.io/badge/local--first-零凭据-green)
+![version](https://img.shields.io/badge/version-1.1.0-blue) ![license](https://img.shields.io/badge/license-MIT-green) ![local--first](https://img.shields.io/badge/local--first-零凭据-green)
 
 **最新能力（v1.1.0）**：在宿主打开 xlsx/xls/csv 时**原表原样显示**（宿主原生可编辑网格）、右下角多一个**不遮挡的浮窗按钮**，点开「表格工作台」浮窗面板 → 一句话或一键动作 → **逐格预览 → 确认才落盘**。v1.1.0 起动作扩充到 **11 个一键动作**（extract / swap / conditional / function / dedupe / replace / fill / trim / case / affix / **sort 按列排序**），并新增 **function 写入方式=公式**（写 `=C2*D2` 公式串交本地重算）、**highlight 单元格标色**、**function 多操作数表达式**（任意项 `+ - * /`、括号、优先级、一元负号）。语义化版本，向前兼容。
 
