@@ -270,6 +270,14 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **修法**（workbench/client/index.js `usePanelData`）：新增 `React.useEffect(() => { setOverride(null); setSlot({data:null,error:null}); }, [key])`——文件一换就清掉旧覆盖层与旧数据，新文件 `/state` 到手前显示空态，绝不残留旧表。
 - **回归测试**：新增 `test/panel-file-switch.test.js`（自带依赖追踪的迷你 React，可模拟多次渲染/文件切换）：渲文件A（/state 有「应发」列预览）→ 切文件B → 断言面板文本不含「应发」（旧表不残留）。全量 **478 tests / 457 pass / 0 fail / 21 skipped**；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。commit 7edc0fa。
 
+## 交付后增量（第十五波：修复切换文件后工作台状态不复位——重置面板本地 React state，用户 m10658，2026-11-20 补记）
+
+第十四波补了 usePanelData 的 override/slot 清空后，用户再次反馈（m10658）：**切到新文件后，浮窗仍显示上一轮「确认执行」的绿字「✓ 已按「确认执行（已写入磁盘 8 格）」重算预览」+ 旧表数据**；期望切文件后工作台回到「最开始的默认状态」、显示新文件的 IDLE 原表。
+
+- **根因**：第十四波只清了 <code>override</code>/<code>slot</code>，但 <code>WorkbenchPanelBody</code> 自己的 React state——<code>actionState</code>（承载绿字 note / writtenOk / clickedName）、<code>inputText</code>、<code>activeKind</code>、<code>formValues</code>、<code>createdNotice</code>、建表草稿——都**没随文件切换重置**。且 <code>effective = Object.assign({}, vm)</code> 合并时 <code>actionState</code> 优先级高于新文件的 <code>vm</code>，故旧的 actionState 一压住，绿字与旧 preview 就一直在。（<code>actionState</code> 只由 runAction 的动作响应写入，不是 /state 轮询写入，所以第十四波清 slot 也压不住它。）
+- **修法**（workbench/client/index.js <code>WorkbenchPanelBody</code>）：新增 <code>var fileKey = (address && address.path) || ''</code> 与 <code>React.useEffect(() =&gt; { setActionState(null); setInputText(''); setActiveKind(''); setFormValues({}); setCreatedNotice(''); setBlankName(''); setBlankColumns(''); setBlankPrimaryKey(''); }, [fileKey])</code>——文件地址一变，把面板本地状态全部重置为初始值，回到 IDLE 默认态。
+- **回归测试**：<code>test/panel-file-switch.test.js</code> 新增用例——渲染文件A → **真实点『确认执行』**（触发 POST /workbench-api/action，让 actionState 带上「已写入磁盘」绿字）→ 断言绿字出现 → 切文件B → 断言「已写入磁盘」「重算预览」均被清掉、显示新文件表。做了**变异验证**：去掉修复，该用例必失败（<code># fail 1</code>）；加回修复通过。全量 **479 tests / 458 pass / 0 fail / 21 skipped**；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。commit 4ddf59e。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
