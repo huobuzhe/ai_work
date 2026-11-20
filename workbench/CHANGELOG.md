@@ -2,13 +2,22 @@
 
 本文件记录 `dsh-workbench`（表格工作台）的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.1.0] - 2026-11-21
+
+「对标 🟡 便宜增量」小版本：把主流 AI 表格插件里**不改架构就能加**的四项能力补齐，让确定性改表线更完整。向前兼容，无破坏性变更。
 
 ### 新增（Added）
 - `sort` **按列排序**：按任意列升序/降序重排整表**行顺序**（行内容不变、只改先后）；支持数值列按数值、文本列按字典序，排序稳定（同值保原序）。确认后经 `xlsx_bridge.py sort` 重排物理行序写盘，预览即显示排序后的表。
 - `function` 新增 **`写入方式`** 参数（`数值` / `公式`）：`数值`（默认）把算好的真实数字写入；`公式` 写 A1 公式串（如 `=C2*D2`），打开 Excel/WPS 时按公式重算，保留表内公式关系。写公式后落盘自动经 LibreOffice 重算缓存值。
 - `highlight` **单元格标色**：给一列满足条件的单元格刷底色（黄/红/绿/蓝，柔和色），不改任何值；条件可空=整列。写盘经 `xlsx_bridge.py` 刷 PatternFill。
 - `function` **表达式引擎升级为多操作数**：从「操作数 单运算符 操作数」扩成任意多项 `+ - * /`，支持括号、运算优先级（先 `* /` 后 `+ -`）、一元负号。`toFormula` 渲染 A1 公式串、`computeValue` 实算数值均共享同一解析器；未知列/括号不匹配/除以零一律返回 null（不硬算）。
+
+### 修复（Fixed）
+- 面板一键 `function` 时，用户**自选一个新输出列名**（如"合计"，表里尚不存在）会被误改成默认的"应发"——现仅在输出列为空或等于主键时才兜底"应发"，用户显式给的新列名一律尊重。
+
+### 已知边界（Known limits）
+- 输入框仍是**关键词匹配的"假编译器"，不是 LLM**：只认动作关键词，不认自由改述/多动作/复杂条件。
+- `dedupe` 只清空重复行、不物理删行；无透视/图表/翻译/分类/情感分析等（见 `docs/research/inputbox-vs-ai-sheets.md` 对标）。
 
 ## [1.0.0] - 2026-11-20
 
@@ -48,4 +57,5 @@
 - `dedupe` 只清空重复行、不物理删行；`function` 仅两操作数四则；排序已支持（`sort`，按单列升降序），但无透视/图表/翻译/分类等（见 `docs/research/inputbox-vs-ai-sheets.md` 对标）。
 - 云端适配（飞书/腾讯）能力位保守记录、未全验证。
 
+[1.1.0]: https://github.com/huobuzhe/ai_work/tree/master/workbench
 [1.0.0]: https://github.com/huobuzhe/ai_work/tree/master/workbench
