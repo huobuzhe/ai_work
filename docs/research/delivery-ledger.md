@@ -235,6 +235,15 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **测试**：panel-smoke 补断言——`shell.overlay` 必须被注册（`calls.slotInjects` 含 'shell.overlay'，恰一条注册、id='dsh-workbench-fab'、body 为函数），面板 body 仍注册到 `sidebar.right.pane.tab` 且 key=tab id。全量 npm test 474 tests/453 pass/0 fail/21 skipped；acceptance engineMatchesFile:true、acceptance:formula valuesMatch:true。commit 8ba5f9b。
 - **验证手段局限**：宿主 token 按进程随机生成、不落盘，agent 无法自攻真实认证 URL；本修复以「与 dsh-pocket 逐字一致 + headless 渲染 overlay 面板（fab/panel/10 芯片/文件名标题齐全）」为证据，最终真机以用户重启后目视为准。
 
+## 交付后增量（第十一波：修复浮窗按钮「点不了」——overlay 删死钮恒可点 + 文件解析容错，用户 m09834，2026-11-20 补记）
+
+用户网图确认宿主原生可编辑表格视图已正常（第十波后浮窗按钮也出现了），但反馈**浮窗按钮点了没反应（「点不了」）**。
+
+- **根因**：`registerWorkbenchOverlay` 的 `WorkbenchOverlayHost` 里，`pickActiveSheetFile(snap)` 在真实宿主快照结构下可能返回 undefined；旧实现在未命中文件时渲染的是一个 **「待命死钮」**（`data-wb-fab-idle`，`cursor:not-allowed`，**无 onClick**）——用户看到按钮但点了没反应。
+- **修法**：① 删除待命死钮分支，**无论是否命中文件都渲染可点开的浮窗**（复用 `WorkbenchPanelBodyRef`，overlay 模式，address 命中则带文件、未命中则 null）；② 面板 body 对 `address=null` 优雅降级（`usePanelData` 在 !file 时置空态、`renderWorkbenchPanel` 显示「请在右侧打开一个 .xlsx / .xls / .csv 文件」提示），面板仍可开可关；③ `pickActiveSheetFile` 容错——活跃 leaf/活跃 tab 不是表格时，回退扫描**全部 leaf 的全部 tab** 找第一个 xlsx/xls/csv，避免快照结构细微差异导致「明明开着表却检测不到」。
+- **测试**：panel-smoke 新增回归守护 `overlay 宿主无论是否命中文件都渲染可点浮窗（不出现 data-wb-fab-idle 死钮）`——断言 overlay 模式（address=null 与 address=有文件两种）渲染树里均无 `data-wb-fab-idle`。全量 npm test 475 tests/454 pass/0 fail/21 skipped；acceptance engineMatchesFile:true、acceptance:formula allNumeric:true/valuesMatch:true。commit 8847f74。
+- **视觉验证**：headless Edge 渲染 overlay 真实组件树（react/react-dom/server）→ 右下角蓝色渐变⚙ FAB + 展开面板（标题栏「表格工作台 演示_动作_swap.xlsx」+ 10 个动作芯片 + 输入框 + 理解/预览/确认执行/固化为按钮），见截图确认。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
