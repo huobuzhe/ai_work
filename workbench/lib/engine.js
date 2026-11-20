@@ -53,7 +53,9 @@ const KINDS = {
     // 票 #20：默认参数由 paramSpec 派生。
     paramSpec: [
       { key: '表达式', 类型: '表达式', 必填: true, 默认值: '工时 * 时薪', 约束: { translatable: true } },
-      { key: '输出列', 类型: '列名', 必填: true, 默认值: '应发', 约束: { newColumn: true } }
+      { key: '输出列', 类型: '列名', 必填: true, 默认值: '应发', 约束: { newColumn: true } },
+      // ② 写公式而非值（🟡 便宜增量）：数值=算好真实数字（历史默认）；公式=写 A1 公式串，交 Excel/WPS 打开后重算。
+      { key: '写入方式', 类型: '枚举', 必填: false, 默认值: '数值', 约束: { enum: ['数值', '公式'] } }
     ]
   },
   // ⑤ dedupe（最小扩展示例，见 docs/usage-and-extension-guide.md 第六节）：
@@ -1055,19 +1057,31 @@ function preview(state, draft) {
       add(r, p.目标列, beforeOf(state, r, p.目标列), isDelete ? '' : String(p.值), false, 'conditional');
     });
   } else if (draft.kind === 'function') {
-    state.rows.forEach(function (r, ri) {
-      if (!inScope(r)) return;
-      // 用户 m07859 选「存算好的真实数字」：优先算实际数值写入（预览/磁盘都显示数字，不再是公式文本）。
-      // computeValue 与 toFormula 同文法；算不出（非数值单元格/超出文法）时回落公式字符串，
-      // 再不行则空串并标 invalid（保持可诊断，不静默错算）。
-      const value = computeValue(p.表达式, state, ri);
-      if (value !== null) {
-        add(r, p.输出列, beforeOf(state, r, p.输出列), value, false, 'function');
-        return;
-      }
-      const formula = toFormula(p.表达式, state, ri);
-      add(r, p.输出列, beforeOf(state, r, p.输出列), formula || '', !formula, 'function');
-    });
+    // ② 写公式而非值：p.写入方式==='公式' 时写 A1 公式串（交给 Excel/WPS 打开后重算）；
+    // 默认（数值）算好真实数字。两者共用同一 operand/operator 文法。
+    const asFormula = p.写入方式 === '公式';
+    if (asFormula) {
+      summaryExtra = '（写入方式：公式——每格写入 A1 公式串，打开 Excel/WPS 时按公式重算；不是算好的数字。）';
+      state.rows.forEach(function (r, ri) {
+        if (!inScope(r)) return;
+        const formula = toFormula(p.表达式, state, ri);
+        add(r, p.输出列, beforeOf(state, r, p.输出列), formula || '', !formula, 'function');
+      });
+    } else {
+      state.rows.forEach(function (r, ri) {
+        if (!inScope(r)) return;
+        // 用户 m07859 选「存算好的真实数字」：优先算实际数值写入（预览/磁盘都显示数字，不再是公式文本）。
+        // computeValue 与 toFormula 同文法；算不出（非数值单元格/超出文法）时回落公式字符串，
+        // 再不行则空串并标 invalid（保持可诊断，不静默错算）。
+        const value = computeValue(p.表达式, state, ri);
+        if (value !== null) {
+          add(r, p.输出列, beforeOf(state, r, p.输出列), value, false, 'function');
+          return;
+        }
+        const formula = toFormula(p.表达式, state, ri);
+        add(r, p.输出列, beforeOf(state, r, p.输出列), formula || '', !formula, 'function');
+      });
+    }
   } else if (draft.kind === 'dedupe') {
     // ⑤ 按主键去重（最小扩展示例）：按主键分组，保留策略（首条/末条）保留一条，
     // 其余重复行的「非主键可见列」清空。applyCells 只写单元格值、不物理删行——诚实边界。

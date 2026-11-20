@@ -126,7 +126,8 @@ const ACTION_FORMS = [
   ] },
   { kind: 'function', label: '公式计算', fields: [
     { key: '表达式', type: 'text', def: '工时 * 时薪' },
-    { key: '输出列', type: 'column', def: '应发' }
+    { key: '输出列', type: 'column', def: '应发' },
+    { key: '写入方式', type: 'enum', options: ['数值', '公式'], def: '数值' }
   ] },
   { kind: 'dedupe', label: '按主键去重', fields: [
     { key: '保留策略', type: 'enum', options: ['首条', '末条'], def: '首条' }
