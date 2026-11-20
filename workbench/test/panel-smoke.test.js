@@ -168,3 +168,32 @@ test('pickActiveSheetFile：从 betterSidebar 快照解析当前打开的 xlsx/c
   assert.equal(pick({ state: {} }), undefined);
   assert.equal(pick(null), undefined);
 });
+
+// 用户 m09834：浮窗按钮「点不了」——旧实现在未命中文件时渲染「待命死钮」（无 onClick，
+  // cursor:not-allowed），用户点了没反应。回归守护：无论命中与否，overlay 宿主都必须渲染
+  // **可点开**的浮窗（data-wb-fab 的真按钮 + 面板），绝不出现 data-wb-fab-idle 死钮。
+test('overlay 宿主无论是否命中文件都渲染可点浮窗（不出现 data-wb-fab-idle 死钮）', () => {
+  const def = loadBundle();
+  const mod = { exports: {} };
+  const bundled = def.factory(function () { throw new Error('no external require'); }, mod.exports, mod);
+  const renderWorkbenchPanel = bundled.renderWorkbenchPanel;
+  assert.equal(typeof renderWorkbenchPanel, 'function', '必须导出 renderWorkbenchPanel');
+  function collect(node, tag) {
+    const out = [];
+    (function walk(n) {
+      if (!n || typeof n !== 'object') return;
+      if (Array.isArray(n)) { n.forEach(walk); return; }
+      const t = n.tag || n.type;
+      if (t === tag) out.push(n);
+      const kids = (n.props && n.props.children) || n.children;
+      if (kids != null) walk(kids);
+    })(node);
+    return out;
+  }
+  // 未命中文件（address=null）→ overlay 模式仍要出可点 FAB
+  const noFile = renderWorkbenchPanel({ overlay: true, address: null, stage: 'IDLE', table: null });
+  assert.equal(collect(noFile, 'data-wb-fab-idle').length, 0, '不得渲染 data-wb-fab-idle 死钮');
+  // 命中文件 → 同样出可点 FAB
+  const withFile = renderWorkbenchPanel({ overlay: true, address: { scope: 'session', sessionId: 's', path: 'X:/a.xlsx' }, stage: 'IDLE', table: null });
+  assert.equal(collect(withFile, 'data-wb-fab-idle').length, 0, '命中文件时也不得出现死钮');
+});

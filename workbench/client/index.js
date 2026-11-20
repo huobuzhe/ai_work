@@ -696,7 +696,8 @@ function renderWorkbenchPanel(hostState) {
       ] }, 'origbox');
       rendered = true;
     }
-    summaryEl = jsx('div', { 'data-workbench-preview': 'empty', style: { opacity: 0.7 }, children: rendered ? '' : '暂无预览。' }, 'pvempty');
+    var noFile = !(hostState && hostState.address && hostState.address.path);
+    summaryEl = jsx('div', { 'data-workbench-preview': 'empty', style: { opacity: 0.7 }, children: rendered ? '' : (noFile ? '请在右侧打开一个 .xlsx / .xls / .csv 文件，再点浮窗按钮使用表格工作台。' : '暂无预览。') }, 'pvempty');
   }
   if (library && library.total > 0) {
     // 票 #43：按钮库渲染成真正可点击的 <button>，每个按钮绑定 onClick。
@@ -1106,6 +1107,20 @@ function pickActiveSheetFile(snap) {
     if (!tab) return undefined;
     // editor 类型 tab 带 path（普通字符串）与可选 cwd。
     var p = tab.path;
+    // 容错：活跃 leaf 的活跃 tab 若不是表格，回退扫描全部 leaf 的全部 tab 里第一个表格文件，
+    // 避免快照结构细微差异导致「明明开着 xlsx 却检测不到」。
+    if (typeof p !== 'string' || !/\.(xlsx|xls|csv)$/i.test(p)) {
+      for (var li = 0; li < leaves.length; li++) {
+        var ts = leaves[li].tabs || [];
+        for (var ti = 0; ti < ts.length; ti++) {
+          if (typeof ts[ti].path === 'string' && /\.(xlsx|xls|csv)$/i.test(ts[ti].path)) {
+            p = ts[ti].path;
+            break;
+          }
+        }
+        if (typeof p === 'string' && /\.(xlsx|xls|csv)$/i.test(p)) break;
+      }
+    }
     if (typeof p !== 'string' || !/\.(xlsx|xls|csv)$/i.test(p)) return undefined;
     return { scope: 'session', sessionId: snap.sessionId, path: p };
   } catch (_) { return undefined; }
@@ -1154,24 +1169,16 @@ function registerWorkbenchOverlay(ctx) {
             var addr = pickActiveSheetFile(snap);
             var rt0 = null;
             try { rt0 = require('react/jsx-runtime'); } catch (_) { rt0 = null; }
-            // 未命中当前打开的表格：仍渲染一个「待命」悬浮钮（不可展开），
-            // 保证用户在任何时候都能看到右下角按钮存在，避免「没有浮窗」的困惑。
-            // 点它给出提示「先打开 .xlsx / .csv 文件」。
-            if (!addr || !addr.path) {
-              if (!rt0) return null;
-              return rt0.jsx('button', {
-                type: 'button', 'data-wb-fab': '1', 'data-wb-fab-idle': '1',
-                title: '表格工作台：先打开 .xlsx / .xls / .csv 文件后可用',
-                style: { position: 'fixed', right: 24, bottom: 24, width: 52, height: 52, borderRadius: '50%', border: '1px dashed rgba(37,99,235,0.45)', background: 'rgba(37,99,235,0.10)', color: 'rgba(37,99,235,0.55)', zIndex: 2147482000, cursor: 'not-allowed', boxShadow: '0 2px 8px rgba(0,0,0,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22 },
-                children: '⚙'
-              }, 'fab-idle');
-            }
+            if (!rt0) return null;
+            // 无论是否命中当前文件，都渲染「可点开」的浮窗（蓝色 FAB + 面板）。
+            // 命中文件 → 面板可用全部动作；未命中 → 面板显示「请先打开 .xlsx / .csv」提示。
+            // 这样按钮永远可见、永远可点，绝不出现「点不了」的死钮。
             // 复用既有 panel body（内含全部 hooks/动作/表单逻辑），叠加模式：只出 fab+panel。
             // 以 React 元素方式渲染（不能在渲染树外直接当函数调用，否则 hooks 规则被破坏）。
             try {
               var Comp = WorkbenchPanelBodyRef;
               if (typeof Comp !== 'function') return null;
-              return rt0.jsx(Comp, { address: addr, overlay: true }, 'wb-overlay-' + addr.path);
+              return rt0.jsx(Comp, { address: (addr && addr.path ? addr : null), overlay: true }, 'wb-overlay-root');
             } catch (e) {
               try {
                 var rt2 = require('react/jsx-runtime');
