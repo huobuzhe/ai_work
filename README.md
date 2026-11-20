@@ -43,7 +43,11 @@ DSH_PROFILE_DIR="$HOME/.dsh/profiles/我的profile" bash ai_work/workbench/scrip
 
 装完 **重启 DSH** 即可。验证：打开任意 `.xlsx/.xls/.csv`，右下角出现 ⚙ 浮窗按钮 → 装好了。
 
-> 离线/分发包：下载 Release 里的 `dsh-workbench-1.1.0.zip`，解压后执行 `bash dsh-workbench/scripts/install.sh`（或按方式 B 手动）。
+> **没有 git 的机器（离线 zip 版，一行装）**：从 Releases 下载 `dsh-workbench-1.1.0.zip`，放到任意目录后一行命令：
+> ```bash
+> unzip -o dsh-workbench-1.1.0.zip && bash dsh-workbench/scripts/install.sh
+> ```
+> （Windows 若无 `unzip`，用资源管理器解压后执行 `bash dsh-workbench/scripts/install.sh`；或走方式 B 手动安装。）
 
 ### 方式 B：手动安装（脚本跑不通时照做）
 
