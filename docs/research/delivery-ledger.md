@@ -318,6 +318,15 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **测试** test/pipeline-action.test.js（7 例：两动作组合/演进依赖/invalid 指步/空 steps/含 sort 拦截/reduce PIPELINE/reduce CONFIRM）+ test/panel-pipeline.test.js（面板闭环：function+highlight 两步加入队列→预览→确认→磁盘应发 12800/10800 落盘 + 标色填充）。
 - **门禁** 全量 npm test 521 tests / 500 pass / 0 fail / 21 skipped；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true / allNumeric:true；selfcheck 全通过。
 
+## 交付后增量（第十九波：透视/汇总 + 条件格式更细 + 一句话接真 LLM，2026-11-21 补记）
+
+目标「步骤 5 新功能」剩余三项（流水线已在第十八波）。向前兼容，无破坏性变更。
+
+- **透视/汇总 sum**（commit 572fdd9）：lib/engine.js 新增 <code>KINDS.sum</code>（目标列 mustExist + 聚合方式 sum/avg/count/max/min）、preview 产 <code>preview.summaryRow={column,agg,value,count}</code>（cells 保持空、不改原始数据行）、CONFIRM 把一行「汇总·合计」等追加到 rows 末尾并标 <code>state.appendedSummary</code>。写盘经新增 <code>xlsx_bridge.py append-summary</code> 精确追加一行（首列放标签、目标列放值）。可选「符合条件」只统计命中行；浮点收敛 1e-10。测试 test/sum-action.test.js（8 例含真实 python 写盘闭环）。
+- **条件格式更细**（commit 6bbed98）：<code>highlight</code> 新增可选参数「规则组」——分号分隔多条 <code>条件:颜色</code>（如 <code>工时>160:red;工时>140:yellow</code>），逐行按书写顺序首命中生效（分级标色）；<code>parseColorRules()</code> 跳过非法颜色的那条而其余仍生效；规则组留空回落原单条件+单底色（向后兼容）。测试 test/highlight-action.test.js 追加 4 例。
+- **一句话理解·可选接真 LLM**（commit b5e70dc）：lib/engine.js 新增 <code>understandAsync(sentence, {llm})</code>——llm 是宿主注入的 async 函数返回 <code>{kind,params}|null</code>，接到就调用并由封闭校验采用（标 via:'llm'），抛错/null/未知 kind 一律静默回落关键词；<code>understand(sentence, llmResult)</code> 支持同步注入；reduce UNDERSTAND 支持 <code>action.llmResult</code>。桥 <code>makeActionHandler({understandLlm})</code> 支持注入同步理解器。不注入时行为不变（纯关键词、零网络）。测试 test/understand-llm.test.js（8 例含桥注入闭环）。
+- **门禁** 全量 npm test 541 tests / 520 pass / 0 fail / 21 skipped；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true；selfcheck 全通过。git 提交 572fdd9 → 6bbed98 → b5e70dc，三次 CI run 全 success（44878746579 等），origin/master=b5e70dc。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
