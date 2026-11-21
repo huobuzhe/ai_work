@@ -465,6 +465,11 @@ function makeActionHandler(deps) {
   const applyTable = deps.applyTable || defaultApplyTable;
   // 接缝缺口修复（function 动作）：写公式后就地重算，让缓存值落盘（默认调 LibreOffice Kit）。
   const recalc = deps.recalc || defaultRecalc;
+  // 一句话理解·可选接真 LLM（可插拔，离线默认关闭）：deps.understandLlm 是由宿主注入的
+  //   同步函数 `(sentence) => ({kind, params}|null)`（宿主自行异步调 LLM 后在此同步给出结果）。
+  //   提供时：UNDERSTAND 动作先取它的结果注入 action.llmResult（引擎 understand 会做封闭校验并优先采用，
+  //   非法/异常则回落关键词）。不提供时完全走离线关键词路径，本桥不触网。
+  const understandLlm = typeof deps.understandLlm === 'function' ? deps.understandLlm : null;
   const store = deps.store || createSessionStore();
   return function handler(req) {
     const method = (req && req.method) || 'GET';
@@ -528,6 +533,16 @@ function makeActionHandler(deps) {
       }
     } catch (_) { /* 数据源加载失败不致命 */ }
     const beforeStage = store.view(absPath, table).stage;
+    // 可选接真 LLM：UNDERSTAND 且宿主注入了 understandLlm 时，先取 LLM 结果注入 llmResult
+    // （引擎 understand(text, llmResult) 做封闭校验后优先采用；LLM 抛错/返回非法则回落关键词）。
+    if (understandLlm && action && typeof action.type === 'string' &&
+        action.type.toUpperCase() === 'UNDERSTAND' && action.llmResult === undefined) {
+      try {
+        const text = action.text !== undefined ? action.text : '';
+        const r = understandLlm(text);
+        if (r && typeof r === 'object') action = Object.assign({}, action, { llmResult: r });
+      } catch (_) { /* LLM 失败不致命，回落离线关键词 */ }
+    }
     let vm;
     try {
       vm = store.applyAction(absPath, table, action);

@@ -991,9 +991,16 @@ function rebuildDraft(draft, params) {
 }
 
 // 假编译器：关键词匹配（真实版本要补 LLM，见研究笔记；此版刻意留成非 LLM）
-function understand(sentence) {
+function understand(sentence, llmResult) {
   const s = String(sentence == null ? '' : sentence).trim();
   if (!s) return { error: '输入框是空的，先写一句话' };
+  // 一句话理解·可选接真 LLM（可插拔，离线默认关闭）：
+  //   llmResult 是外部 LLM 理解器已解析好的结果 {kind, params?}。若它给出合法 kind，
+  //   优先采用并标 via:'llm'（附 params 供 buildDraft 用）；否则回落下面的关键词匹配（离线默认路径）。
+  //   LLM 目标就是「理解成哪个 kind + 参数」，与关键词版共用同一套 KINDS，不新增动作。
+  if (llmResult && llmResult.kind && KINDS[llmResult.kind]) {
+    return { kind: llmResult.kind, sentence: s, via: 'llm', params: llmResult.params || null };
+  }
   let kind = null;
   if (/提取|邮箱|外勤|对应文件|补.*列|拉过来/.test(s)) kind = 'extract';
   else if (/调换|交换|互换|对调/.test(s)) kind = 'swap';
@@ -1010,6 +1017,24 @@ function understand(sentence) {
   else if (/填充|空值|补齐|补空/.test(s)) kind = 'fill';
   if (!kind) return { error: '没匹配到任何一种功能（本版只是关键词匹配，不是真 LLM）' };
   return { kind: kind, sentence: s };
+}
+
+// 一句话理解·可选接真 LLM（异步可插拔层，离线默认关闭）：
+//   opts.llm 是一个由宿主注入的 async 函数 `(sentence) => ({kind, params} | null)`（例如接某个大模型 API）。
+//   提供了就调用它，把结果交给 understand(sentence, llmResult) 做封闭校验/落 kind；
+//   llm 抛错/返回 null/给出未知 kind 时，understand 自动回落关键词匹配——外部依赖永远不阻断离线主路径。
+//   本函数不改状态机、不碰网络（网络全在宿主注入的 opts.llm 内），保持引擎纯函数纪律。
+async function understandAsync(sentence, opts) {
+  const s = String(sentence == null ? '' : sentence).trim();
+  let llmResult = null;
+  if (opts && typeof opts.llm === 'function') {
+    try {
+      llmResult = await opts.llm(s);
+    } catch (_) {
+      llmResult = null; // LLM 失败 → 静默回落关键词（离线可用）
+    }
+  }
+  return understand(s, llmResult);
 }
 
 // 封闭 schema 校验：在预览前跑完，不落盘部分结果（票 #14）
@@ -1660,11 +1685,16 @@ function reduce(state, action) {
       });
     case 'UNDERSTAND': {
       const text = action.text !== undefined ? action.text : state.input;
-      const got = understand(text);
+      // 可选接真 LLM：action.llmResult（宿主已异步解析好的 {kind,params}）直接交给 understand 校验并优先采用；无则纯关键词。
+      const got = understand(text, action.llmResult);
       if (got.error) return guard(state, got.error);
+      const viaLlm = got.via === 'llm';
       return set(state, {
-        input: got.sentence, draft: buildDraft(got.kind, got.sentence), preview: null,
-        stage: 'UNDERSTOOD', note: '已理解成「' + KINDS[got.kind].short + '」。注意：本版是关键词匹配，不是真 LLM。',
+        input: got.sentence, draft: buildDraft(got.kind, got.sentence, got.params || undefined), preview: null,
+        stage: 'UNDERSTOOD',
+        note: viaLlm
+          ? '已理解成「' + KINDS[got.kind].short + '」（由外部 LLM 理解，仍走封闭校验）。'
+          : '已理解成「' + KINDS[got.kind].short + '」。注意：本版是关键词匹配，不是真 LLM。',
         noteTone: 'info', log: push(state, '理解：' + shorten(got.sentence) + ' → ' + KINDS[got.kind].short)
       });
     }
@@ -1866,7 +1896,7 @@ function exportButtons(state) {
 
 module.exports = {
   SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, columnLetter, toFormula, computeValue, extractOutputColumn, extractExpression,
-  initial, understand, buildDraft, validate, preview, applyCells, runPipeline, reduce, exportButtons, nextButtonId,
+  initial, understand, understandAsync, buildDraft, validate, preview, applyCells, runPipeline, reduce, exportButtons, nextButtonId,
   loadRegistry, hydrateRegistry,
   TYPE_ENUM, TYPE_MAP, UPLOAD_WHITELIST, DEFAULT_PRIMARY_KEY,
   validateManifest, checkUpload, validateRows, detectConflicts, createTable,
