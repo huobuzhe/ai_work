@@ -185,6 +185,15 @@ for (const kind of ACTIONS) {
       }
       if (u.includes('/workbench-api/state')) {
         const tbl = defaultReadTable(file);
+        if (process.env.WB_DEBUG_READ && (!tbl || !tbl.columns || !tbl.columns.length || !tbl.rows || !tbl.rows.length)) {
+          console.error('[WB_DEBUG_READ ' + kind + '] file=' + file + ' tbl=' + JSON.stringify(tbl));
+          try {
+            const raw = pyRead(file);
+            console.error('[WB_DEBUG_READ ' + kind + '] pyRead=' + JSON.stringify(raw));
+            const st = spawnSync(pyBridgeBin()[0], [path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py'), 'read-values', file], { encoding: 'utf8' });
+            console.error('[WB_DEBUG_READ ' + kind + '] raw stdout=' + JSON.stringify(String(st.stdout || '').slice(0, 300)) + ' status=' + st.status + ' stderr=' + String(st.stderr || '').slice(0, 300));
+          } catch (e) { console.error('[WB_DEBUG_READ ' + kind + '] pyRead error=' + (e && e.message)); }
+        }
         return { json: async () => ({ file, columns: tbl.columns, rowCount: tbl.rows.length, preview: null, stage: 'IDLE', table: { columns: tbl.columns, rows: tbl.rows }, isDefaultDraft: false, registryButtons: [], buttons: [] }) };
       }
       return { json: async () => ({}) };
