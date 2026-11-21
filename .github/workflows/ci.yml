@@ -64,8 +64,6 @@ jobs:
 
       - name: full test suite
         shell: bash
-        env:
-          WB_DEBUG_READ: '1'
         run: npm test
 
       - name: acceptance (engineMatchesFile)

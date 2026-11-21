@@ -203,6 +203,11 @@ test('seam B：client.parseFileAddress 解析 dsh-resource://file/session/<sid>/
   const b = h.api.parseFileAddress('dsh-resource://file/absolute/C:/ws/a.xlsx');
   assert.equal(b.scope, 'absolute');
   assert.equal(b.path, 'C:/ws/a.xlsx');
+  // 绝对 scope，POSIX 绝对路径（Linux/macOS 以 / 开头，前缀后是 `absolute//tmp/...`）——
+  // 曾因首个空段被拒返回 undefined，导致面板在非 Windows 上误判「没打开文件」（CI 全红根因）。
+  const c = h.api.parseFileAddress('dsh-resource://file/absolute//tmp/wb/演示_swap.xlsx');
+  assert.equal(c.scope, 'absolute');
+  assert.equal(c.path, '/tmp/wb/演示_swap.xlsx');
   // 非 file 地址 → undefined
   assert.equal(h.api.parseFileAddress('sidebar://guide'), undefined);
   assert.equal(h.api.parseFileAddress(''), undefined);

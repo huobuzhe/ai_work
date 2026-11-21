@@ -185,15 +185,6 @@ for (const kind of ACTIONS) {
       }
       if (u.includes('/workbench-api/state')) {
         const tbl = defaultReadTable(file);
-        if (process.env.WB_DEBUG_READ && (!tbl || !tbl.columns || !tbl.columns.length || !tbl.rows || !tbl.rows.length)) {
-          console.error('[WB_DEBUG_READ ' + kind + '] file=' + file + ' tbl=' + JSON.stringify(tbl));
-          try {
-            const raw = pyRead(file);
-            console.error('[WB_DEBUG_READ ' + kind + '] pyRead=' + JSON.stringify(raw));
-            const st = spawnSync(pyBridgeBin()[0], [path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py'), 'read-values', file], { encoding: 'utf8' });
-            console.error('[WB_DEBUG_READ ' + kind + '] raw stdout=' + JSON.stringify(String(st.stdout || '').slice(0, 300)) + ' status=' + st.status + ' stderr=' + String(st.stderr || '').slice(0, 300));
-          } catch (e) { console.error('[WB_DEBUG_READ ' + kind + '] pyRead error=' + (e && e.message)); }
-        }
         return { json: async () => ({ file, columns: tbl.columns, rowCount: tbl.rows.length, preview: null, stage: 'IDLE', table: { columns: tbl.columns, rows: tbl.rows }, isDefaultDraft: false, registryButtons: [], buttons: [] }) };
       }
       return { json: async () => ({}) };
@@ -207,10 +198,6 @@ for (const kind of ACTIONS) {
     // 单次 waitTick(0) 可能在 setSlot 生效前就断言 → 假失败。这里轮询渲染直到原表出现或超时，
     // 既消除时序抖动、又保留「必须真的显示出原表」的语义（超时仍失败）。
     tree = await renderUntilData(shim, body, mkProps, 'data-workbench-orig-table');
-    if (process.env.WB_DEBUG_READ && !findByAttr(tree, 'data-workbench-orig-table', '1')) {
-      console.error('[WB_DEBUG_RENDER ' + kind + '] text=' + JSON.stringify(textOf(tree).join(' ').slice(0, 400)));
-      console.error('[WB_DEBUG_RENDER ' + kind + '] hasMain=' + !!findByAttr(tree, 'data-workbench-main', '1') + ' hasPanel=' + !!findByAttr(tree, 'data-workbench-panel', '1'));
-    }
 
     // 用户 m08197：打开文件时 tab 面板应直接显示原表（流式主区域 data-workbench-main 里含原表），
     // 浮窗按钮只作覆盖层（默认收起，点开才展开功能面板），pane 不再空白。

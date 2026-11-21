@@ -1049,9 +1049,16 @@ function parseFileAddress(address) {
       return { scope: scope, sessionId: decodeURIComponent(id), path: segments.map(decodeURIComponent).join('/') };
     }
     if (scope === 'absolute') {
+      // POSIX 绝对路径（如 /tmp/x.xlsx）经 `dsh-resource://file/absolute//tmp/x.xlsx` 传入，
+      // 去掉前缀后 body='absolute//tmp/x.xlsx'，split('/') 得到 ['absolute','','tmp','x.xlsx']，
+      // rest 首段为空（代表根 '/'）。Windows 路径（C:/...）则没有这个空段。
+      // 处理：剥掉首个空段，再按需补回前导 '/'（POSIX 根）；纯 Windows 路径不受影响。
       var segs = rest.map(decodeURIComponent);
-      if (segs.length === 0 || segs[0] === '') return undefined;
-      return { scope: scope, path: segs.join('/') };
+      var posixAbsolute = segs.length > 0 && segs[0] === '';
+      if (posixAbsolute) segs = segs.slice(1);
+      if (segs.length === 0) return undefined;
+      var joined = segs.join('/');
+      return { scope: scope, path: posixAbsolute ? '/' + joined : joined };
     }
     return undefined;
   } catch (e) { return undefined; }
