@@ -54,7 +54,7 @@
   ],
   "scripts": {
     "build:client": "node scripts/build-client.mjs",
-    "test": "node --test test/*.test.js",
+    "test": "node --test",
     "test:engine": "node --test test/engine.test.js",
     "test:smoke": "node --test test/panel-smoke.test.js",
     "test:e2e": "node --test test/e2e-xlsx.test.js",
