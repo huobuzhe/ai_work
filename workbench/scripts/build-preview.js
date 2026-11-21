@@ -67,6 +67,17 @@ const samples = [
     const d = E.buildDraft('sum', null, { 目标列: '工时', 聚合方式: 'sum' });
     return Object.assign({}, s, { stage: 'PREVIEWED', draft: d, preview: E.preview(s, d) });
   })() },
+  { title: '④c 透视分组 sum —— 按「部门」分组统计工时合计', state: (function () {
+    const s = E.initial({ primaryKey: '姓名', columns: ['姓名', '部门', '工时', '时薪'],
+      rows: [
+        { 姓名: '阿岚', 部门: '销售', 工时: 160, 时薪: 80 },
+        { 姓名: '柏舟', 部门: '销售', 工时: 100, 时薪: 90 },
+        { 姓名: '清和', 部门: '技术', 工时: 150, 时薪: 75 },
+        { 姓名: '尔芙', 部门: '技术', 工时: 130, 时薪: 85 }
+      ] });
+    const d = E.buildDraft('sum', null, { 多列汇总: '工时:sum', 分组列: '部门' });
+    return Object.assign({}, s, { stage: 'PREVIEWED', draft: d, preview: E.preview(s, d) });
+  })() },
   { title: '⑤ 校验失败示例 —— 引用了不存在的列（第②段列失败项、确认被禁用）', state: (function () {
     const s = st();
     const bad = E.buildDraft('swap', null, { 字段A: '不存在的列', 字段B: '部门' });
@@ -132,6 +143,19 @@ function renderCard(card) {
       ? '<div class="banner">汇总结果将写入独立工作表「' + esc(im.summaryRow.sheetName || '汇总') + '」：'
         + esc(im.summaryRow.column) + ' 的' + esc({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[im.summaryRow.agg] || im.summaryRow.agg)
         + ' ＝ ' + esc(im.summaryRow.value) + '（参与 ' + esc(im.summaryRow.count) + ' 行），不改本表。</div>'
+      : '')
+    + (im.summaryPivot && im.summaryPivot.groupColumn
+      ? (function (pv) {
+          let t = '<div class="banner">透视结果将写入独立工作表「汇总」：按「' + esc(pv.groupColumn) + '」分 ' + esc(pv.groupCount) + ' 组，不改本表。</div>';
+          t += '<table class="pv"><thead><tr><th>' + esc(pv.groupColumn) + '</th>'
+            + pv.headers.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>';
+          t += pv.rows.map(function (r) {
+            return '<tr><td>' + esc(r.group) + '</td>'
+              + r.cells.map(function (c) { return '<td class="after">' + esc(c.value) + '</td>'; }).join('') + '</tr>';
+          }).join('');
+          t += '</tbody></table>';
+          return t;
+        })(im.summaryPivot)
       : '')
     + (im.swapBanner ? '<div class="banner">' + esc(im.swapBanner) + '</div>' : '')
     + (im.cells.length ? cellsHtml : '');
@@ -200,6 +224,7 @@ const html = '<!DOCTYPE html>\n<html lang="zh-CN"><head><meta charset="utf-8">'
   + 'th,td{border:1px solid var(--line);padding:5px 8px;text-align:left}th{background:#f7f8fa;font-weight:600}'
   + '.cells .before{color:#8a8f98;text-decoration:line-through}.cells .after{color:var(--pri);font-weight:600}'
   + '.summary{font-weight:600;margin-bottom:6px}.banner{margin:6px 0;padding:6px 10px;background:#fff7e6;border-left:3px solid #f0a020;border-radius:4px;font-size:13px}'
+  + 'table.pv{border-collapse:collapse;margin:6px 0;font-size:13px}table.pv th,table.pv td{border:1px solid #d9d9d9;padding:4px 8px}table.pv th{background:#f5f5f5}'
   + 'ol,ul{margin:6px 0;padding-left:22px}'
   + '.btn,.btn-primary,.btn-disabled{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer}'
   + '.btn-primary{background:var(--pri);border-color:var(--pri);color:#fff}'
