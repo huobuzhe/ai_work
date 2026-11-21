@@ -153,12 +153,14 @@ const KINDS = {
   // 向后兼容：只给单个聚合时 summaryRows 仍含 1 条，且 preview.summaryRow = summaryRows[0]（旧消费者不受影响）。
   sum: {
     label: '⑬ 汇总统计', short: '汇总统计',
-    medium: '结构化动作：对一列或多列做合计/平均/计数/最大/最小，写入独立工作表「汇总」',
+    medium: '结构化动作：合计/平均/计数/最大/最小，可选按列分组透视，写入独立工作表「汇总」',
     paramSpec: [
       { key: '目标列', 类型: '列名', 必填: false, 默认值: '工时', 约束: { mustExist: true } },
       { key: '聚合方式', 类型: '枚举', 必填: false, 默认值: 'sum', 约束: { enum: ['sum', 'avg', 'count', 'max', 'min'] } },
       // 多列/多聚合：分号分隔的规格串「列名:聚合;列名2:聚合2」。为空则只用「目标列+聚合方式」单条。
-      { key: '多列汇总', 类型: 'text', 必填: false, 默认值: '' }
+      { key: '多列汇总', 类型: 'text', 必填: false, 默认值: '' },
+      // 透视分组：填某列名（如「部门」）→ 按该列分组、每组一行，规格项作为列，产一张透视表；留空则只做总计。
+      { key: '分组列', 类型: '列名', 必填: false, 默认值: '', 约束: { mustExist: true } }
     ]
   }
 };
@@ -934,6 +936,7 @@ function stepsFor(kind, p) {
     return [
       scopeStep,
       '统计 ' + targets.join('、'),
+      p.分组列 ? ('按「' + p.分组列 + '」分组透视，每组一行') : '不分组（全表一行结果）',
       '把结果写入一张独立工作表「汇总」（不改任何原始数据行）'
     ];
   }
@@ -1450,38 +1453,68 @@ function preview(state, draft) {
       return out;
     }
     const specs = parseSpecs(p);
-    const summaries = [];
-    const missing = [];
-    specs.forEach(function (sp) {
-      const col = sp.column;
-      if (!col || !state.columns || state.columns.indexOf(col) === -1) { missing.push(col || '(空列名)'); return; }
+    // 聚合一个数值字段：给定一组行 → {value,count}。count 恒为该组行数。
+    function aggRows(rows, col, agg) {
       const nums = [];
-      let cnt = 0;
-      state.rows.forEach(function (r) {
-        if (!inScope(r)) return;
-        cnt += 1;
+      rows.forEach(function (r) {
         const v = r[col];
         const n = Number(v);
         if (isFinite(n) && v !== '' && v !== null && v !== undefined) nums.push(n);
       });
       let value;
-      if (sp.agg === 'count') value = cnt;
-      else if (sp.agg === 'sum') value = nums.reduce(function (a, b) { return a + b; }, 0);
-      else if (sp.agg === 'avg') value = nums.length ? (nums.reduce(function (a, b) { return a + b; }, 0) / nums.length) : 0;
-      else if (sp.agg === 'max') value = nums.length ? Math.max.apply(null, nums) : 0;
-      else if (sp.agg === 'min') value = nums.length ? Math.min.apply(null, nums) : 0;
+      if (agg === 'count') value = rows.length;
+      else if (agg === 'sum') value = nums.reduce(function (a, b) { return a + b; }, 0);
+      else if (agg === 'avg') value = nums.length ? (nums.reduce(function (a, b) { return a + b; }, 0) / nums.length) : 0;
+      else if (agg === 'max') value = nums.length ? Math.max.apply(null, nums) : 0;
+      else if (agg === 'min') value = nums.length ? Math.min.apply(null, nums) : 0;
       else value = 0;
-      // 浮点收敛：统一保留到 1e-10 精度，避免 143.3333333333 之类长尾抖动。
-      value = Math.round(value * 1e10) / 1e10;
-      summaries.push({ column: col, agg: sp.agg, label: aggCn[sp.agg] || sp.agg, value: value, count: cnt });
+      return { value: Math.round(value * 1e10) / 1e10, count: rows.length };
+    }
+    // scope 内的全部行（供总计 / 分组用）。
+    const scopeRows = state.rows.filter(function (r) { return inScope(r); });
+    const missing = [];
+    specs.forEach(function (sp) {
+      if (!sp.column || !state.columns || state.columns.indexOf(sp.column) === -1) missing.push(sp.column || '(空列名)');
     });
+    const groupCol = p.分组列 ? String(p.分组列).trim() : '';
+    if (groupCol && (!state.columns || state.columns.indexOf(groupCol) === -1)) missing.push(groupCol);
     if (missing.length) {
       return Object.assign({ cells: [], summary: '汇总的列不存在：' + missing.join('、') + '（请检查列名）。', affectedRows: 0, totalRows,
         invalid: true, disabled: false, errors: ['列不存在：' + missing.join('、')], issues: [], capabilityBlockers: [],
         scope: p.scope || 'all', condition: p.条件 || '', disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec });
     }
-    previewMeta.summaryRows = summaries;
-    previewMeta.summaryRow = summaries[0] || null; // 向后兼容旧消费者（单条）
+    if (groupCol) {
+      // 透视分组：按 groupCol 分组，组顺序=首次出现顺序；每组对每个 spec 求值，规格项作为列。
+      const order = [];
+      const buckets = {};
+      scopeRows.forEach(function (r) {
+        const gv = (r[groupCol] === '' || r[groupCol] == null) ? '（空）' : String(r[groupCol]);
+        if (!buckets[gv]) { buckets[gv] = []; order.push(gv); }
+        buckets[gv].push(r);
+      });
+      const pivotRows = order.map(function (gv) {
+        const cells = specs.map(function (sp) {
+          const a = aggRows(buckets[gv], sp.column, sp.agg);
+          return { column: sp.column, agg: sp.agg, label: aggCn[sp.agg] || sp.agg, value: a.value, count: a.count };
+        });
+        return { group: gv, cells: cells };
+      });
+      previewMeta.summaryPivot = {
+        groupColumn: groupCol,
+        headers: specs.map(function (sp) { return sp.column + '·' + (aggCn[sp.agg] || sp.agg); }),
+        specMeta: specs.map(function (sp) { return { column: sp.column, agg: sp.agg, label: aggCn[sp.agg] || sp.agg }; }),
+        rows: pivotRows,
+        groupCount: pivotRows.length
+      };
+    } else {
+      // 无分组：对 scope 内全部行逐 spec 求值，产 summaryRows（平的）。
+      const summaries = specs.map(function (sp) {
+        const a = aggRows(scopeRows, sp.column, sp.agg);
+        return { column: sp.column, agg: sp.agg, label: aggCn[sp.agg] || sp.agg, value: a.value, count: a.count };
+      });
+      previewMeta.summaryRows = summaries;
+      previewMeta.summaryRow = summaries[0] || null; // 向后兼容旧消费者（单条）
+    }
   }
   // 影响行数按「行」去重，不能只按主键值（重复主键会把两行塌成一行、少报影响行数）。
   // 优先用 rowIndex（state.rows 下标，重复主键也能区分），无 rowIndex 时回落主键值。
@@ -1500,7 +1533,11 @@ function preview(state, draft) {
     summary = '按列重排整表行顺序：' + totalRows + ' 行中 ' + moved + ' 行位置会变。确认后写回整表（行内容不变，只改先后顺序）。';
   }
   // 汇总（sum）：不改任何原始单元格，结果写到一张独立 sheet「汇总」。
-  if (previewMeta.summaryRows && previewMeta.summaryRows.length) {
+  if (previewMeta.summaryPivot) {
+    const pv = previewMeta.summaryPivot;
+    summary = '按「' + pv.groupColumn + '」分 ' + pv.groupCount + ' 组透视汇总（列：' + pv.headers.join('、') +
+      '）。确认后写入独立工作表「汇总」（不改原数据表任何单元格）。';
+  } else if (previewMeta.summaryRows && previewMeta.summaryRows.length) {
     const rows = previewMeta.summaryRows;
     const parts = rows.map(function (sr) {
       return '「' + sr.column + '」' + (sr.label || ({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sr.agg] || sr.agg)) +
@@ -1801,6 +1838,21 @@ function reduce(state, action) {
       // 汇总（sum）：不改任何原始数据行；结果写到一张**独立 sheet「汇总」**（不污染原数据表）。
       //   确认时只标 state.appendedSummarySheet 供 panel-bridge 检测后用桥 write-summary-sheet
       //   建/覆盖该 sheet；state.rows/columns（原数据视图）保持不变——干净、可重复执行。
+      if (state.preview.summaryPivot) {
+        const pv = state.preview.summaryPivot;
+        return set(state, {
+          stage: 'EXECUTED',
+          appendedSummarySheet: {
+            sheetName: '汇总', pivot: {
+              groupColumn: pv.groupColumn, headers: pv.headers, specMeta: pv.specMeta,
+              rows: pv.rows.map(function (r) { return { group: r.group, values: r.cells.map(function (c) { return c.value; }) }; })
+            }
+          },
+          note: '用户已确认，按「' + pv.groupColumn + '」分 ' + pv.groupCount + ' 组的透视汇总已写入独立工作表「汇总」，原数据表未改动。',
+          noteTone: 'ok',
+          log: push(state, '确认 → 透视汇总：写入「汇总」sheet 按「' + pv.groupColumn + '」' + pv.groupCount + ' 组', 'ok')
+        });
+      }
       if (state.preview.summaryRows && state.preview.summaryRows.length) {
         const rows = state.preview.summaryRows;
         const summaryText = rows.map(function (sr) { return '「' + sr.column + '」' + sr.label + '＝ ' + sr.value; }).join('；');

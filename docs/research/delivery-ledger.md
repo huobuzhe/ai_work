@@ -359,6 +359,17 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - `client/index.js`：ACTION_FORMS sum 加 `多列汇总` 字段；projection impact 增 `summaryRows`（含 sheetName，逐项）；影响区渲染多行汇总，单条/多条分别措辞，旧 `summaryRow` 兜底。
 - 测试 `test/sum-action.test.js` 由 8 例扩到 13 例（多列规格解析/summaryRows 值/count 列/单条兼容/invalid 点名/CONFIRM rows/桥真写盘多行）；`npm run build:client` + `build:preview`（7 样例）重生成。门禁：全量 npm test **559/538/0/21**（+5）；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true；selfcheck 全通过。
 
+### 第二十二波：透视分组汇总 group by（2026-11-21 用户选定）
+
+用户选定「透视分组汇总（按列 group by，如分部门统计工时）做好做完善，更新 README，完善上线部分」。改动（向前兼容，均在 sum 动作上扩）：
+
+- `lib/engine.js` KINDS.sum 新增可选参数 `分组列`(列名,mustExist)；preview 的 sum 分支内部抽出 `aggRows(rows,col,agg)` 复用于单组聚合；新增 `scopeRows`；有 `分组列` 时按该列分组（组顺序=首次出现顺序、空值归「（空）」组），逐组 × 逐 spec 求值，产 `previewMeta.summaryPivot={groupColumn,headers:[列·聚合],specMeta,rows:[{group,cells:[{column,agg,label,value,count}]}],groupCount}`；无分组则仍产 `summaryRows`（向后兼容）。分组列/列不存在 → 整条 invalid 并点名。summary 文案区分「按 X 分 N 组透视」/「汇总 N 项」。CONFIRM sum 分支：pivot 时标 `appendedSummarySheet={sheetName:'汇总', pivot:{groupColumn,headers,specMeta,rows:[{group,values:[...]}]}}`，否则 rows 平表。stepsFor sum 加「按 X 分组透视，每组一行」/「不分组」步。
+- `scripts/xlsx_bridge.py write_summary_sheet`：新增形态 A `{pivot:{groupColumn,headers,rows:[{group,values:[...]}]}}` → 写表头(`分组列名` + 各 headers) + 每行(`group` + values)；形态 B 仍是平表。均覆盖同名 sheet、原表不动。
+- `lib/panel-bridge.js`：sum 分支原样 JSON 透传（含 pivot），无需改逻辑。
+- `client/index.js`：ACTION_FORMS sum 加 `分组列`(column) 字段；projection impact 增 `summaryPivot`（groupColumn/headers/specMeta/rows/groupCount）；影响区渲染「透视：按「X」分 N 组 × K 项（列：…）」行。
+- 测试 `test/sum-action.test.js` 13→19 例（+6：分组列 paramSpec、单/多规格分组各值、分组列不存在 invalid、CONFIRM pivot 元数据、桥写 pivot 真写盘表头+分组行）。门禁：全量 npm test **565/544/0/21**（+6）；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true；selfcheck 全通过。
+- 文档：`docs/usage-guide.md` 六·六 sum 行补「分组列」；`workbench/README.md` 动作表加 `sum` 行、新增「5½. 汇总与透视」节、「明确不做」改写透视边界、新增「安装 / 上线」整节（一键/离线装法 + 发布新版本步骤）；`workbench/INSTALL.md` 加 FAQ 行 + 「发新版本」节；`workbench/CHANGELOG.md` 未发布段加透视条目。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。

@@ -32,6 +32,7 @@
 | ⑩ | `affix` 加前后缀 | 给每格拼上前缀 / 后缀（可只填一个） | 「给工号前面加 HQ-」 |
 | ⑪ | `sort` 按列排序 | 按任意列升序/降序**重排整表行顺序**（行内容不变，只改先后；数值按数值、文本按字典序） | 「按工时从高到低排序」 |
 | ＋ | `highlight` 单元格标色 | 给满足条件的单元格**刷底色**（黄/红/绿/蓝柔和色），值不变 | 「把工时超过 150 的标黄」 |
+| ＋ | `sum` 汇总统计 | 对一列或多列做**合计/平均/计数/最大/最小**（可一次多列多聚合，如 `工时:avg;时薪:max`），并可按某列**分组透视**（每组一行）；结果写入独立工作表「汇总」，**不改原数据表** | 「按部门统计工时合计」「汇总各列平均和最大」 |
 
 > 输入框是**关键词匹配的「本地假编译器」，不联网、不调 LLM**：认得上面这些动作关键词，认不出自由改述/多动作/复杂条件会明确报错，不会瞎猜。
 
@@ -51,6 +52,13 @@
 
 四种入口：**空白表**（可自选列 + 自选主键列）、**从模板**、**上传 CSV/XLSX**（校验格式/加密/带宏/改名伪装）、**描述建表**（信息不足会反问，不猜值）。
 
+### 5½. 汇总与透视（`sum`，结果写独立「汇总」sheet）
+
+- **一次多列 / 多聚合**：`多列汇总` 填 `列名:聚合;列名2:聚合2`（聚合取 `sum/avg/count/max/min`），一次产出多行结果。
+- **按列分组透视**：`分组列` 填某列（如「部门」）→ 按它分组、**每组一行**、各规格项作列，产一张透视表（组顺序=首次出现顺序，空值归「（空）」组）。
+- **绝不改原表**：结果统统写进一张独立工作表「汇总」（同名先删再建、确保重跑一致）；原数据表一个单元格都不动。某列/分组列不存在 → 预览前点名列名拦截，不静默算错。
+- 面板影响区会先给出「按 X 分 N 组 × K 项」或「汇总 N 项：…＝…」的结果卡，确认前就能看到聚合值。
+
 ### 6. 五步主流程 + 封闭校验 + 可回滚
 
 「理解 → 校验 → 预览 → 确认 → 固化」五步，每一步都能看到真实计算、任一步校验失败都不落盘。
@@ -62,7 +70,7 @@
 
 ### 8. 明确不做（不装样子）
 
-输入框不是 LLM、不做自由自然语言编译；`dedupe` 只清空不物理删行；无透视/图表/翻译/分类/情感分析；无账号体系/分享链接/按钮级权限（第一版随仓内 git 权限）。
+输入框不是 LLM、不做自由自然语言编译；`dedupe` 只清空不物理删行；**不做图表/翻译/分类/情感分析**；透视仅限「按列分组 + 所列聚合」（不做多维交叉透视/多级分组，需多维时请分次跑或提新票）；无账号体系/分享链接/按钮级权限（第一版随仓内 git 权限）。
 
 > 完整操作步骤、每个参数的填法、预览卡六段逐段讲解、按钮库全生命周期、命令速查、FAQ、二次开发新增动作的步骤，见 **[使用手册（详尽版）docs/usage-guide.md](../docs/usage-guide.md)**。
 
@@ -93,6 +101,33 @@
 - `registry/*.json` — 仓内声明式按钮注册表（票 #16，git 作「线上」来源）：每份 JSON 一个预置按钮，含 name / source=preset / kind / params / schemaVersion；`lib/engine.js` 的 `loadRegistry()` 加载时做封闭校验（与配方校验共用规则），非法条目逐条拒绝不影响合法条目。
 - `scripts/load-registry.js` — 注册表加载脚本（纯文件桥，票 #16）：读 `registry/*.json` → 调引擎 `loadRegistry()` → 输出校验结果与按钮清单；无网络、无云凭据、不写仓库。
 - `test/` — `node:test`，按主题分文件覆盖：纯引擎、面板注册契约、extract/function/templates 端到端、scope/条件公共字段、swap/conditional 半换边界与披露、封闭校验与预览卡五段、按钮固化/一键重跑/按钮库生命周期、仓内注册表统一入口、带类型参数声明层（paramSpec 迁移与 typed 统一来源）、adapter 抽象层与能力位契约、凭据契约、飞书/腾讯 adapter 实装、能力位矩阵验尸、权限/分享不越权守卫、云端持凭据实测证据层。**测试计数不在此写死**——以 `npm test` 实际输出为准（计数字写进文档会随新增测试腐化，是 retro §2 记下的教训）。
+
+## 安装 / 上线（把工作台挂进宿主）
+
+两种装法（都需要 DSH 宿主；本包是宿主内插件，不是独立网页）：
+
+**① 在线一键安装（推荐）**
+
+```bash
+git clone https://github.com/huobuzhe/ai_work.git
+bash ai_work/workbench/scripts/install.sh
+```
+
+**② 离线安装（用发布包）**
+
+```bash
+unzip -o dsh-workbench-1.1.0.zip
+bash dsh-workbench/scripts/install.sh
+```
+
+`install.sh` 会把本包以 `link:` 方式写进 DSH profile 的 `dependencies` + `dsh.profile.bundles`、建 `node_modules` junction、跑 selfcheck；换 profile 用 `DSH_PROFILE_DIR=/path/to/profile` 指定。装好后**重启宿主**，打开任意 `.xlsx/.xls/.csv`，右下角出现 ⚙ 悬浮按钮即成功。排障（无 tab / 崩溃 / 打不开表格 / 崩溃恢复把插件禁用）见 [使用手册 · 方式二补充](../docs/usage-guide.md) 的四坑表。
+
+**发布新版本（维护者）**
+
+1. 改 `workbench/package.json` 的 `version` 与 `workbench/CHANGELOG.md`；
+2. 打 zip：`cd workbench && zip -r dist/dsh-workbench-<ver>.zip . -x 'dist/*' 'node_modules/*'`（`dist/*.zip` 已在 `.gitignore`，不进 git）；
+3. `gh release create v<ver> --title "v<ver>" --notes-file <从 CHANGELOG 段生成> workbench/dist/dsh-workbench-<ver>.zip`。
+4. 提交后推送；CI（`.github/workflows/ci.yml`：ubuntu/windows × node20/22）跑 selfcheck + build:client 漂移检查 + 全测 + 两条端到端验收。
 
 ## 构建 / 验证
 

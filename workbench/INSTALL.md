@@ -100,6 +100,17 @@ npm run selfcheck     # 检查包结构 / 引擎 11+ 动作 / 关键文件是否
 | 打开文件报「无法打开此表格」 | 那个 xlsx 本身是 0 字节/损坏（不是插件问题），换一个正常文件 |
 | 公式列写出来是空白 | `function` 默认写**数值**；若选了「写入方式=公式」，值需要表格软件重算后才显示缓存值（面板/验收脚本会自动重算） |
 | 点动作没反应/输入框报空 | 确认宿主已重启加载到最新 `client/client.js`（改源码后要 `npm run build:client`） |
+| 汇总/透视跑完没变化 | `sum` 结果写入**独立工作表「汇总」**、不改原表；去表格里看「汇总」sheet（分组透视则是每组一行）。这是设计如此，不是没生效 |
+
+## 发新版本（维护者参考）
+
+1. 改 `workbench/package.json` 的 `version`、在 `workbench/CHANGELOG.md` 的 `[未发布]` 段补条目；
+2. 打发布包：`cd workbench && zip -r dist/dsh-workbench-<ver>.zip . -x 'dist/*' 'node_modules/*'`（`dist/*.zip` 已被 `.gitignore` 忽略，不进 git）；
+3. 建 Release 并上传附件：
+   ```bash
+   gh release create v<ver> --title "v<ver>" --notes-file <CHANGELOG 该版本段> workbench/dist/dsh-workbench-<ver>.zip
+   ```
+4. 推 master；CI（`.github/workflows/ci.yml`）会在 ubuntu/windows × node20/22 上跑 selfcheck + build:client 漂移检查 + 全测 + 两条端到端验收，全绿才算可发布。
 
 ## 卸载
 

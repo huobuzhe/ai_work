@@ -222,14 +222,30 @@ def write_summary_sheet(path, summary_json):
     wb = load_workbook(path)
     sheet_name = str(sr.get('sheetName') or '汇总')[:31]
     agg_cn = { 'sum': '合计', 'avg': '平均', 'count': '计数', 'max': '最大', 'min': '最小' }
-    # 归一成 rows 列表（兼容旧单条形状）。
-    rows = sr.get('rows')
-    if not isinstance(rows, list) or not rows:
-        rows = [sr]
     # 覆盖语义：同名 sheet 已存在则先删再建（保证重复执行结果一致、不叠行）。
     if sheet_name in wb.sheetnames:
         del wb[sheet_name]
     ws = wb.create_sheet(title=sheet_name)
+
+    # 形态 A：透视分组 {pivot:{groupColumn, headers:[...], rows:[{group, values:[...]}]}}
+    pivot = sr.get('pivot')
+    if isinstance(pivot, dict) and isinstance(pivot.get('rows'), list):
+        headers = pivot.get('headers') or []
+        ws.append([pivot.get('groupColumn') or '分组'] + list(headers))
+        for prow in pivot['rows']:
+            ws.append([prow.get('group')] + list(prow.get('values') or []))
+        try:
+            ws.sheet_view.showGridLines = True
+        except Exception:
+            pass
+        wb.save(path)
+        print('OK')
+        return
+
+    # 形态 B：多列/单条平表 {rows:[{column,agg,label?,value,count?}]}（兼容旧单条形状 {column,agg,...}）
+    rows = sr.get('rows')
+    if not isinstance(rows, list) or not rows:
+        rows = [sr]
     ws.append(['汇总项', '值'])
     last_count = None
     for r in rows:

@@ -228,3 +228,131 @@ test('sum 多列汇总桥真写盘：write-summary-sheet 收 {rows:[...]} → �
   assert.equal(info.b3, 90, '第二项最大=90');
   assert.equal(info.b4, 3, '末行参与行数=3');
 });
+
+// ============================================================================
+// 透视分组（group by）：按某列分组，每组一行、规格项作列，产一张透视表写入「汇总」sheet。
+// ============================================================================
+test('透视分组：分组列 paramSpec 声明（mustExist）', function () {
+  const spec = E.KINDS.sum.paramSpec;
+  const g = spec.find(function (d) { return d.key === '分组列'; });
+  assert.ok(g, '应有「分组列」参数');
+  assert.ok(g.约束 && g.约束.mustExist, '分组列应 mustExist');
+});
+
+test('透视分组 preview：按「部门」分组 → summaryPivot 每组一行、值为该组聚合', function () {
+  const DATA2 = {
+    primaryKey: '姓名',
+    columns: ['姓名', '部门', '工时'],
+    rows: [
+      { 姓名: 'a', 部门: '销售', 工时: 100 },
+      { 姓名: 'b', 部门: '销售', 工时: 60 },
+      { 姓名: 'c', 部门: '技术', 工时: 80 },
+      { 姓名: 'd', 部门: '财务', 工时: 50 }
+    ]
+  };
+  const st = E.initial(DATA2);
+  const pv = E.preview(st, E.buildDraft('sum', null, { 多列汇总: '工时:sum', 分组列: '部门' }));
+  assert.equal(pv.invalid, false);
+  assert.ok(pv.summaryPivot, '应产 summaryPivot');
+  assert.equal(pv.summaryPivot.groupColumn, '部门');
+  assert.equal(pv.summaryPivot.groupCount, 3, '销售/技术/财务 三组');
+  assert.deepEqual(pv.summaryPivot.rows.map(function (r) { return r.group; }), ['销售', '技术', '财务'], '组顺序=首次出现顺序');
+  // 销售组合计 = 160，技术 = 80，财务 = 50
+  assert.deepEqual(pv.summaryPivot.rows.map(function (r) { return r.cells[0].value; }), [160, 80, 50]);
+  assert.equal(pv.cells.length, 0, '透视不产逐格变化');
+});
+
+test('透视分组 preview：多规格 × 分组 → 每行多列值', function () {
+  const DATA3 = {
+    primaryKey: '姓名',
+    columns: ['姓名', '部门', '工时', '时薪'],
+    rows: [
+      { 姓名: 'a', 部门: '销售', 工时: 100, 时薪: 80 },
+      { 姓名: 'b', 部门: '销售', 工时: 60, 时薪: 90 },
+      { 姓名: 'c', 部门: '技术', 工时: 80, 时薪: 70 }
+    ]
+  };
+  const st = E.initial(DATA3);
+  const pv = E.preview(st, E.buildDraft('sum', null, { 多列汇总: '工时:sum;时薪:max', 分组列: '部门' }));
+  assert.equal(pv.summaryPivot.headers.length, 2);
+  const sales = pv.summaryPivot.rows.filter(function (r) { return r.group === '销售'; })[0];
+  assert.equal(sales.cells[0].value, 160, '销售工时合计=160');
+  assert.equal(sales.cells[1].value, 90, '销售时薪最大=90');
+});
+
+test('透视分组：分组列不存在 → invalid 点名列名', function () {
+  const st = fresh();
+  const pv = E.preview(st, E.buildDraft('sum', null, { 多列汇总: '工时:sum', 分组列: '不存在组' }));
+  assert.equal(pv.invalid, true);
+  assert.ok(/不存在组/.test(pv.summary), 'summary 应点明分组列不存在');
+});
+
+test('透视分组 CONFIRM：appendedSummarySheet.pivot 带 groupColumn/headers/rows，原数据行不变', function () {
+  const DATA2 = {
+    primaryKey: '姓名',
+    columns: ['姓名', '部门', '工时'],
+    rows: [
+      { 姓名: 'a', 部门: '销售', 工时: 100 },
+      { 姓名: 'b', 部门: '销售', 工时: 60 },
+      { 姓名: 'c', 部门: '技术', 工时: 80 }
+    ]
+  };
+  let st = E.initial(DATA2);
+  st = E.reduce(st, { type: 'QUICK', kind: 'sum', params: { 多列汇总: '工时:sum', 分组列: '部门' } });
+  assert.equal(st.stage, 'PREVIEWED');
+  st = E.reduce(st, { type: 'CONFIRM' });
+  assert.equal(st.stage, 'EXECUTED');
+  assert.ok(st.appendedSummarySheet && st.appendedSummarySheet.pivot, '应带 pivot 落盘元数据');
+  const pv = st.appendedSummarySheet.pivot;
+  assert.equal(pv.groupColumn, '部门');
+  assert.equal(pv.headers.length, 1);
+  assert.deepEqual(pv.rows.map(function (r) { return r.group; }), ['销售', '技术']);
+  assert.deepEqual(pv.rows[0].values, [160], '销售组值 160');
+  assert.equal(st.rows.length, 3, '原数据表仍 3 行');
+});
+
+test('透视分组桥真写盘：write-summary-sheet 收 {pivot} → 「汇总」sheet 表头+分组行、原表不动', function () {
+  const { spawnSync } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const cands = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  let py = null;
+  for (const b of cands) {
+    const r = spawnSync(b, ['-c', 'import openpyxl'], { encoding: 'utf8' });
+    if (!r.error && r.status === 0) { py = b; break; }
+  }
+  if (!py) { test.skip; return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-pivot-'));
+  const file = path.join(dir, 'data.xlsx');
+  const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
+  const struct = path.join(dir, 's.json');
+  fs.writeFileSync(struct, JSON.stringify({
+    primaryKey: '姓名',
+    columns: { 姓名: 'text', 部门: 'text', 工时: 'number' },
+    rows: [ { 姓名: 'a', 部门: '销售', 工时: 100 }, { 姓名: 'b', 部门: '销售', 工时: 60 }, { 姓名: 'c', 部门: '技术', 工时: 80 } ]
+  }), 'utf8');
+  let r = spawnSync(py, [bridge, 'create', file, struct], { encoding: 'utf8' });
+  assert.equal(r.status, 0, 'create: ' + (r.stderr || ''));
+  const pFile = path.join(dir, 'p.json');
+  fs.writeFileSync(pFile, JSON.stringify({ sheetName: '汇总', pivot: {
+    groupColumn: '部门', headers: ['工时·合计'],
+    rows: [ { group: '销售', values: [160] }, { group: '技术', values: [80] } ]
+  } }), 'utf8');
+  r = spawnSync(py, [bridge, 'write-summary-sheet', file, pFile], { encoding: 'utf8' });
+  assert.equal(r.status, 0, 'write-summary-sheet(pivot): ' + (r.stderr || ''));
+  const rv = spawnSync(py, [bridge, 'read-values', file], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
+  assert.equal(rv.status, 0);
+  assert.equal(JSON.parse(rv.stdout).rows.length, 3, '原数据表仍 3 行');
+  const verify = spawnSync(py, ['-c',
+    'import openpyxl,sys,json;wb=openpyxl.load_workbook(sys.argv[1]);ws=wb["汇总"];' +
+    'print(json.dumps({"a1":ws["A1"].value,"b1":ws["B1"].value,"a2":ws["A2"].value,"b2":ws["B2"].value,"b3":ws["B3"].value}))', file],
+    { encoding: 'utf8' });
+  assert.equal(verify.status, 0, verify.stderr || '');
+  const info = JSON.parse(verify.stdout);
+  assert.equal(info.a1, '部门', 'A1 应为分组列表头');
+  assert.equal(info.b1, '工时·合计', 'B1 应为规格列表头');
+  assert.equal(info.a2, '销售');
+  assert.equal(info.b2, 160, '销售组合计=160');
+  assert.equal(info.b3, 80, '技术组合计=80');
+});
