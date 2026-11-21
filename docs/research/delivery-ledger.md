@@ -298,6 +298,17 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **真机 e2e 抓出一个真实 bug 并修复（<code>lib/panel-session.js</code>）**：面板一键 <code>function</code> 若用户**自选了一个新输出列名**（如「合计」，表里尚不存在），会被 <code>preNormalizeQuickParams</code> 的 function 分支误改成「应发」——根因是它用 <code>!has(输出列)</code> 判断「未指定」，但新列名本来就不在表列里 → 被当成未指定覆盖掉。修法：只在输出列为**空或等于主键**时才兜底成「应发」，用户显式给的新列名一律尊重。补两条永久回归测试到 <code>test/multi-operand-expr.test.js</code>（自选新列「合计」保留不被改、未指定空值时仍兜底「应发」），并做变异验证（去修复则自选用例失败）。
 - **门禁**：<code>npm test</code> **513 tests / 492 pass / 0 fail / 21 skipped**；<code>acceptance</code> engineMatchesFile:true、<code>acceptance:formula</code> valuesMatch:true；<code>npm run selfcheck</code> 全通过。CHANGELOG.md 与 <code>docs/research/inputbox-vs-ai-sheets.md</code>（④项、建列/派生列行）均改标 ✅。
 
+## 交付后增量（CI 转绿里程碑，2026-11-21 补记）
+
+- **GitHub Actions CI 四 job 全绿**（ubuntu-latest/windows-latest × node 20/22），run 44875203003，origin/master=`69e66f6`。
+- CI 首跑 9 失败，逐个修根因（非绕过）：
+  1. **AC5 无 LibreOffice Kit 时 skip**：<code>test/capability-matrix.test.js</code> 调 <code>runLocalProbe()</code> 依赖只本机有的 bundled LO CLI；从 <code>scripts/capability-probe.js</code> 导出 <code>locateCli</code>，AC5 用 <code>existsSync(cli)</code> 守卫，CI 无 LO 则 <code>t.skip</code>。
+  2. **面板 e2e 异步时序**：加 <code>renderUntilData</code> / <code>renderUntilContains</code> 轮询渲染直到目标出现或超时，消灭 setSlot 生效前的假失败。
+  3. **parseFileAddress POSIX 绝对路径**（ubuntu 全红根因）：Linux contentId <code>dsh-resource://file/absolute//tmp/x.xlsx</code> 拆出首段空串（代表根 <code>/</code>）被误判为无效；修 absolute 分支识别 posixAbsolute 前缀首空段补回前导 <code>/</code>。补 POSIX 用例。
+  4. **xlsx_bridge.py Windows cp1252 输出崩溃**（windows 全红根因）：<code>print(json.dumps(...,ensure_ascii=False))</code> 含中文抛 UnicodeEncodeError；顶部 <code>sys.stdout.reconfigure(encoding='utf-8')</code>（py3.7+，旧版 TextIOWrapper 兜底）。
+  5. **npm test 脚本通配**（windows node20 剩余失败）：<code>node --test test/*.test.js</code> 在 cmd.exe 不展开、node20 --test 无 glob → 改 <code>node --test</code> 自动发现。
+- commit 链 fc99464/b65c8df/f11f264/bbafd47/fe4d006/69e66f6；门禁 513/492/0/21、engineMatchesFile:true、valuesMatch:true、selfcheck 通过。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
