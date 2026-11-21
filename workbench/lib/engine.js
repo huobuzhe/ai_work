@@ -139,7 +139,10 @@ const KINDS = {
     paramSpec: [
       { key: '目标列', 类型: '列名', 必填: true, 默认值: '工时', 约束: { mustExist: true } },
       { key: '条件', 类型: 'text', 必填: false, 默认值: '' },
-      { key: '底色', 类型: '枚举', 必填: true, 默认值: 'yellow', 约束: { enum: ['yellow', 'red', 'green', 'blue'] } }
+      { key: '底色', 类型: '枚举', 必填: true, 默认值: 'yellow', 约束: { enum: ['yellow', 'red', 'green', 'blue'] } },
+      // 条件格式更细：可选「规则组」——用分号分隔多条「条件:颜色」，按顺序首命中生效（如 `工时>160:red;工时>140:yellow`）。
+      // 给了规则组则忽略单条「条件/底色」；为空则回落单条行为（向后兼容）。
+      { key: '规则组', 类型: 'text', 必填: false, 默认值: '' }
     ]
   },
   // ⑬ sum 汇总（用户目标步骤 5「透视/汇总」之一）：对某数值列在 scope 内做聚合，
@@ -622,6 +625,30 @@ function matches(row, cond) {
   const a = Number(raw), b = Number(cond.value);
   if (!isNaN(a) && !isNaN(b)) return compareByOp(cond.op, a, b);
   return compareByOp(cond.op, String(raw == null ? '' : raw), cond.value);
+}
+// 条件格式更细：解析「规则组」——分号分隔的多条 `条件:颜色`（如 `工时>160:red;工时>140:yellow`）。
+// 返回 [{cond, color}] 按书写顺序（首命中优先）；空串/无有效规则返回 null（回落单条条件行为）。
+// 颜色必须属 yellow/red/green/blue；条件无法解析或颜色非法的那条规则跳过（不静默整体失效，好规则仍生效）。
+const COLOR_SET = { yellow: true, red: true, green: true, blue: true };
+function parseColorRules(text, state) {
+  if (text == null) return null;
+  const raw = String(text).trim();
+  if (!raw) return null;
+  const out = [];
+  raw.split(/[;；]/).forEach(function (part) {
+    const seg = part.trim();
+    if (!seg) return;
+    // 用最后一个冒号切分：`工时>160:red`（条件里一般不含冒号，取最后一段为颜色最稳妥）
+    const idx = seg.lastIndexOf(':');
+    if (idx <= 0) return;
+    const condText = seg.slice(0, idx).trim();
+    const color = seg.slice(idx + 1).trim();
+    if (!COLOR_SET[color]) return;
+    const cond = parseCondition(condText, state);
+    if (!cond) return;
+    out.push({ cond: cond, color: color });
+  });
+  return out.length ? out : null;
 }
 
 // ---- 表达式解析（多操作数：任意项 + - * /、括号、优先级、一元负号）----
@@ -1336,15 +1363,31 @@ function preview(state, draft) {
   } else if (draft.kind === 'highlight') {
     // ⑫ 单元格标色：不改值，只给目标列满足条件的行产一格（after=原值 + highlight=底色）。
     // 条件走 matches()；条件空=整列全部行。写盘时 python 桥按 highlight 刷 PatternFill。
+    // 条件格式更细：若给了「规则组」（分号分隔 `条件:颜色`，如 `工时>160:red;工时>140:yellow`），
+    //   逐行按规则顺序首命中生效（不命中则不产格）；否则回落单条「条件/底色」（向后兼容）。
     const col = p.目标列;
     const color = p.底色;
-    const cond = p.条件 ? parseCondition(p.条件, state) : null;
-    state.rows.forEach(function (r, ri) {
-      if (!inScope(r)) return;
-      if (cond && !matches(r, cond)) return;
-      const cell = add(r, col, beforeOf(state, r, col), beforeOf(state, r, col), false, 'highlight');
-      cell.highlight = color;
-    });
+    const rules = parseColorRules(p['规则组'], state);
+    if (rules && rules.length) {
+      state.rows.forEach(function (r) {
+        if (!inScope(r)) return;
+        for (let k = 0; k < rules.length; k++) {
+          if (matches(r, rules[k].cond)) {
+            const cell = add(r, col, beforeOf(state, r, col), beforeOf(state, r, col), false, 'highlight');
+            cell.highlight = rules[k].color;
+            break;
+          }
+        }
+      });
+    } else {
+      const cond = p.条件 ? parseCondition(p.条件, state) : null;
+      state.rows.forEach(function (r, ri) {
+        if (!inScope(r)) return;
+        if (cond && !matches(r, cond)) return;
+        const cell = add(r, col, beforeOf(state, r, col), beforeOf(state, r, col), false, 'highlight');
+        cell.highlight = color;
+      });
+    }
   } else if (draft.kind === 'sum') {
     // ⑬ 汇总统计：对目标列在 scope 内聚合，产 preview.summaryRow（不改任何原始单元格、cells 为空）。
     const col = p.目标列;

@@ -58,6 +58,44 @@ test('highlight 非法底色被封闭校验拦下', () => {
   assert.equal(s.stage, 'IDLE');
 });
 
+// ---- 条件格式更细：多条件→多色规则组（按序首命中）----
+test('highlight 规则组：多条件按序首命中，颜色分级', () => {
+  const s = E.reduce(fresh(), { type: 'QUICK', kind: 'highlight', params: {
+    目标列: '工时', 规则组: '工时 > 155:red;工时 > 140:yellow;工时 > 0:green'
+  } });
+  assert.equal(s.stage, 'PREVIEWED');
+  const byRow = {}; s.preview.cells.filter((c) => c.col === '工时').forEach((c) => { byRow[c.row] = c.highlight; });
+  assert.equal(byRow['阿岚'], 'red', '160>155 → red');
+  assert.equal(byRow['清和'], 'yellow', '150 命中 140 档 → yellow');
+  assert.equal(byRow['柏舟'], 'green', '120 只命中 0 档 → green');
+});
+
+test('highlight 规则组首命中优先：更宽的规则排在后面不覆盖更窄的', () => {
+  const s = E.reduce(fresh(), { type: 'QUICK', kind: 'highlight', params: {
+    目标列: '工时', 规则组: '工时 > 155:red;工时 > 0:green'
+  } });
+  const byRow = {}; s.preview.cells.filter((c) => c.col === '工时').forEach((c) => { byRow[c.row] = c.highlight; });
+  assert.equal(byRow['阿岚'], 'red', '160 先命中 >155 red，不被绿色覆盖');
+  assert.equal(byRow['柏舟'], 'green');
+});
+
+test('highlight 规则组：非法颜色的那条被跳过，其余规则仍生效', () => {
+  const s = E.reduce(fresh(), { type: 'QUICK', kind: 'highlight', params: {
+    目标列: '工时', 规则组: '工时 > 155:紫色;工时 > 0:green'
+  } });
+  assert.equal(s.stage, 'PREVIEWED');
+  const byRow = {}; s.preview.cells.filter((c) => c.col === '工时').forEach((c) => { byRow[c.row] = c.highlight; });
+  assert.equal(byRow['阿岚'], 'green', '非法色规则被跳过，落到 green');
+});
+
+test('highlight 规则组为空 → 回落单条「条件/底色」行为（向后兼容）', () => {
+  const s = E.reduce(fresh(), { type: 'QUICK', kind: 'highlight', params: {
+    目标列: '工时', 条件: '工时 > 150', 底色: 'red', 规则组: ''
+  } });
+  const hitRows = s.preview.cells.filter((c) => c.col === '工时').map((c) => c.row).sort();
+  assert.deepEqual(hitRows, ['阿岚']);
+});
+
 // ---- 端到端：真实 python 桥 —— highlight 确认后磁盘单元格真被刷上底色、值不变 ----
 const path = require('path');
 const fs = require('fs');

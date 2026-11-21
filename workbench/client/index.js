@@ -160,7 +160,8 @@ const ACTION_FORMS = [
   { kind: 'highlight', label: '单元格标色', fields: [
     { key: '目标列', type: 'column', def: '' },
     { key: '条件', type: 'text', def: '' },
-    { key: '底色', type: 'enum', options: ['yellow', 'red', 'green', 'blue'], def: 'yellow' }
+    { key: '底色', type: 'enum', options: ['yellow', 'red', 'green', 'blue'], def: 'yellow' },
+    { key: '规则组', type: 'text', def: '' }
   ] },
   { kind: 'sum', label: '汇总统计', fields: [
     { key: '目标列', type: 'column', def: '' },
