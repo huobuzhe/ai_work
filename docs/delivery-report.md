@@ -15,7 +15,7 @@
 
 ### 上线：从「能跑」到「能装、能发」
 - **宿主挂载**：作为 DSH 客户端插件（ESM 宿主条目 + 客户端 bundle），打开表格文件即出现浮窗面板；修掉宿主挂载的四个坑（无 tab / 崩溃 invalid plugin / 空文件打不开 / 崩溃恢复把插件踢出 profile）。
-- **安装与发布**：一键安装脚本（在线 `git clone + install.sh` / 离线 Release zip + `install.sh`），`DSH_PROFILE_DIR` 换 profile；GitHub Release 发布 v1.1.0 / v1.2.0，附 `dsh-workbench-<版本>.zip`。
+- **安装与发布**：一键安装脚本（在线 `git clone + install.sh` / 离线 Release zip + `install.sh`），`DSH_PROFILE_DIR` 换 profile；GitHub Release 发布 v1.0.0 / v1.1.0 / v1.2.0（v1.0.0 为收官补齐的首个可上线版本初版，回填其 tag 与 Release），附 `dsh-workbench-<版本>.zip`。
 - **CI 门禁**：GitHub Actions，ubuntu/windows × Node 20/22 四 job，跑 selfcheck + build 漂移检查 + 全量测试 + 两套 acceptance。
 - **干净环境真机验证**：用真实 Release zip 解压到全新临时 profile，`install.sh` 一键装好、selfcheck 全绿。
 
@@ -37,7 +37,7 @@
 | CI | GitHub Actions 四 job（ubuntu/windows × node20/22）全绿 |
 | issue 账本 | **54 张：全部关闭**（0 待办） |
 | 工作树 | 干净；研究笔记 / 原型 / 向导脚本均已归档入库 |
-| 发布 | v1.1.0、v1.2.0 均已发布 GitHub Release，附可安装 zip |
+| 发布 | v1.0.0、v1.1.0、v1.2.0 三条 GitHub Release 齐全（v1.2.0 为 Latest），各附可安装 zip |
 
 ## 关键设计决策
 
@@ -66,5 +66,6 @@
 | 流水线批处理 / 条件色规则组 / 真 LLM 适配器 | `d3d9faa` / `6bbed98` / `7004332` |
 | sum 汇总 → 独立 sheet → 多列多聚合 → 单列透视 | `3f8fd5b` / `f192717` / `17845ed` |
 | **多维透视（多级分组）+ v1.2.0 发布** | `4d58f84`（Release v1.2.0，附 `dsh-workbench-1.2.0.zip`） |
+| 收官：补 v1.0.0 tag + Release（版本谱系补齐） | tag `v1.0.0`@`bfe52cb`，Release v1.0.0 附 `dsh-workbench-1.0.0.zip` |
 
 > 自两轮基线 `de9d0ab` 起共 **120 个提交**推进到 v1.2.0。逐波细节、门禁数字与用户原话见 [交付账本](research/delivery-ledger.md)。

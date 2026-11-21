@@ -381,6 +381,15 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - 文档：`workbench/README.md`「5½」节补「多维透视（多级分组）」条 + 动作表 sum 行改写 + 「明确不做」改为「不做行×列双向交叉/列转置」；`docs/usage-guide.md` 六·六 sum 行补「多级分组」；`workbench/CHANGELOG.md` [未发布]→**1.2.0** 并加两波条目；`package.json` version 1.1.0→**1.2.0**。
 - 发布：打 `workbench/dist/dsh-workbench-1.2.0.zip`，`gh release create v1.2.0` 附 zip。
 
+### 第二十四波：收官——补 v1.0.0 版本谱系 + 全面校验（2026-11-21 用户选定「夯实/上线」方向，结束项目）
+
+用户答「『夯实/上线』方向，结束这个项目」。收尾动作：
+
+- **补 v1.0.0 tag + Release**（版本谱系此前只有 v1.1.0/v1.2.0 有 tag/Release，v1.0.0 从未打 tag）：`git tag -a v1.0.0 bfe52cb -m "v1.0.0 首个可上线版本"`（`bfe52cb`=2026-11-20 21:02 版本 1.0.0 收尾 commit，在 origin/master、为 HEAD 祖先），推 tag 成功；`git archive bfe52cb workbench` 抽 1.0.0 树（该版无 INSTALL.md/LICENSE）→ python zipfile 打包 `dsh-workbench-1.0.0.zip`(200952B) → `gh release create v1.0.0` 附 zip。随后 `gh release edit v1.2.0 --latest` 把 Latest 标志归还 v1.2.0（建 v1.0.0 时它被错误置为 Latest）。`git fetch origin tag v1.2.0` 补齐本地 v1.2.0 tag。
+- **踩坑**：Git-bash `/tmp` 映射到 `C:\Users\11\AppData\Local\Temp`，而 Anaconda python 里写 `'/tmp/...'` 落到别处、`ls` 找不到 → 打包脚本文件+输出全用 Windows 原生路径。
+- **收官校验（全绿）**：HEAD `npm test` **571/550/0/21**；`engineMatchesFile:true`；`valuesMatch:true`；`selfcheck` 全通过。三 tag（v1.0.0@bfe52cb / v1.1.0@25de79b / v1.2.0@4d58f84）本地+远端齐；三 Release 齐（v1.0.0 / v1.1.0 / v1.2.0，v1.2.0=Latest）；三处版本一致（package.json 1.2.0 / CHANGELOG 顶 1.2.0 / Release v1.2.0）；worktree 干净；`rev-list origin/master...HEAD` = 0 0。
+- 文档：`docs/delivery-report.md` 发布行/验收表/里程碑表补 v1.0.0；本账本记本波。<br>
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。
