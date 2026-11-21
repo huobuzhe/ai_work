@@ -141,6 +141,17 @@ const KINDS = {
       { key: '条件', 类型: 'text', 必填: false, 默认值: '' },
       { key: '底色', 类型: '枚举', 必填: true, 默认值: 'yellow', 约束: { enum: ['yellow', 'red', 'green', 'blue'] } }
     ]
+  },
+  // ⑬ sum 汇总（用户目标步骤 5「透视/汇总」之一）：对某数值列在 scope 内做聚合，
+  // 产出一行「汇总」结果追加到表尾（不逐格改值）。聚合：sum 合计 / avg 平均 / count 计数 / max / min。
+  // preview 产 preview.summaryRow = {column, agg, value, count}（供面板显示），确认经桥 append-summary 追加一行。
+  sum: {
+    label: '⑬ 汇总统计', short: '汇总统计',
+    medium: '结构化动作：对一列聚合出一行汇总（合计/平均/计数/最大/最小）追加到表尾',
+    paramSpec: [
+      { key: '目标列', 类型: '列名', 必填: true, 默认值: '工时', 约束: { mustExist: true } },
+      { key: '聚合方式', 类型: '枚举', 必填: true, 默认值: 'sum', 约束: { enum: ['sum', 'avg', 'count', 'max', 'min'] } }
+    ]
   }
 };
 
@@ -879,6 +890,11 @@ function stepsFor(kind, p) {
     scopeStep,
     '给「' + p.目标列 + '」列每格文本' + (p.位置 === 'suffix' ? '末尾追加' : '开头加上') + '「' + p.文本 + '」'
   ];
+  if (kind === 'sum') return [
+    scopeStep,
+    '对「' + p.目标列 + '」列做' + ({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[p.聚合方式] || p.聚合方式),
+    '把结果作为一行「汇总」追加到表尾（不改任何原始数据行）'
+  ];
   return [];
 }
 function explanationFor(kind, p, sentence) {
@@ -954,6 +970,7 @@ function understand(sentence) {
   let kind = null;
   if (/提取|邮箱|外勤|对应文件|补.*列|拉过来/.test(s)) kind = 'extract';
   else if (/调换|交换|互换|对调/.test(s)) kind = 'swap';
+  else if (/汇总|合计|统计|平均值|平均数|最大值|最小值|计数|总计/.test(s)) kind = 'sum';
   else if (/条件|大于|小于|超过|删掉|清空|标记|标注|加班/.test(s)) kind = 'conditional';
   else if (/计算|乘|函数|公式|算成|求和|[*+]/.test(s)) kind = 'function';
   else if (/去重|重复|dedupe|唯一/.test(s)) kind = 'dedupe';
@@ -1328,6 +1345,29 @@ function preview(state, draft) {
       const cell = add(r, col, beforeOf(state, r, col), beforeOf(state, r, col), false, 'highlight');
       cell.highlight = color;
     });
+  } else if (draft.kind === 'sum') {
+    // ⑬ 汇总统计：对目标列在 scope 内聚合，产 preview.summaryRow（不改任何原始单元格、cells 为空）。
+    const col = p.目标列;
+    const agg = p.聚合方式 || 'sum';
+    const nums = [];
+    let cnt = 0;
+    state.rows.forEach(function (r) {
+      if (!inScope(r)) return;
+      cnt += 1;
+      const v = r[col];
+      const n = Number(v);
+      if (isFinite(n) && v !== '' && v !== null && v !== undefined) nums.push(n);
+    });
+    let value;
+    if (agg === 'count') value = cnt;
+    else if (agg === 'sum') value = nums.reduce(function (a, b) { return a + b; }, 0);
+    else if (agg === 'avg') value = nums.length ? (nums.reduce(function (a, b) { return a + b; }, 0) / nums.length) : 0;
+    else if (agg === 'max') value = nums.length ? Math.max.apply(null, nums) : 0;
+    else if (agg === 'min') value = nums.length ? Math.min.apply(null, nums) : 0;
+    else value = 0;
+    // 浮点收敛：统一保留到 1e-10 精度，避免 143.3333333333 之类长尾抖动。
+    value = Math.round(value * 1e10) / 1e10;
+    previewMeta.summaryRow = { column: col, agg: agg, value: value, count: cnt };
   }
   // 影响行数按「行」去重，不能只按主键值（重复主键会把两行塌成一行、少报影响行数）。
   // 优先用 rowIndex（state.rows 下标，重复主键也能区分），无 rowIndex 时回落主键值。
@@ -1344,6 +1384,12 @@ function preview(state, draft) {
   if (previewMeta.sortOrder) {
     const moved = previewMeta.sortOrder.filter(function (v, i) { return v !== i; }).length;
     summary = '按列重排整表行顺序：' + totalRows + ' 行中 ' + moved + ' 行位置会变。确认后写回整表（行内容不变，只改先后顺序）。';
+  }
+  // 汇总（sum）：不改任何原始单元格，产一行「汇总」追加到表尾。
+  if (previewMeta.summaryRow) {
+    const sr = previewMeta.summaryRow;
+    summary = '汇总「' + sr.column + '」的' + ({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sr.agg] || sr.agg) +
+      '（参与 ' + sr.count + ' 行）＝ ' + sr.value + '；确认后作为一行「汇总」追加到表尾（不改任何原始数据行）。';
   }
   if (summaryExtra) summary += summaryExtra;
   // 票 #12：预览如实反映当前作用范围，供预览卡渲染「作用范围」控件。
@@ -1627,6 +1673,25 @@ function reduce(state, action) {
           note: '用户已确认，流水线执行完成：' + state.preview.steps.length + ' 步，共改了 ' +
             state.preview.cells.length + ' 个单元格。', noteTone: 'ok',
           log: push(state, '确认 → 流水线执行：' + state.preview.cells.length + ' 个单元格变化', 'ok')
+        });
+      }
+      // 汇总（sum）：不改任何原始数据行；确认时把一行「汇总」追加到 rows 末尾
+      // （首格放标签「汇总」、目标列放聚合值，其余留空），并标记 state.appendedSummary
+      // 供 panel-bridge 检测后用桥 append-summary 精确写盘（避免污染既有行）。
+      if (state.preview.summaryRow) {
+        const sr = state.preview.summaryRow;
+        const label = '汇总·' + ({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sr.agg] || sr.agg);
+        const newRow = {};
+        const pk = state.primaryKey || (state.columns && state.columns[0]);
+        state.columns.forEach(function (c) { newRow[c] = ''; });
+        if (pk) newRow[pk] = label;
+        newRow[sr.column] = sr.value;
+        return set(state, {
+          columns: state.columns.slice(), rows: state.rows.concat([newRow]), stage: 'EXECUTED',
+          appendedSummary: { label: label, column: sr.column, value: sr.value, agg: sr.agg, count: sr.count },
+          note: '用户已确认，汇总已追加到表尾：「' + sr.column + '」' + label + '＝ ' + sr.value + '（参与 ' + sr.count + ' 行）。',
+          noteTone: 'ok',
+          log: push(state, '确认 → 汇总：追加一行「' + sr.column + '」' + label + '＝ ' + sr.value, 'ok')
         });
       }
       // 票 #14（Standards review finding #1 加固）：执行前再跑一次封闭校验。

@@ -167,6 +167,10 @@ const ACTION_FORMS = [
     { key: '目标列', type: 'column', def: '' },
     { key: '条件', type: 'text', def: '' },
     { key: '底色', type: 'enum', options: ['yellow', 'red', 'green', 'blue'], def: 'yellow' }
+  ] },
+  { kind: 'sum', label: '汇总统计', fields: [
+    { key: '目标列', type: 'column', def: '' },
+    { key: '聚合方式', type: 'enum', options: ['sum', 'avg', 'count', 'max', 'min'], def: 'sum' }
   ] }
 ];
 
@@ -251,7 +255,12 @@ function projectPreviewCard(state) {
       // 表格化预览所需的整表信息（修改前列 + 修改后整表）；由 toView 注入到 preview 上。
       columns: Array.isArray(pv.columns) ? pv.columns.slice() : [],
       rows: Array.isArray(pv.rows) ? pv.rows.slice() : [],
-      afterRows: Array.isArray(pv.afterRows) ? pv.afterRows.slice() : null
+      afterRows: Array.isArray(pv.afterRows) ? pv.afterRows.slice() : null,
+      // 汇总（sum）：不改单元格、产一行汇总追加到表尾；把 summaryRow 带出供面板单独显示。
+      summaryRow: pv.summaryRow ? {
+        column: pv.summaryRow.column, agg: pv.summaryRow.agg,
+        value: pv.summaryRow.value, count: pv.summaryRow.count
+      } : null
     },
     // ⑤ 确认 / 取消：没有合法预览（校验未过或非 PREVIEWED）时禁用确认
     confirm: {
@@ -294,7 +303,7 @@ function projectPreviewCard(state) {
 // kind → 中文短名（预览卡第①段展示用）。为保持 client 不依赖引擎而手工镜像 KINDS.short；
 // 新增/改名 kind 时须同步此处（已如实记录为 low 漂移风险，非第二套校验逻辑）。
 function labelOfKind(kind) {
-  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充', trim: '去首尾空格', 'case': '英文大小写', affix: '加前缀后缀', sort: '按列排序', highlight: '单元格标色' };
+  const map = { extract: '提取字段', swap: '调换两段字段', conditional: '带条件增删', function: '自定义函数计算', dedupe: '按主键去重', replace: '文本替换', fill: '空值填充', trim: '去首尾空格', 'case': '英文大小写', affix: '加前缀后缀', sort: '按列排序', highlight: '单元格标色', sum: '汇总统计' };
   return map[kind] || kind;
 }
 
