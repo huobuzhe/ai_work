@@ -2,6 +2,24 @@
 
 `dsh-workbench`（表格工作台）是一个 DSH **客户端插件包**。装进任何一套 DSH 宿主的步骤：
 
+## 最快：一键安装脚本
+
+不用手改配置，脚本会自动改 profile `package.json`、建 `node_modules` 软链、跑自检：
+
+- **在线（有 git）**：
+  ```bash
+  git clone https://github.com/huobuzhe/ai_work.git && bash ai_work/workbench/scripts/install.sh
+  ```
+- **离线（没 git，用 Release 的 zip）**：从 [Releases](https://github.com/huobuzhe/ai_work/releases) 下载 `dsh-workbench-1.1.0.zip` 放到任意目录后：
+  ```bash
+  unzip -o dsh-workbench-1.1.0.zip && bash dsh-workbench/scripts/install.sh
+  ```
+  （Windows 无 `unzip` 就用资源管理器解压后跑 `bash dsh-workbench/scripts/install.sh`。）
+
+默认装到 `~/.dsh/profiles/desktop`；换 profile：`DSH_PROFILE_DIR="$HOME/.dsh/profiles/我的profile" bash .../install.sh`。装完 **重启 DSH** 即可。
+
+> 下面是**手动安装**的完整步骤；脚本跑不通时照做。
+
 ## 0. 先决条件
 
 - 已安装 DSH（DeepSeek Harness）。
