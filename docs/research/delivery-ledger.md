@@ -309,6 +309,15 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
   5. **npm test 脚本通配**（windows node20 剩余失败）：<code>node --test test/*.test.js</code> 在 cmd.exe 不展开、node20 --test 无 glob → 改 <code>node --test</code> 自动发现。
 - commit 链 fc99464/b65c8df/f11f264/bbafd47/fe4d006/69e66f6；门禁 513/492/0/21、engineMatchesFile:true、valuesMatch:true、selfcheck 通过。
 
+## 交付后增量（第十八波：多动作流水线批处理，2026-11-21 补记）
+
+目标「步骤 5 新功能」之一，把多个动作串成一条流水线一次执行。向前兼容，无破坏性变更。
+
+- **引擎** lib/engine.js 新增 <code>runPipeline(steps, state)</code>：按顺序对「上一步已演进的状态」逐步 preview，用 applyCells 把每步产出（cells + sortOrder）落到演进状态供下一步使用（如先算「应发」列再对它标色）；组合预览 cells 带 stepIndex/stepLabel 溯源，任一步 invalid 即整体 invalid（指出第几步出错），不部分执行。reduce 新增 <code>PIPELINE</code>（→ PREVIEWED）与流水线 <code>CONFIRM</code> 分支（按 stepIndex 顺序 applyCells 落盘）。结构性动作 sort（只改行序不产单元格）不支持放进流水线，明确拦截。
+- **面板** client/index.js 新增 <code>data-wb-pipeline</code> 流水线区块：把当前配置好的动作「加入流水线」（复用 activeKind+formValues）、删除步骤、清空、预览流水线（runAction('pipeline',{steps})）；确认执行复用 onAction('confirm')。切文件时流水线队列随其他面板状态一并重置。
+- **测试** test/pipeline-action.test.js（7 例：两动作组合/演进依赖/invalid 指步/空 steps/含 sort 拦截/reduce PIPELINE/reduce CONFIRM）+ test/panel-pipeline.test.js（面板闭环：function+highlight 两步加入队列→预览→确认→磁盘应发 12800/10800 落盘 + 标色填充）。
+- **门禁** 全量 npm test 521 tests / 500 pass / 0 fail / 21 skipped；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true / allNumeric:true；selfcheck 全通过。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。

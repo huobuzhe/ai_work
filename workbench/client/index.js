@@ -453,6 +453,39 @@ function renderWorkbenchPanel(hostState) {
       jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 }, children: quickBtns }, 'quickrow')
     ] }, 'quickbar');
     children.push(quickRow);
+    // 多动作流水线批处理（一条流水线串多个动作一次执行）：把「当前配置好的动作」加入流水线队列，
+    // 可多步追加、删除，最后一键「预览流水线」→「执行流水线」，后一步看得到前一步结果。
+    var pipeSteps = (hostState && Array.isArray(hostState.pipelineSteps)) ? hostState.pipelineSteps : [];
+    if (hostState && hostState.pipelineEnabled !== false) {
+      var pipeStepEls = pipeSteps.map(function (st, idx) {
+        return jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, padding: '4px 8px', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, marginBottom: 4 }, children: [
+          jsx('span', { style: { color: '#2563eb', fontWeight: 600, flex: '0 0 auto' }, children: (idx + 1) + '.' }, 'pn' + idx),
+          jsx('span', { style: { flex: '1 1 auto', color: '#334155' }, children: (st && st.label) ? st.label : (st && st.kind) }, 'pl' + idx),
+          jsx('button', { type: 'button', 'data-wb-pipe-remove': String(idx), style: { border: 'none', background: 'transparent', color: '#b42318', cursor: 'pointer', fontSize: 13, flex: '0 0 auto' },
+            onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { hostState.onPipelineRemove && hostState.onPipelineRemove(idx); } catch (_) {} }, children: '✕' }, 'pr' + idx)
+        ] }, 'pstep' + idx);
+      });
+      var pipeBtns = [];
+      pipeBtns.push(jsx('button', { type: 'button', 'data-wb-pipeline-add': '1',
+        style: { padding: '5px 10px', fontSize: 12, borderRadius: 6, border: '1px dashed #9dc0f5', background: '#f8fbff', color: '#2563eb', cursor: (hostState && hostState.activeKind) ? 'pointer' : 'not-allowed' },
+        onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { hostState.onPipelineAddStep && hostState.onPipelineAddStep(); } catch (_) {} },
+        children: '+ 把当前配置加入流水线' }, 'padd'));
+      pipeBtns.push(jsx('button', { type: 'button', 'data-wb-pipeline-preview': '1',
+        style: { padding: '5px 10px', fontSize: 12, borderRadius: 6, border: '1px solid #2563eb', background: '#2563eb', color: '#fff', cursor: (pipeSteps.length ? 'pointer' : 'not-allowed'), opacity: pipeSteps.length ? 1 : 0.5 },
+        onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} if (pipeSteps.length) { try { hostState.onPipelinePreview && hostState.onPipelinePreview(); } catch (_) {} } },
+        children: '预览流水线' }, 'pprev'));
+      pipeBtns.push(jsx('button', { type: 'button', 'data-wb-pipeline-clear': '1',
+        style: { padding: '5px 10px', fontSize: 12, borderRadius: 6, border: '1px solid #d0d7de', background: '#fff', color: '#475569', cursor: 'pointer' },
+        onClick: function (ev) { try { if (ev && ev.preventDefault) ev.preventDefault(); } catch (_) {} try { hostState.onPipelineClear && hostState.onPipelineClear(); } catch (_) {} },
+        children: '清空' }, 'pclr'));
+      var pipeBox = jsxs('div', { 'data-wb-pipeline': '1', style: { padding: 10, marginBottom: 10, border: '1px solid #d6e2f5', borderRadius: 8, background: '#f8fbff' }, children: [
+        jsxs('div', { style: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: '#475569', marginBottom: 8 }, children: [
+          jsx('span', { style: { width: 3, height: 12, borderRadius: 2, background: '#7c3aed', display: 'inline-block' } }, 'pbar'),
+          jsx('span', { children: '流水线批处理 · 多动作一次执行' }, 'plbl')
+        ] }, 'pipetitle')
+      ].concat(pipeStepEls).concat([jsxs('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: pipeStepEls.length ? 6 : 0 }, children: pipeBtns }, 'pipebtns')]) }, 'pipeline');
+      children.push(pipeBox);
+    }
     // 通用动作配置表单：选中某 kind 后展开，字段从当前表列里选（下拉），条件可填（scope=match）。
     var activeKind = hostState && hostState.activeKind ? hostState.activeKind : '';
     if (activeKind) {
@@ -1511,6 +1544,7 @@ function registerWorkbenchPanel(ctx) {
           var activeKind = '', setActiveKind = function () {};
           var formValues = {}, setFormValues = function () {};
           var blankPrimaryKey = '', setBlankPrimaryKey = function () {};
+          var pipelineSteps = [], setPipelineSteps = function () {};
           if (hooksOk) {
             try {
               var tplTuple = React.useState([]);
@@ -1528,6 +1562,9 @@ function registerWorkbenchPanel(ctx) {
               formValues = fvTuple[0]; setFormValues = fvTuple[1];
               var bpkTuple = React.useState('');
               blankPrimaryKey = bpkTuple[0]; setBlankPrimaryKey = bpkTuple[1];
+              // 多动作流水线队列：每项 {kind, params, label}，来自「把当前配置加入流水线」。
+              var psTuple = React.useState([]);
+              pipelineSteps = psTuple[0]; setPipelineSteps = psTuple[1];
               // 用户 m10658：切到新文件时，工作台必须回到「最开始的默认状态」——不能残留上一个
               // 文件动作产生的绿字提示(actionState)、输入框文字、选中的动作表单(activeKind/formValues)、
               // 建表提示与建表表单草稿。usePanelData 只清了 override/slot，这些是面板 body 自己的
@@ -1543,6 +1580,7 @@ function registerWorkbenchPanel(ctx) {
                 try { setBlankName(''); } catch (_) {}
                 try { setBlankColumns(''); } catch (_) {}
                 try { setBlankPrimaryKey(''); } catch (_) {}
+                try { setPipelineSteps([]); } catch (_) {}
               }, [fileKey]);
               React.useEffect(function () {
                 var alive = true;
@@ -1607,6 +1645,31 @@ function registerWorkbenchPanel(ctx) {
             } catch (_) {}
           };
           var onFormCancel = function () { try { setActiveKind(''); } catch (_) {} };
+          // 流水线批处理：把「当前配置好的动作」加入队列（复用 activeKind + formValues），
+          // 再一键预览/执行。步骤标签取 ACTION_FORMS 的 label 方便辨认。
+          var onPipelineAddStep = function () {
+            try {
+              var kind = activeKind;
+              if (!kind) return;
+              var meta = null;
+              for (var i = 0; i < ACTION_FORMS.length; i++) { if (ACTION_FORMS[i].kind === kind) { meta = ACTION_FORMS[i]; break; } }
+              var params = Object.assign({}, formValues);
+              var label = (meta ? meta.label : kind);
+              setPipelineSteps(function (prev) { return (prev || []).concat([{ kind: kind, params: params, label: label }]); });
+              setActiveKind('');
+            } catch (_) {}
+          };
+          var onPipelineRemove = function (idx) {
+            try { setPipelineSteps(function (prev) { return (prev || []).filter(function (_, i) { return i !== idx; }); }); } catch (_) {}
+          };
+          var onPipelineClear = function () { try { setPipelineSteps([]); } catch (_) {} };
+          var onPipelinePreview = function () {
+            try {
+              var steps = (pipelineSteps || []).map(function (s) { return { kind: s.kind, params: s.params }; });
+              if (!steps.length) return;
+              runAction('pipeline', { steps: steps });
+            } catch (_) {}
+          };
           try {
             return renderWorkbenchPanel(Object.assign({}, effective, {
               overlay: !!(props && props.overlay),
@@ -1625,7 +1688,6 @@ function registerWorkbenchPanel(ctx) {
               onCreateBlank: onCreateBlank,
               blankName: blankName,
               blankColumns: blankColumns,
-              onBlankName: function (v) { try { setBlankName(v); } catch (_) {} },
               onBlankColumns: function (v) { try { setBlankColumns(v); } catch (_) {} },
               blankPrimaryKey: blankPrimaryKey,
               onBlankPrimaryKey: function (v) { try { setBlankPrimaryKey(v); } catch (_) {} },
@@ -1635,7 +1697,12 @@ function registerWorkbenchPanel(ctx) {
               onPickKind: onPickKind,
               onFormChange: onFormChange,
               onFormPreview: onFormPreview,
-              onFormCancel: onFormCancel
+              onFormCancel: onFormCancel,
+              pipelineSteps: (pipelineSteps || []).map(function (s) { return { kind: s.kind, label: s.label }; }),
+              onPipelineAddStep: onPipelineAddStep,
+              onPipelineRemove: onPipelineRemove,
+              onPipelineClear: onPipelineClear,
+              onPipelinePreview: onPipelinePreview
             }));
           } catch (renderErr) {
             // 上线健壮性兜底：面板渲染期任何意外异常都不得冒泡击穿宿主视图。

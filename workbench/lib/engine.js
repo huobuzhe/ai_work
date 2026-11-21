@@ -1354,6 +1354,63 @@ function preview(state, draft) {
     disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec }, previewMeta, adapterMeta);
 }
 
+// ============================================================================
+// 多动作流水线批处理（一条流水线串多个动作一次执行，用户目标步骤 5 之一）。
+// 语义：按顺序对「上一步已演进的状态」逐步跑 preview，把每步产出（cells + sortOrder）
+//   用 applyCells 落到演进状态上，供下一步看到前一步的结果（例如先算「应发」列再对它标色）。
+// 产出一份组合预览：cells 带 stepIndex/stepLabel 溯源，summary 汇总每步影响，pipeline:true。
+// 任一步 invalid 即整体 invalid（指出第几步出错），不做「部分执行」——封闭校验纪律。
+// ============================================================================
+function runPipeline(steps, state) {
+  const totalRows = state.rows.length;
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return { cells: [], summary: '流水线为空：至少要有一个动作。', affectedRows: 0, totalRows,
+      invalid: true, disabled: false, errors: ['流水线为空'], issues: [], capabilityBlockers: [],
+      disclosure: null, swapBanner: '', paramSpec: [], pipeline: true, steps: [] };
+  }
+  let cur = { primaryKey: state.primaryKey, columns: state.columns.slice(), rows: state.rows.map(function (r) { return Object.assign({}, r); }), sources: state.sources };
+  const allCells = [];
+  const stepMeta = [];
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i] || {};
+    // 结构性动作（sort，只改行序、不产单元格）无法并入「组合 cells 一次写盘」，流水线里不支持，
+    // 明确拦截而不是静默丢弃——封闭校验纪律。
+    if (s.kind === 'sort') {
+      return { cells: [], summary: '流水线第 ' + (i + 1) + ' 步是「按列排序」——排序只改行顺序、不产单元格，无法并入流水线组合写盘。排序请单独执行。',
+        affectedRows: 0, totalRows, invalid: true, disabled: false,
+        errors: ['第 ' + (i + 1) + ' 步：排序不支持放进流水线'], issues: [], capabilityBlockers: [],
+        disclosure: null, swapBanner: '', paramSpec: [], pipeline: true, steps: [] };
+    }
+    const draft = buildDraft(s.kind, s.sentence || null, s.params || {});
+    const pv = preview(cur, draft);
+    if (pv.invalid) {
+      const short = (KINDS[s.kind] && KINDS[s.kind].short) || s.kind || '未知动作';
+      return Object.assign({}, pv, {
+        cells: [], summary: '流水线第 ' + (i + 1) + ' 步「' + short + '」无法预览：' + pv.summary,
+        affectedRows: 0, totalRows, invalid: true, pipeline: true, steps: stepMeta,
+        errors: ['第 ' + (i + 1) + ' 步：'].concat(pv.errors || [])
+      });
+    }
+    (pv.cells || []).forEach(function (c) {
+      allCells.push(Object.assign({}, c, { stepIndex: i, stepLabel: (KINDS[s.kind] && KINDS[s.kind].short) || s.kind }));
+    });
+    stepMeta.push({ index: i, kind: s.kind, label: (KINDS[s.kind] && KINDS[s.kind].short) || s.kind,
+      summary: pv.summary, affectedRows: pv.affectedRows, cells: (pv.cells || []).length });
+    // 演进状态：把本步产出落到 cur，下一步基于它预览。
+    cur = Object.assign({}, cur, applyCells(cur, pv.cells, pv.sortOrder));
+    cur.sources = state.sources;
+  }
+  // 影响行数按行去重（同 preview）。
+  const rowSet = {};
+  allCells.forEach(function (c) { rowSet[(c.rowIndex != null) ? ('#' + c.rowIndex) : ('k:' + c.row)] = true; });
+  const affectedRows = Object.keys(rowSet).length;
+  const summary = '流水线共 ' + steps.length + ' 步：影响 ' + affectedRows + ' 行 / 共 ' + totalRows +
+    ' 行；合计 ' + allCells.length + ' 个单元格会变（按步骤顺序执行，后一步看得到前一步结果）。确认前表格不会动。';
+  return { cells: allCells, summary, affectedRows, totalRows, invalid: false, disabled: false,
+    errors: [], issues: [], capabilityBlockers: [], disclosure: null, swapBanner: '',
+    paramSpec: [], pipeline: true, steps: stepMeta };
+}
+
 // 纯函数：把预览里的格子落到一份新表格上
 // sortOrder（可选）：结构性动作（sort）的新行序下标数组——给了则按它重排 rows（不改任何单元格值）。
 function applyCells(state, cells, sortOrder) {
@@ -1543,9 +1600,35 @@ function reduce(state, action) {
         log: push(state, '影响预览：' + pv.summary)
       });
     }
+    case 'PIPELINE': {
+      // 多动作流水线批处理：一次给多步 {kind, params}，逐步演进状态、出一份组合预览。
+      const pv = runPipeline(action.steps, state);
+      if (pv.invalid) return guard(state, pv.summary);
+      return set(state, {
+        pipeline: action.steps, draft: null, preview: pv, stage: 'PREVIEWED',
+        note: '流水线预览已就绪：' + pv.summary, noteTone: 'info',
+        log: push(state, '流水线预览：' + pv.summary)
+      });
+    }
     case 'CONFIRM': {
       if (state.stage !== 'PREVIEWED' || !state.preview || state.preview.invalid)
         return guard(state, '拦住了：没有合法的「解释与影响预览」就不能执行。顺序是 理解 → 预览 → 确认 → 执行。');
+      // 流水线：组合预览里已逐步校验过；确认时按 stepIndex 顺序用 applyCells 落盘（后一步基于前一步结果）。
+      if (state.preview.pipeline) {
+        let cur = state;
+        const order = state.preview.steps.map(function (s) { return s.index; });
+        order.forEach(function (si) {
+          const stepCells = state.preview.cells.filter(function (c) { return c.stepIndex === si; });
+          const appliedStep = applyCells(cur, stepCells, null);
+          cur = Object.assign({}, cur, { columns: appliedStep.columns, rows: appliedStep.rows });
+        });
+        return set(state, {
+          columns: cur.columns, rows: cur.rows, stage: 'EXECUTED', pipeline: null,
+          note: '用户已确认，流水线执行完成：' + state.preview.steps.length + ' 步，共改了 ' +
+            state.preview.cells.length + ' 个单元格。', noteTone: 'ok',
+          log: push(state, '确认 → 流水线执行：' + state.preview.cells.length + ' 个单元格变化', 'ok')
+        });
+      }
       // 票 #14（Standards review finding #1 加固）：执行前再跑一次封闭校验。
       // 正常状态机里 PREVIEW 已校验过，这一步是纵深防御——防止宿主持久化/重水合/外部改动
       // 让 state 在 PREVIEW 与 CONFIRM 之间漂移后，仍能执行一份已失效的配方。
@@ -1675,7 +1758,7 @@ function exportButtons(state) {
 
 module.exports = {
   SCHEMA_VERSION, KINDS, shorten, parseCondition, matches, columnLetter, toFormula, computeValue, extractOutputColumn, extractExpression,
-  initial, understand, buildDraft, validate, preview, applyCells, reduce, exportButtons, nextButtonId,
+  initial, understand, buildDraft, validate, preview, applyCells, runPipeline, reduce, exportButtons, nextButtonId,
   loadRegistry, hydrateRegistry,
   TYPE_ENUM, TYPE_MAP, UPLOAD_WHITELIST, DEFAULT_PRIMARY_KEY,
   validateManifest, checkUpload, validateRows, detectConflicts, createTable,
