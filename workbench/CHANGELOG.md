@@ -5,6 +5,7 @@
 ## [未发布]（Unreleased）
 
 ### 新增（Added）
+- **一句话理解·真 LLM 适配器**（`lib/llm-adapter.js`，可选，离线默认关闭）：提供 `createUnderstandLlmAsync(cfg)`（推荐，async）与 `createUnderstandLlm(cfg)`（同步阻塞版，供桥的同步 `understandLlm` 约定用）两个工厂。cfg = `{ baseUrl, model, apiKey, temperature?, timeoutMs?, fetch? }`，兼容 **OpenAI Chat Completions 协议**，因此同时覆盖 DeepSeek / OpenAI / 任意兼容网关（换 baseUrl + model 即可）。内部把一句话转成「先给动作类型清单 + 当前真实列名」的 system prompt，解析模型返回的 JSON 为 `{kind,params}`，并按该 kind 的 paramSpec 白名单**过滤参数键**；未知 kind / 非 JSON / 非 2xx / 网络错 / 超时一律返回 `null` → 引擎静默回落离线关键词。**永不阻断主路径、零第三方依赖**。桥 `makeActionHandler({understandLlm})` 的调用点已把当前表列名作为第二参传入（`understandLlm(text,{columns})`），旧的一参签名仍兼容。测试 `test/llm-adapter.test.js`（13 例：纯逻辑 + 注入 fetch 的成功/非2xx/抛错/超时 + 端到端经 engine.understandAsync）。
 - **一句话理解·可选接真 LLM**（可插拔，离线默认关闭）：引擎新增 `understandAsync(sentence, {llm})`——`llm` 是宿主注入的 async 函数 `(句)=> ({kind, params}|null)`，接到就调用并由封闭校验采用其解析结果（标 `via:'llm'`），LLM 抛错/返回 null/未知 kind 一律**静默回落关键词匹配**，外部依赖永不阻断离线主路径。桥 `makeActionHandler({understandLlm})` 支持注入同步理解器（宿主自行异步调 LLM 后同步给结果）；不注入时行为与原来完全一致（纯关键词、零网络）。
 - **条件格式更细：多条件→多色规则组**（`highlight` 增强）：用一个「规则组」写多条 `条件:颜色`（分号分隔，如 `工时>160:red;工时>140:yellow`），逐行按书写顺序**首命中生效**，实现分级标色（红/黄/绿三档等）；非法颜色的那条会被跳过而其余规则仍生效，规则组留空则回落原「单条件+单底色」行为（向后兼容）。
 - **汇总统计 `sum`**（目标「透视/汇总」之一）：对某数值列在作用范围内做聚合——**合计/平均/计数/最大/最小**，结果写入一张**独立工作表「汇总」**（不改原数据表任何单元格、不追加进本表；重复执行会覆盖同名 sheet，结果稳定）。预览即显示聚合值、参与行数与目标 sheet；确认经 `xlsx_bridge.py write-summary-sheet` 建/覆盖该 sheet 写盘。引擎 `KINDS.sum` + `preview` 的 `summaryRow` 元数据 + `CONFIRM` 汇总分支（标 `appendedSummarySheet`）；可选「符合条件」只统计命中行。

@@ -338,6 +338,17 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - 测试：test/sum-action.test.js 第 7 例改断言「原数据行不变 + appendedSummarySheet 有值」，第 8 例改 <code>write-summary-sheet</code> 真写盘闭环（校验新 sheet 存在、B2=430、原表仍 3 行）。
 - 门禁：全量 npm test 541/520/0/21；两 acceptance 绿；selfcheck 全通过。
 
+### 第二十波：一句话理解·真 LLM 适配器（2026-11-21）
+
+用户选定「为具体大模型实现 understandLlm 适配器并接入桥」。新增 `workbench/lib/llm-adapter.js`（纯新增，向前兼容、离线默认关闭）：
+
+- 两个工厂：`createUnderstandLlmAsync(cfg)`（推荐，async）、`createUnderstandLlm(cfg)`（同步阻塞版，用 child_process 内联脚本发请求，匹配桥 `understandLlm` 的同步调用约定）。cfg=`{baseUrl,model,apiKey,temperature?,timeoutMs?,fetch?}`，**兼容 OpenAI Chat Completions 协议**（DeepSeek/OpenAI/任意兼容网关，换 baseUrl+model 即可）。
+- system prompt 含「动作类型清单 + 当前真实列名」；模型返回 JSON 解析为 `{kind,params}`，并按该 kind 的 paramSpec **白名单过滤参数键**；未知 kind/非 JSON/非 2xx/网络错/超时**一律返回 null → 引擎静默回落关键词**。零第三方依赖、永不阻断主路径。
+- `lib/panel-bridge.js`：UNDERSTAND 调 `understandLlm` 时把当前表列名作第二参传入 `understandLlm(text,{columns})`（旧一参签名兼容）。
+- 导出纯逻辑供单测：`interpretChatResponse`、`parseModelJson`、`sanitizeParams`、`buildSystemPrompt`、`buildRequestBody`。
+- 测试 `test/llm-adapter.test.js` 13 例（纯逻辑 + 注入 fetch 成功/非2xx/抛错/超时 + 端到端经 engine.understandAsync）；全量 npm test **554/533/0/21**；两 acceptance 绿；selfcheck 全通过。
+- 文档：CHANGELOG 未发布段 + usage-guide 新增「十四、可选：把一句话理解接到真 LLM」。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。

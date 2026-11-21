@@ -538,4 +538,32 @@ A：忘了重建 bundle。跑 `npm run build:client` 重新生成 `client/client
 
 ---
 
+## 十四、可选：把「一句话理解」接到真 LLM
+
+默认的一句话理解是**纯关键词匹配**（离线、零网络、零依赖）。若想让理解更聪明，可注入一个真 LLM 适配器——**完全可选，不接就和原来一样**。
+
+适配器在 [`workbench/lib/llm-adapter.js`](../workbench/lib/llm-adapter.js)，兼容 **OpenAI Chat Completions 协议**，所以 DeepSeek / OpenAI / 任意兼容网关都能用（只换 `baseUrl` + `model`）。
+
+```js
+const { createUnderstandLlm } = require('dsh-workbench/lib/llm-adapter');
+const { makeActionHandler } = require('dsh-workbench/lib/panel-bridge');
+
+// 同步版（桥的 understandLlm 约定是同步 `(text,{columns}) => ({kind,params}|null)`）
+const understandLlm = createUnderstandLlm({
+  baseUrl: 'https://api.deepseek.com',   // 或 https://api.openai.com
+  model: 'deepseek-chat',                 // 或 gpt-4o-mini 等
+  apiKey: process.env.DEEPSEEK_API_KEY
+});
+
+const handler = makeActionHandler({ understandLlm });
+// 现在 UNDERSTAND 动作会先问 LLM；列名会自动带上（LLM 从真实列里挑参数）
+```
+
+- **async 更推荐**：若宿主能 await，用 `createUnderstandLlmAsync(cfg)` 得到 `async (text,{columns})=>…`，在调用 action handler 前先 await 好再注入 `action.llmResult`，或配合引擎 `understandAsync(sentence,{llm})`。
+- **兜底最硬**：无论 LLM 返回非法 kind / 非 JSON / 非 2xx / 网络错 / 超时，适配器一律返回 `null`，引擎**静默回落关键词**——外部依赖永远不可能让「一句话理解」整条坏掉。
+- **参数白名单**：适配器按该 kind 的 `paramSpec` 过滤模型给的 params 键，多余键直接丢弃；引擎还会再封闭校验一次。
+- **无网络环境/CI**：不注入即走关键词；`test/llm-adapter.test.js` 全部用注入的假 fetch，不触网。
+
+---
+
 *本手册随仓库演进；命令与字段以代码为准。规格：[#8](https://github.com/huobuzhe/ai_work/issues/8)。*

@@ -540,7 +540,10 @@ function makeActionHandler(deps) {
         action.type.toUpperCase() === 'UNDERSTAND' && action.llmResult === undefined) {
       try {
         const text = action.text !== undefined ? action.text : '';
-        const r = understandLlm(text);
+        // 第二参给可用的列名（供 LLM 从真实列里选，避免给出不存在的列）：
+        //   understandLlm(sentence) 的旧签名仍可用（多余参数被忽略），新写法可读第二参。
+        const cols = (table && Array.isArray(table.columns)) ? table.columns.slice() : [];
+        const r = understandLlm(text, { columns: cols });
         if (r && typeof r === 'object') action = Object.assign({}, action, { llmResult: r });
       } catch (_) { /* LLM 失败不致命，回落离线关键词 */ }
     }
