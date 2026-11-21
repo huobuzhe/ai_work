@@ -11,6 +11,21 @@
 """
 import sys, json, csv
 
+# Windows 控制台/管道默认编码常是 cp1252/gbk，`print` 含中文时 json.dumps(...,ensure_ascii=False)
+# 会抛 UnicodeEncodeError（CI windows-latest 全红根因）。强制把 stdout 切到 UTF-8。
+# 注：sys.stdout.reconfigure 仅 Python 3.7+ 有；Python 3.6（本机 Anaconda）无此方法，
+# 用 io.TextIOWrapper 包一层兜底，保证新老解释器都能安全输出中文。
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except AttributeError:
+    try:
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except Exception:
+        pass
+except Exception:
+    pass
+
 def col_letter(n):
     s = ''
     while n > 0:
