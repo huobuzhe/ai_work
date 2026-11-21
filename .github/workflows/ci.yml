@@ -1,0 +1,75 @@
+name: CI
+
+# dsh-workbench 持续集成：每次 push / PR 跑「全量测试 + 两个验收 + 打包自检」。
+# 说明：acceptance:formula 依赖 bundled LibreOffice Kit；CI 里没有该二进制，
+#       脚本会自动跳过重算子检查（见 scripts/acceptance-formula.js 的 locateCli 兜底），
+#       只验证「公式串生成 + 写盘存活」等不依赖重算的部分。本机跑则全量。
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'workbench/**'
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - 'workbench/**'
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: workbench
+
+jobs:
+  test:
+    name: test (node ${{ matrix.node }} / ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+        node: [ '20', '22' ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Setup Python + openpyxl
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install openpyxl
+        shell: bash
+        run: python -m pip install --upgrade pip openpyxl
+
+      - name: Show toolchain
+        shell: bash
+        run: |
+          node -v
+          python --version
+          python -c "import openpyxl; print('openpyxl', openpyxl.__version__)"
+
+      - name: selfcheck (package shape / engine / actions)
+        shell: bash
+        run: npm run selfcheck
+
+      - name: build client bundle (drift check — should be no diff)
+        shell: bash
+        run: |
+          npm run build:client
+          git diff --exit-code client/ || (echo "::error::client/client.js 与 client/index.js 不同步，请本地 npm run build:client 后提交" && exit 1)
+
+      - name: full test suite
+        shell: bash
+        run: npm test
+
+      - name: acceptance (engineMatchesFile)
+        shell: bash
+        run: npm run acceptance
+
+      - name: acceptance:formula (valuesMatch; recalc may skip on CI)
+        shell: bash
+        run: npm run acceptance:formula
