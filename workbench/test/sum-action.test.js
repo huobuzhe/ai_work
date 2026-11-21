@@ -356,3 +356,125 @@ test('透视分组桥真写盘：write-summary-sheet 收 {pivot} → 「汇总�
   assert.equal(info.b2, 160, '销售组合计=160');
   assert.equal(info.b3, 80, '技术组合计=80');
 });
+
+// ============================================================================
+// 多维透视（多级分组）：按多列分层分组（如 部门+月份），每组一行、表头为各级取值。
+// ============================================================================
+test('多维透视：多级分组 paramSpec 声明存在', function () {
+  const spec = E.KINDS.sum.paramSpec;
+  assert.ok(spec.find(function (d) { return d.key === '多级分组'; }), '应有「多级分组」参数');
+});
+
+test('多维透视 preview：按「部门;月份」两级分组 → 每组一行、groupParts 两级取值、聚合正确', function () {
+  const DATA = {
+    primaryKey: '单号',
+    columns: ['单号', '部门', '月份', '工时'],
+    rows: [
+      { 单号: 'a', 部门: '销售', 月份: '1月', 工时: 100 },
+      { 单号: 'b', 部门: '销售', 月份: '1月', 工时: 60 },
+      { 单号: 'c', 部门: '销售', 月份: '2月', 工时: 40 },
+      { 单号: 'd', 部门: '技术', 月份: '1月', 工时: 80 },
+      { 单号: 'e', 部门: '技术', 月份: '2月', 工时: 70 }
+    ]
+  };
+  const st = E.initial(DATA);
+  const pv = E.preview(st, E.buildDraft('sum', null, { 多列汇总: '工时:sum', 多级分组: '部门;月份' }));
+  assert.equal(pv.invalid, false);
+  const pvp = pv.summaryPivot;
+  assert.ok(pvp, '应产 summaryPivot');
+  assert.deepEqual(pvp.groupColumns, ['部门', '月份']);
+  assert.equal(pvp.groupCount, 4, '销售/1月、销售/2月、技术/1月、技术/2月 共 4 组');
+  // 组顺序=首次出现顺序；groupParts 保留各层取值。
+  assert.deepEqual(pvp.rows.map(function (r) { return r.groupParts; }), [
+    ['销售', '1月'], ['销售', '2月'], ['技术', '1月'], ['技术', '2月']
+  ]);
+  assert.deepEqual(pvp.rows.map(function (r) { return r.cells[0].value; }), [160, 40, 80, 70]);
+  assert.equal(pv.cells.length, 0);
+});
+
+test('多维透视：多级分组优先于单列「分组列」', function () {
+  const DATA = {
+    primaryKey: '单号', columns: ['单号', '部门', '月份', '工时'],
+    rows: [
+      { 单号: 'a', 部门: '销售', 月份: '1月', 工时: 100 },
+      { 单号: 'b', 部门: '销售', 月份: '2月', 工时: 40 }
+    ]
+  };
+  const st = E.initial(DATA);
+  const pv = E.preview(st, E.buildDraft('sum', null, { 多列汇总: '工时:sum', 分组列: '部门', 多级分组: '部门;月份' }));
+  assert.deepEqual(pv.summaryPivot.groupColumns, ['部门', '月份'], '应按两级分组');
+  assert.equal(pv.summaryPivot.groupCount, 2);
+});
+
+test('多维透视：某级分组列不存在 → invalid 点名列名', function () {
+  const st = fresh();
+  const pv = E.preview(st, E.buildDraft('sum', null, { 多列汇总: '工时:sum', 多级分组: '部门;不存在月份' }));
+  assert.equal(pv.invalid, true);
+  assert.ok(/不存在月份/.test(pv.summary));
+});
+
+test('多维透视 CONFIRM：pivot 带 groupColumns/groupParts，原数据行不变', function () {
+  const DATA = {
+    primaryKey: '单号', columns: ['单号', '部门', '月份', '工时'],
+    rows: [
+      { 单号: 'a', 部门: '销售', 月份: '1月', 工时: 100 },
+      { 单号: 'b', 部门: '销售', 月份: '2月', 工时: 40 },
+      { 单号: 'c', 部门: '技术', 月份: '1月', 工时: 80 }
+    ]
+  };
+  let st = E.initial(DATA);
+  st = E.reduce(st, { type: 'QUICK', kind: 'sum', params: { 多列汇总: '工时:sum', 多级分组: '部门;月份' } });
+  st = E.reduce(st, { type: 'CONFIRM' });
+  assert.equal(st.stage, 'EXECUTED');
+  const pv = st.appendedSummarySheet.pivot;
+  assert.deepEqual(pv.groupColumns, ['部门', '月份']);
+  assert.deepEqual(pv.rows.map(function (r) { return r.groupParts; }), [['销售', '1月'], ['销售', '2月'], ['技术', '1月']]);
+  assert.deepEqual(pv.rows.map(function (r) { return r.values[0]; }), [100, 40, 80]);
+  assert.equal(st.rows.length, 3, '原数据表不动');
+});
+
+test('多维透视桥真写盘：{pivot:{groupColumns,rows:[{groupParts,values}]}} → 表头两级 + 每组一行', function () {
+  const { spawnSync } = require('child_process');
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const cands = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
+  let py = null;
+  for (const b of cands) {
+    const r = spawnSync(b, ['-c', 'import openpyxl'], { encoding: 'utf8' });
+    if (!r.error && r.status === 0) { py = b; break; }
+  }
+  if (!py) { test.skip; return; }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-multipivot-'));
+  const file = path.join(dir, 'data.xlsx');
+  const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
+  const struct = path.join(dir, 's.json');
+  fs.writeFileSync(struct, JSON.stringify({
+    primaryKey: '单号', columns: { 单号: 'text', 部门: 'text', 月份: 'text', 工时: 'number' },
+    rows: [ { 单号: 'a', 部门: '销售', 月份: '1月', 工时: 100 }, { 单号: 'b', 部门: '销售', 月份: '2月', 工时: 40 }, { 单号: 'c', 部门: '技术', 月份: '1月', 工时: 80 } ]
+  }), 'utf8');
+  let r = spawnSync(py, [bridge, 'create', file, struct], { encoding: 'utf8' });
+  assert.equal(r.status, 0, 'create: ' + (r.stderr || ''));
+  const pFile = path.join(dir, 'p.json');
+  fs.writeFileSync(pFile, JSON.stringify({ sheetName: '汇总', pivot: {
+    groupColumn: '部门;月份', groupColumns: ['部门', '月份'], headers: ['工时·合计'],
+    rows: [
+      { group: '销售 / 1月', groupParts: ['销售', '1月'], values: [100] },
+      { group: '销售 / 2月', groupParts: ['销售', '2月'], values: [40] },
+      { group: '技术 / 1月', groupParts: ['技术', '1月'], values: [80] }
+    ]
+  } }), 'utf8');
+  r = spawnSync(py, [bridge, 'write-summary-sheet', file, pFile], { encoding: 'utf8' });
+  assert.equal(r.status, 0, 'write-summary-sheet(multipivot): ' + (r.stderr || ''));
+  const verify = spawnSync(py, ['-c',
+    'import openpyxl,sys,json;wb=openpyxl.load_workbook(sys.argv[1]);ws=wb["汇总"];' +
+    'rows=[[c.value for c in row] for row in ws.iter_rows(min_row=1,max_row=4,max_col=3)];' +
+    'print(json.dumps({"rows":rows,"n":len(wb["汇总"]["A"])}))', file],
+    { encoding: 'utf8' });
+  assert.equal(verify.status, 0, verify.stderr || '');
+  const info = JSON.parse(verify.stdout);
+  assert.deepEqual(info.rows[0], ['部门', '月份', '工时·合计'], '两级表头 + 规格列');
+  assert.deepEqual(info.rows[1], ['销售', '1月', 100]);
+  assert.deepEqual(info.rows[2], ['销售', '2月', 40]);
+  assert.deepEqual(info.rows[3], ['技术', '1月', 80]);
+});

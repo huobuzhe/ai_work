@@ -368,7 +368,18 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - `lib/panel-bridge.js`：sum 分支原样 JSON 透传（含 pivot），无需改逻辑。
 - `client/index.js`：ACTION_FORMS sum 加 `分组列`(column) 字段；projection impact 增 `summaryPivot`（groupColumn/headers/specMeta/rows/groupCount）；影响区渲染「透视：按「X」分 N 组 × K 项（列：…）」行。
 - 测试 `test/sum-action.test.js` 13→19 例（+6：分组列 paramSpec、单/多规格分组各值、分组列不存在 invalid、CONFIRM pivot 元数据、桥写 pivot 真写盘表头+分组行）。门禁：全量 npm test **565/544/0/21**（+6）；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true；selfcheck 全通过。
-- 文档：`docs/usage-guide.md` 六·六 sum 行补「分组列」；`workbench/README.md` 动作表加 `sum` 行、新增「5½. 汇总与透视」节、「明确不做」改写透视边界、新增「安装 / 上线」整节（一键/离线装法 + 发布新版本步骤）；`workbench/INSTALL.md` 加 FAQ 行 + 「发新版本」节；`workbench/CHANGELOG.md` 未发布段加透视条目。
+- 文档：`docs/usage-guide.md` 六·六 sum 行补「分组列」；`workbench/README.md` 动作表加 `sum` 行、新增「5½. 汇总与透视」节、「明确不做」改写透视边界、新增「安装 / 上线」整节（一键/离线装法 + 发布新版本步骤）；`workbench/INSTALL.md` 加 FAQ 行 + 「发新版本」节；`workbench/CHANGELOG.md` 未发布段加透视条目。commit 17845ed（功能+文档）、b4f606b（预览加透视样例）；均已推 origin/master，CI run 44893948934 全绿。
+
+### 第二十三波：多维透视（多级分组）+ 发布 v1.2.0（2026-11-21 用户选定）
+
+用户选定「多维透视，发布 v1.2.0」。改动（向前兼容，均在 sum 动作上扩）：
+
+- `lib/engine.js` KINDS.sum 新增可选参数 `多级分组`(text)。preview sum 分支：`groupRaw=(p.多级分组&&trim)?多级分组:(p.分组列||'')`；`groupCols=groupRaw.split(/[;；]/)` 逐个查 missing；有分组时按多列**分层分组**（键用 `\u0001` 连接避免取值含分隔符冲突），每组 `{group:parts.join(' / ')、groupParts:parts、cells}`；`previewMeta.summaryPivot` 增 `groupColumns`、每行增 `groupParts`。CONFIRM pivot 同步带 `groupColumns`+`groupParts`。stepsFor 用 `p.分组列||p.多级分组`。修复 SyntaxError（groupCol 重复声明，删旧单列检查统一走 groupCols.forEach）。
+- `scripts/xlsx_bridge.py write_summary_sheet` 形态 A：读 `groupColumns`（数组）作表头多列（回落 `[groupColumn||'分组']`），每行用 `groupParts` 补多级，无则回落 `[group]`。
+- `client/index.js`：ACTION_FORMS sum 加 `多级分组`(text) 字段；projection summaryPivot 增 `groupColumns`/行 `groupParts`；影响区 pivot 行在 `groupColumns.length>1` 时显示「A + B」。
+- 测试 `test/sum-action.test.js` 19→25 例（+6：多级分组 paramSpec、「部门;月份」两级 groupParts/值、多级优先单列、某级不存在 invalid、CONFIRM groupColumns/groupParts、桥写两级表头+每组一行）。门禁：全量 npm test **571/550/0/21**（+6）；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true；selfcheck 全通过。
+- 文档：`workbench/README.md`「5½」节补「多维透视（多级分组）」条 + 动作表 sum 行改写 + 「明确不做」改为「不做行×列双向交叉/列转置」；`docs/usage-guide.md` 六·六 sum 行补「多级分组」；`workbench/CHANGELOG.md` [未发布]→**1.2.0** 并加两波条目；`package.json` version 1.1.0→**1.2.0**。
+- 发布：打 `workbench/dist/dsh-workbench-1.2.0.zip`，`gh release create v1.2.0` 附 zip。
 
 ## 边界与已知瑕疵（接手须知）
 

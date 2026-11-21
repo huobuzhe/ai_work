@@ -2,7 +2,9 @@
 
 本文件记录 `dsh-workbench`（表格工作台）的版本变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]（Unreleased）
+## [1.2.0] - 2026-11-21
+
+「多维透视 + 真 LLM / 流水线 / 条件色」次版本：在 1.1.0 的确定性改表线上，补齐汇总/透视的**多级分组**，并把三项此前只在候选里的能力（一句话接真 LLM、多动作流水线、多条件多色）落地。向前兼容，无破坏性变更。
 
 ### 新增（Added）
 - **一句话理解·真 LLM 适配器**（`lib/llm-adapter.js`，可选，离线默认关闭）：提供 `createUnderstandLlmAsync(cfg)`（推荐，async）与 `createUnderstandLlm(cfg)`（同步阻塞版，供桥的同步 `understandLlm` 约定用）两个工厂。cfg = `{ baseUrl, model, apiKey, temperature?, timeoutMs?, fetch? }`，兼容 **OpenAI Chat Completions 协议**，因此同时覆盖 DeepSeek / OpenAI / 任意兼容网关（换 baseUrl + model 即可）。内部把一句话转成「先给动作类型清单 + 当前真实列名」的 system prompt，解析模型返回的 JSON 为 `{kind,params}`，并按该 kind 的 paramSpec 白名单**过滤参数键**；未知 kind / 非 JSON / 非 2xx / 网络错 / 超时一律返回 `null` → 引擎静默回落离线关键词。**永不阻断主路径、零第三方依赖**。桥 `makeActionHandler({understandLlm})` 的调用点已把当前表列名作为第二参传入（`understandLlm(text,{columns})`），旧的一参签名仍兼容。测试 `test/llm-adapter.test.js`（13 例：纯逻辑 + 注入 fetch 的成功/非2xx/抛错/超时 + 端到端经 engine.understandAsync）。
@@ -11,6 +13,7 @@
 - **汇总统计 `sum`**（目标「透视/汇总」之一）：对数值列在作用范围内做聚合——**合计/平均/计数/最大/最小**，结果写入一张**独立工作表「汇总」**（不改原数据表任何单元格、不追加进本表；重复执行会覆盖同名 sheet，结果稳定）。预览即显示聚合值、参与行数与目标 sheet；确认经 `xlsx_bridge.py write-summary-sheet` 建/覆盖该 sheet 写盘。引擎 `KINDS.sum` + `preview` 的 `summaryRow` 元数据 + `CONFIRM` 汇总分支（标 `appendedSummarySheet`）；可选「符合条件」只统计命中行。
 - **汇总一次可统计多列/多聚合**（`sum` 增强）：新增可选参数「多列汇总」，写分号分隔的规格串如 `工时:avg;时薪:max;姓名:count`（每项「列名:聚合」，聚合回落到「聚合方式」），一次产出多行汇总、写入「汇总」sheet 的不同区域（每项一行，表头「汇总项 / 值」，末尾补参与行数）。`preview.summaryRows` 为数组（`summaryRow` 仍等于首条，向后兼容旧消费者）；某列不存在则整条 invalid 并点名该列。
 - **透视分组汇总（`sum` 增强）**：新增可选参数「分组列」——填某列（如「部门」）即按它 **group by**，每组一行、各规格项作列，产一张透视表写入「汇总」sheet（表头=分组列名 + 各「列·聚合」，行=各组、组顺序=首次出现顺序、空值归「（空）」组）。`preview.summaryPivot` 带 `groupColumn/headers/specMeta/rows/groupCount`；`CONFIRM` 的 `appendedSummarySheet.pivot` 携带落盘数据；桥 `write-summary-sheet` 识别 `{pivot:{...}}` 形态逐组写行。分组列不存在 → 预览前点名拦截。留空「分组列」则只出全表总计（原行为不变）。
+- **多维透视（`sum` 增强·多级分组）**：新增可选参数「多级分组」，用分号分隔多列（如 `部门;月份`）即按多列**分层分组**、每组一行、表头为各级取值（如「销售 / 1月」「销售 / 2月」）。有「多级分组」时优先于「分组列」。`preview.summaryPivot` 增 `groupColumns`、每行增 `groupParts`；`CONFIRM` 的 `appendedSummarySheet.pivot` 同步携带；桥写多列两级表头 + 每组一行。某级分组列不存在 → 预览前点名拦截。
 - **多动作流水线批处理**（一条流水线串多个动作一次执行）：在浮窗面板把配置好的动作逐步「加入流水线」，可多步追加/删除，一键「预览流水线」出组合预览（按步骤顺序执行、后一步看得到前一步结果，如先算「应发」列再对它标色），再「确认执行」一次性落盘。引擎新增 `runPipeline(steps, state)` + `reduce` 的 `PIPELINE` / 流水线 `CONFIRM` 分支；含 `sort` 等结构性动作（只改行序、不产单元格）不支持放进流水线，会明确拦截而非静默丢弃。
 
 ## [1.1.0] - 2026-11-21

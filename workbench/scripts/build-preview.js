@@ -67,15 +67,16 @@ const samples = [
     const d = E.buildDraft('sum', null, { 目标列: '工时', 聚合方式: 'sum' });
     return Object.assign({}, s, { stage: 'PREVIEWED', draft: d, preview: E.preview(s, d) });
   })() },
-  { title: '④c 透视分组 sum —— 按「部门」分组统计工时合计', state: (function () {
-    const s = E.initial({ primaryKey: '姓名', columns: ['姓名', '部门', '工时', '时薪'],
+  { title: '④c 透视分组 sum —— 按「部门;月份」两级分组统计工时合计', state: (function () {
+    const s = E.initial({ primaryKey: '单号', columns: ['单号', '部门', '月份', '工时', '时薪'],
       rows: [
-        { 姓名: '阿岚', 部门: '销售', 工时: 160, 时薪: 80 },
-        { 姓名: '柏舟', 部门: '销售', 工时: 100, 时薪: 90 },
-        { 姓名: '清和', 部门: '技术', 工时: 150, 时薪: 75 },
-        { 姓名: '尔芙', 部门: '技术', 工时: 130, 时薪: 85 }
+        { 单号: 'a', 部门: '销售', 月份: '1月', 工时: 160, 时薪: 80 },
+        { 单号: 'b', 部门: '销售', 月份: '1月', 工时: 100, 时薪: 90 },
+        { 单号: 'c', 部门: '销售', 月份: '2月', 工时: 40, 时薪: 85 },
+        { 单号: 'd', 部门: '技术', 月份: '1月', 工时: 150, 时薪: 75 },
+        { 单号: 'e', 部门: '技术', 月份: '2月', 工时: 130, 时薪: 85 }
       ] });
-    const d = E.buildDraft('sum', null, { 多列汇总: '工时:sum', 分组列: '部门' });
+    const d = E.buildDraft('sum', null, { 多列汇总: '工时:sum', 多级分组: '部门;月份' });
     return Object.assign({}, s, { stage: 'PREVIEWED', draft: d, preview: E.preview(s, d) });
   })() },
   { title: '⑤ 校验失败示例 —— 引用了不存在的列（第②段列失败项、确认被禁用）', state: (function () {

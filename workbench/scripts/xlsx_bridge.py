@@ -227,13 +227,19 @@ def write_summary_sheet(path, summary_json):
         del wb[sheet_name]
     ws = wb.create_sheet(title=sheet_name)
 
-    # 形态 A：透视分组 {pivot:{groupColumn, headers:[...], rows:[{group, values:[...]}]}}
+    # 形态 A：透视分组 {pivot:{groupColumn, groupColumns?, headers:[...], rows:[{group, groupParts?, values:[...]}]}}
     pivot = sr.get('pivot')
     if isinstance(pivot, dict) and isinstance(pivot.get('rows'), list):
         headers = pivot.get('headers') or []
-        ws.append([pivot.get('groupColumn') or '分组'] + list(headers))
+        gcols = pivot.get('groupColumns')
+        gcols = [str(x) for x in gcols] if isinstance(gcols, list) and gcols else [str(pivot.get('groupColumn') or '分组')]
+        ws.append(list(gcols) + list(headers))
         for prow in pivot['rows']:
-            ws.append([prow.get('group')] + list(prow.get('values') or []))
+            parts = prow.get('groupParts')
+            if not (isinstance(parts, list) and parts):
+                # 兼容旧单列形状：无 groupParts 时用 group 单值补齐多列（仅 1 列时正好对齐）。
+                parts = [prow.get('group')]
+            ws.append(list(parts) + list(prow.get('values') or []))
         try:
             ws.sheet_view.showGridLines = True
         except Exception:

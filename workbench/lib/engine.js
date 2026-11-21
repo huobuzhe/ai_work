@@ -160,7 +160,9 @@ const KINDS = {
       // 多列/多聚合：分号分隔的规格串「列名:聚合;列名2:聚合2」。为空则只用「目标列+聚合方式」单条。
       { key: '多列汇总', 类型: 'text', 必填: false, 默认值: '' },
       // 透视分组：填某列名（如「部门」）→ 按该列分组、每组一行，规格项作为列，产一张透视表；留空则只做总计。
-      { key: '分组列', 类型: '列名', 必填: false, 默认值: '', 约束: { mustExist: true } }
+      { key: '分组列', 类型: '列名', 必填: false, 默认值: '', 约束: { mustExist: true } },
+      // 多级分组：分号分隔的列名串（如「部门;月份」）→ 按多列分层透视（每级一组、表头为各级取值）。
+      { key: '多级分组', 类型: 'text', 必填: false, 默认值: '' }
     ]
   }
 };
@@ -936,7 +938,7 @@ function stepsFor(kind, p) {
     return [
       scopeStep,
       '统计 ' + targets.join('、'),
-      p.分组列 ? ('按「' + p.分组列 + '」分组透视，每组一行') : '不分组（全表一行结果）',
+      p.分组列 || p.多级分组 ? ('按「' + (String(p.多级分组 || '').trim() || p.分组列) + '」分组透视，每组一行') : '不分组（全表一行结果）',
       '把结果写入一张独立工作表「汇总」（不改任何原始数据行）'
     ];
   }
@@ -1483,24 +1485,39 @@ function preview(state, draft) {
         invalid: true, disabled: false, errors: ['列不存在：' + missing.join('、')], issues: [], capabilityBlockers: [],
         scope: p.scope || 'all', condition: p.条件 || '', disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec });
     }
-    if (groupCol) {
-      // 透视分组：按 groupCol 分组，组顺序=首次出现顺序；每组对每个 spec 求值，规格项作为列。
+    // 分组列：支持多列。优先「多级分组」（分号分隔的多列名），否则回落「分组列」单列。
+    const groupRaw = (p.多级分组 && String(p.多级分组).trim()) ? String(p.多级分组) : (p.分组列 || '');
+    const groupCols = String(groupRaw).split(/[;；]/).map(function (s) { return s.trim(); }).filter(Boolean);
+    groupCols.forEach(function (gc) {
+      if (!state.columns || state.columns.indexOf(gc) === -1) missing.push(gc);
+    });
+    if (missing.length) {
+      return Object.assign({ cells: [], summary: '汇总的列不存在：' + missing.join('、') + '（请检查列名）。', affectedRows: 0, totalRows,
+        invalid: true, disabled: false, errors: ['列不存在：' + missing.join('、')], issues: [], capabilityBlockers: [],
+        scope: p.scope || 'all', condition: p.条件 || '', disclosure: disclosure, swapBanner: summaryExtra, paramSpec: paramSpec });
+    }
+    if (groupCols.length) {
+      // 多维透视：按 groupCols 分层分组，组顺序=首次出现顺序；键用 \u0001 连接避免取值含分隔符时冲突。
       const order = [];
       const buckets = {};
+      function labelOf(part) { return (part === '' || part == null) ? '（空）' : String(part); }
       scopeRows.forEach(function (r) {
-        const gv = (r[groupCol] === '' || r[groupCol] == null) ? '（空）' : String(r[groupCol]);
-        if (!buckets[gv]) { buckets[gv] = []; order.push(gv); }
-        buckets[gv].push(r);
+        const parts = groupCols.map(function (gc) { return labelOf(r[gc]); });
+        const key = parts.join('\u0001');
+        if (!buckets[key]) { buckets[key] = { parts: parts, rows: [] }; order.push(key); }
+        buckets[key].rows.push(r);
       });
-      const pivotRows = order.map(function (gv) {
+      const pivotRows = order.map(function (key) {
+        const b = buckets[key];
         const cells = specs.map(function (sp) {
-          const a = aggRows(buckets[gv], sp.column, sp.agg);
+          const a = aggRows(b.rows, sp.column, sp.agg);
           return { column: sp.column, agg: sp.agg, label: aggCn[sp.agg] || sp.agg, value: a.value, count: a.count };
         });
-        return { group: gv, cells: cells };
+        return { group: b.parts.join(' / '), groupParts: b.parts, cells: cells };
       });
       previewMeta.summaryPivot = {
         groupColumn: groupCol,
+        groupColumns: groupCols,
         headers: specs.map(function (sp) { return sp.column + '·' + (aggCn[sp.agg] || sp.agg); }),
         specMeta: specs.map(function (sp) { return { column: sp.column, agg: sp.agg, label: aggCn[sp.agg] || sp.agg }; }),
         rows: pivotRows,
@@ -1844,8 +1861,8 @@ function reduce(state, action) {
           stage: 'EXECUTED',
           appendedSummarySheet: {
             sheetName: '汇总', pivot: {
-              groupColumn: pv.groupColumn, headers: pv.headers, specMeta: pv.specMeta,
-              rows: pv.rows.map(function (r) { return { group: r.group, values: r.cells.map(function (c) { return c.value; }) }; })
+              groupColumn: pv.groupColumn, groupColumns: pv.groupColumns, headers: pv.headers, specMeta: pv.specMeta,
+              rows: pv.rows.map(function (r) { return { group: r.group, groupParts: r.groupParts, values: r.cells.map(function (c) { return c.value; }) }; })
             }
           },
           note: '用户已确认，按「' + pv.groupColumn + '」分 ' + pv.groupCount + ' 组的透视汇总已写入独立工作表「汇总」，原数据表未改动。',

@@ -167,7 +167,8 @@ const ACTION_FORMS = [
     { key: '目标列', type: 'column', def: '' },
     { key: '聚合方式', type: 'enum', options: ['sum', 'avg', 'count', 'max', 'min'], def: 'sum' },
     { key: '多列汇总', type: 'text', def: '', hint: '可选；多组用分号分隔，如「工时:avg;时薪:max」。留空则只用上面的目标列与聚合方式组成单条' },
-    { key: '分组列', type: 'column', def: '', hint: '可选；填某列（如「部门」）→ 按它分组做透视表（每组一行）。留空则只出全表总计' }
+    { key: '分组列', type: 'column', def: '', hint: '可选；填某列（如「部门」）→ 按它分组做透视表（每组一行）。留空则只出全表总计' },
+    { key: '多级分组', type: 'text', def: '', hint: '可选；多级透视用分号分隔多列，如「部门;月份」→ 分层分组、表头为各级取值。优先于上面的「分组列」' }
   ] }
 ];
 
@@ -258,13 +259,14 @@ function projectPreviewCard(state) {
       summaryRows: Array.isArray(pv.summaryRows) ? pv.summaryRows.map(function (sr) {
         return { column: sr.column, agg: sr.agg, label: sr.label, value: sr.value, count: sr.count, sheetName: '汇总' };
       }) : null,
-      // 透视分组：按某列分组，每组一行、规格项作列。groupColumn + headers + rows[{group, cells:[{column,agg,label,value,count}]}]。
+      // 透视分组：按某列（或多级多列）分组，每组一行、规格项作列。groupColumn(s) + headers + rows[{group, groupParts, cells:[...]}]。
       summaryPivot: (pv.summaryPivot && Array.isArray(pv.summaryPivot.rows)) ? {
         groupColumn: pv.summaryPivot.groupColumn,
+        groupColumns: Array.isArray(pv.summaryPivot.groupColumns) ? pv.summaryPivot.groupColumns.slice() : null,
         headers: pv.summaryPivot.headers.slice(),
         specMeta: (pv.summaryPivot.specMeta || []).map(function (s) { return { column: s.column, agg: s.agg, label: s.label }; }),
         rows: pv.summaryPivot.rows.map(function (r) {
-          return { group: r.group, cells: (r.cells || []).map(function (c) { return { column: c.column, agg: c.agg, label: c.label, value: c.value, count: c.count }; }) };
+          return { group: r.group, groupParts: Array.isArray(r.groupParts) ? r.groupParts.slice() : null, cells: (r.cells || []).map(function (c) { return { column: c.column, agg: c.agg, label: c.label, value: c.value, count: c.count }; }) };
         }),
         groupCount: pv.summaryPivot.groupCount
       } : null,
@@ -646,7 +648,8 @@ function renderWorkbenchPanel(hostState) {
     const sumRows = (preview.sections && preview.sections.impact && Array.isArray(preview.sections.impact.summaryRows))
       ? preview.sections.impact.summaryRows : null;
     if (pivot && pivot.groupColumn) {
-      lines.push('透视：按「' + pivot.groupColumn + '」分 ' + pivot.groupCount + ' 组 × ' + pivot.headers.length + ' 项（列：' + pivot.headers.join('、') + '）；确认后写入独立工作表「汇总」，不改本表。');
+      const gcLabel = (pivot.groupColumns && pivot.groupColumns.length > 1) ? pivot.groupColumns.join(' + ') : pivot.groupColumn;
+      lines.push('透视：按「' + gcLabel + '」分 ' + pivot.groupCount + ' 组 × ' + pivot.headers.length + ' 项（列：' + pivot.headers.join('、') + '）；确认后写入独立工作表「汇总」，不改本表。');
     } else if (sumRows && sumRows.length) {
       const aggCn = { sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' };
       const sheet = sumRows[0].sheetName || '汇总';

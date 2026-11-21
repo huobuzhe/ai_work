@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbench",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "表格工作台：把建表与日常繁琐表格操作收进「一句话 + 10 个一键动作」，改前逐格预览、确认才落盘（本地 Excel 零凭据闭环）。",
   "keywords": [
