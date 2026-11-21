@@ -31,8 +31,8 @@ function defaultApplyTable(file, cells, sortOrder, summary) {
   const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
   const candidates = process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
 
-  // 汇总（sum）：给了 summarySheet（{sheetName,column,agg,label,value,count}）→ 走 write-summary-sheet
-  //   命令把结果写进一张独立工作表（默认「汇总」），不逐格改值、不改原数据表。
+  // 汇总（sum）：给了 summarySheet（{sheetName, rows:[{column,agg,label,value,count}]} 或旧单条形状）
+  //   → 走 write-summary-sheet 命令把结果写进一张独立工作表（默认「汇总」），不逐格改值、不改原数据表。
   if (summary && typeof summary === 'object') {
     const tmpSum = path.join(os.tmpdir(), 'workbench-sum-' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.json');
     fs.writeFileSync(tmpSum, JSON.stringify(summary), 'utf8');

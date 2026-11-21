@@ -349,6 +349,16 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - 测试 `test/llm-adapter.test.js` 13 例（纯逻辑 + 注入 fetch 成功/非2xx/抛错/超时 + 端到端经 engine.understandAsync）；全量 npm test **554/533/0/21**；两 acceptance 绿；selfcheck 全通过。
 - 文档：CHANGELOG 未发布段 + usage-guide 新增「十四、可选：把一句话理解接到真 LLM」。
 
+### 第二十一波：sum 支持一次统计多列/多聚合（2026-11-21 用户选定）
+
+用户选定「让 sum 汇总支持一次统计多列/多种聚合，写入汇总 sheet 的不同区域」。改动（向前兼容）：
+
+- `lib/engine.js` KINDS.sum：`目标列`/`聚合方式` 改 `必填:false`（留空也能跑，回落默认），新增可选参数 `多列汇总`(text)。preview 的 sum 分支重写为 `parseSpecs()` 解析分号分隔的 `列名:聚合`（也接受全角「：」或空白分隔；无聚合词则回落 `聚合方式`），逐规格在 scope 内聚合，产 `preview.summaryRows=[{column,agg,label,value,count}]`（`summaryRow` 保留=首条 向后兼容）；任一列不存在 → 整条 invalid 并点名列。summary 文案汇总 N 项。CONFIRM sum 分支改为标 `appendedSummarySheet={sheetName:'汇总', rows:[...]}`。stepsFor sum 渲染多项。
+- `scripts/xlsx_bridge.py write_summary_sheet`：接收 `{sheetName?,rows:[...]}`（首选）或旧单条形状；逐项写「汇总项/值」行，末尾补「参与行数」。原数据表不动、覆盖同名 sheet。
+- `lib/panel-bridge.js`：applyTable 的 summary 分支原样透传（`{sheetName,rows}` 直接序列化），注释更新。
+- `client/index.js`：ACTION_FORMS sum 加 `多列汇总` 字段；projection impact 增 `summaryRows`（含 sheetName，逐项）；影响区渲染多行汇总，单条/多条分别措辞，旧 `summaryRow` 兜底。
+- 测试 `test/sum-action.test.js` 由 8 例扩到 13 例（多列规格解析/summaryRows 值/count 列/单条兼容/invalid 点名/CONFIRM rows/桥真写盘多行）；`npm run build:client` + `build:preview`（7 样例）重生成。门禁：全量 npm test **559/538/0/21**（+5）；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true；selfcheck 全通过。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。

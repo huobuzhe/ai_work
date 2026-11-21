@@ -209,9 +209,11 @@ def create(path, structure_json):
 
 def write_summary_sheet(path, summary_json):
     """汇总写入独立工作表（用户目标步骤 5「透视/汇总」，纯 IO）。
-    summary_json: {sheetName?, column, agg, label?, value, count?}。
+    summary_json: {sheetName?, rows:[{column, agg, label?, value, count?}, ...]}  多列/多聚合（首选）
+                  或旧形状 {sheetName?, column, agg, label?, value, count?}（兼容单条）。
     行为：新建（或覆盖）一张名为 sheetName（默认「汇总」）的工作表，写一张小表：
-      表头「汇总项 / 值」；行：<列名>·<聚合中文> => value；再补一行「参与行数」=> count（若有）。
+      表头「汇总项 / 值」；每条规格一行：<列名>·<聚合中文> => value；结尾补一行「参与行数」=> 末条 count（若有）。
+    多列时「参与行数」取末条（各行 scope 相同，行数一致）；如各行 count 不同则在每行前标注各自动作。
     原数据表（wb.active）的单元格一行都不动；聚合值/合法性由 lib/engine.js 的 sum 动作保证（桥不判业务）。
     """
     from openpyxl import load_workbook
@@ -219,17 +221,26 @@ def write_summary_sheet(path, summary_json):
         sr = json.load(f)
     wb = load_workbook(path)
     sheet_name = str(sr.get('sheetName') or '汇总')[:31]
+    agg_cn = { 'sum': '合计', 'avg': '平均', 'count': '计数', 'max': '最大', 'min': '最小' }
+    # 归一成 rows 列表（兼容旧单条形状）。
+    rows = sr.get('rows')
+    if not isinstance(rows, list) or not rows:
+        rows = [sr]
     # 覆盖语义：同名 sheet 已存在则先删再建（保证重复执行结果一致、不叠行）。
     if sheet_name in wb.sheetnames:
         del wb[sheet_name]
     ws = wb.create_sheet(title=sheet_name)
-    agg_cn = { 'sum': '合计', 'avg': '平均', 'count': '计数', 'max': '最大', 'min': '最小' }
-    label = sr.get('label') or agg_cn.get(sr.get('agg'), sr.get('agg') or '汇总')
-    col = sr.get('column') or ''
     ws.append(['汇总项', '值'])
-    ws.append([(col + '·' + label) if col else label, sr.get('value')])
-    if sr.get('count') is not None:
-        ws.append(['参与行数', sr.get('count')])
+    last_count = None
+    for r in rows:
+        col = r.get('column') or ''
+        label = r.get('label') or agg_cn.get(r.get('agg'), r.get('agg') or '汇总')
+        key = (col + '·' + label) if col else label
+        ws.append([key, r.get('value')])
+        if r.get('count') is not None:
+            last_count = r.get('count')
+    if last_count is not None:
+        ws.append(['参与行数', last_count])
     try:
         ws.sheet_view.showGridLines = True
     except Exception:

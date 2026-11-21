@@ -165,7 +165,8 @@ const ACTION_FORMS = [
   ] },
   { kind: 'sum', label: '汇总统计', fields: [
     { key: '目标列', type: 'column', def: '' },
-    { key: '聚合方式', type: 'enum', options: ['sum', 'avg', 'count', 'max', 'min'], def: 'sum' }
+    { key: '聚合方式', type: 'enum', options: ['sum', 'avg', 'count', 'max', 'min'], def: 'sum' },
+    { key: '多列汇总', type: 'text', def: '', hint: '可选；多组用分号分隔，如「工时:avg;时薪:max」。留空则只用上面的目标列与聚合方式组成单条' }
   ] }
 ];
 
@@ -251,7 +252,11 @@ function projectPreviewCard(state) {
       columns: Array.isArray(pv.columns) ? pv.columns.slice() : [],
       rows: Array.isArray(pv.rows) ? pv.rows.slice() : [],
       afterRows: Array.isArray(pv.afterRows) ? pv.afterRows.slice() : null,
-      // 汇总（sum）：不改任何原始单元格、结果写入一张独立工作表「汇总」；把 summaryRow 带出供面板单独显示。
+      // 汇总（sum）：不改任何原始单元格、结果写入一张独立工作表「汇总」；把 summaryRows 带出供面板逐行显示。
+      // summaryRow 仍保留（= 首条）以兼容旧消费者。
+      summaryRows: Array.isArray(pv.summaryRows) ? pv.summaryRows.map(function (sr) {
+        return { column: sr.column, agg: sr.agg, label: sr.label, value: sr.value, count: sr.count, sheetName: '汇总' };
+      }) : null,
       summaryRow: pv.summaryRow ? {
         column: pv.summaryRow.column, agg: pv.summaryRow.agg,
         value: pv.summaryRow.value, count: pv.summaryRow.count,
@@ -626,10 +631,25 @@ function renderWorkbenchPanel(hostState) {
     lines.push('作用范围：' + (preview.scopeLabel || preview.scope || '全部'));
     // 汇总（sum）：结果不写本表，而是写入一张独立工作表「汇总」；在影响预览处直接给出结果卡，
     // 让用户在确认前就看到聚合值 + 落点 sheet（否则受影响单元格为 0，看起来像「没变化」）。
-    const sumRow = preview.sections && preview.sections.impact ? preview.sections.impact.summaryRow : null;
-    if (sumRow && sumRow.column) {
-      const aggCn = { sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sumRow.agg] || sumRow.agg;
-      lines.push('汇总：' + sumRow.column + ' 的' + aggCn + ' ＝ ' + sumRow.value + '（参与 ' + sumRow.count + ' 行）；确认后写入独立工作表「' + (sumRow.sheetName || '汇总') + '」，不改本表。');
+    const sumRows = (preview.sections && preview.sections.impact && Array.isArray(preview.sections.impact.summaryRows))
+      ? preview.sections.impact.summaryRows : null;
+    if (sumRows && sumRows.length) {
+      const aggCn = { sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' };
+      const sheet = sumRows[0].sheetName || '汇总';
+      if (sumRows.length === 1) {
+        const s = sumRows[0];
+        lines.push('汇总：' + s.column + ' 的' + (aggCn[s.agg] || s.agg) + ' ＝ ' + s.value + '（参与 ' + s.count + ' 行）；确认后写入独立工作表「' + sheet + '」，不改本表。');
+      } else {
+        const parts = sumRows.map(function (s) { return s.column + '·' + (aggCn[s.agg] || s.agg) + '＝' + s.value; });
+        lines.push('汇总 ' + sumRows.length + ' 项：' + parts.join('；') + '；确认后写入独立工作表「' + sheet + '」，不改本表。');
+      }
+    } else {
+      // 向后兼容：旧投影只带 summaryRow。
+      const sumRow = preview.sections && preview.sections.impact ? preview.sections.impact.summaryRow : null;
+      if (sumRow && sumRow.column) {
+        const aggCn = { sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sumRow.agg] || sumRow.agg;
+        lines.push('汇总：' + sumRow.column + ' 的' + aggCn + ' ＝ ' + sumRow.value + '（参与 ' + sumRow.count + ' 行）；确认后写入独立工作表「' + (sumRow.sheetName || '汇总') + '」，不改本表。');
+      }
     }
     const lineEls = lines.map(function (t, i) { return jsx('div', { children: t }, 'l' + i); });
     // 票 #46：始终标明「当前预览的是哪份配方」，点击按钮后也不消失。
