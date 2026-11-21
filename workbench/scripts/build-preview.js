@@ -61,6 +61,12 @@ const samples = [
   { title: '② 调换两段字段 swap —— 对调部门与备注', state: pipe(st({ columns: ['姓名', '部门', '备注', '工时', '时薪'], rows: [{ 姓名: '阿岚', 部门: '销售', 备注: '新人', 工时: 160, 时薪: 80 }] }), '把部门和备注对调') },
   { title: '③ 带条件增删 conditional —— 工时 > 150 的加标记', state: pipe(st(), '把工时大于150的人的备注写上加班') },
   { title: '④ 自定义函数 function —— 应发 = 工时 × 时薪', state: pipe(st(), '计算应发 = 工时 * 时薪') },
+  { title: '④b 汇总统计 sum —— 工时合计，写入独立工作表「汇总」', state: (function () {
+    const s = E.initial({ primaryKey: '姓名', columns: ['姓名', '部门', '工时', '时薪'],
+      rows: [{ 姓名: '阿岚', 部门: '销售', 工时: 160, 时薪: 80 }, { 姓名: '柏舟', 部门: '技术', 工时: 120, 时薪: 90 }, { 姓名: '清和', 部门: '财务', 工时: 150, 时薪: 75 }] });
+    const d = E.buildDraft('sum', null, { 目标列: '工时', 聚合方式: 'sum' });
+    return Object.assign({}, s, { stage: 'PREVIEWED', draft: d, preview: E.preview(s, d) });
+  })() },
   { title: '⑤ 校验失败示例 —— 引用了不存在的列（第②段列失败项、确认被禁用）', state: (function () {
     const s = st();
     const bad = E.buildDraft('swap', null, { 字段A: '不存在的列', 字段B: '部门' });
@@ -122,8 +128,13 @@ function renderCard(card) {
         + esc(c.before) + '</td><td class="after">' + esc(c.after) + '</td></tr>';
     }).join('') + '</table>';
   const imHtml = '<div class="summary">' + esc(im.summary) + '</div>'
+    + (im.summaryRow && im.summaryRow.column
+      ? '<div class="banner">汇总结果将写入独立工作表「' + esc(im.summaryRow.sheetName || '汇总') + '」：'
+        + esc(im.summaryRow.column) + ' 的' + esc({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[im.summaryRow.agg] || im.summaryRow.agg)
+        + ' ＝ ' + esc(im.summaryRow.value) + '（参与 ' + esc(im.summaryRow.count) + ' 行），不改本表。</div>'
+      : '')
     + (im.swapBanner ? '<div class="banner">' + esc(im.swapBanner) + '</div>' : '')
-    + cellsHtml;
+    + (im.cells.length ? cellsHtml : '');
 
   // ⑤ 确认
   const coHtml = '<button class="' + (co.canConfirm ? 'btn-primary' : 'btn-disabled') + '"'

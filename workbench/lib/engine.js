@@ -1415,6 +1415,7 @@ function preview(state, draft) {
     }
   } else if (draft.kind === 'sum') {
     // ⑬ 汇总统计：对目标列在 scope 内聚合，产 preview.summaryRow（不改任何原始单元格、cells 为空）。
+    // 结果写到一张**独立 sheet「汇总」**（不污染原数据表），确认时经桥 write-summary-sheet 建/覆盖该 sheet。
     const col = p.目标列;
     const agg = p.聚合方式 || 'sum';
     const nums = [];
@@ -1453,11 +1454,11 @@ function preview(state, draft) {
     const moved = previewMeta.sortOrder.filter(function (v, i) { return v !== i; }).length;
     summary = '按列重排整表行顺序：' + totalRows + ' 行中 ' + moved + ' 行位置会变。确认后写回整表（行内容不变，只改先后顺序）。';
   }
-  // 汇总（sum）：不改任何原始单元格，产一行「汇总」追加到表尾。
+  // 汇总（sum）：不改任何原始单元格，结果写到一张独立 sheet「汇总」。
   if (previewMeta.summaryRow) {
     const sr = previewMeta.summaryRow;
     summary = '汇总「' + sr.column + '」的' + ({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sr.agg] || sr.agg) +
-      '（参与 ' + sr.count + ' 行）＝ ' + sr.value + '；确认后作为一行「汇总」追加到表尾（不改任何原始数据行）。';
+      '（参与 ' + sr.count + ' 行）＝ ' + sr.value + '；确认后写入独立工作表「汇总」（不改原数据表任何单元格）。';
   }
   if (summaryExtra) summary += summaryExtra;
   // 票 #12：预览如实反映当前作用范围，供预览卡渲染「作用范围」控件。
@@ -1748,23 +1749,20 @@ function reduce(state, action) {
           log: push(state, '确认 → 流水线执行：' + state.preview.cells.length + ' 个单元格变化', 'ok')
         });
       }
-      // 汇总（sum）：不改任何原始数据行；确认时把一行「汇总」追加到 rows 末尾
-      // （首格放标签「汇总」、目标列放聚合值，其余留空），并标记 state.appendedSummary
-      // 供 panel-bridge 检测后用桥 append-summary 精确写盘（避免污染既有行）。
+      // 汇总（sum）：不改任何原始数据行；结果写到一张**独立 sheet「汇总」**（不污染原数据表）。
+      //   确认时只标 state.appendedSummarySheet 供 panel-bridge 检测后用桥 write-summary-sheet
+      //   建/覆盖该 sheet；state.rows/columns（原数据视图）保持不变——干净、可重复执行。
       if (state.preview.summaryRow) {
         const sr = state.preview.summaryRow;
-        const label = '汇总·' + ({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sr.agg] || sr.agg);
-        const newRow = {};
-        const pk = state.primaryKey || (state.columns && state.columns[0]);
-        state.columns.forEach(function (c) { newRow[c] = ''; });
-        if (pk) newRow[pk] = label;
-        newRow[sr.column] = sr.value;
+        const label = ({ sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sr.agg] || sr.agg);
         return set(state, {
-          columns: state.columns.slice(), rows: state.rows.concat([newRow]), stage: 'EXECUTED',
-          appendedSummary: { label: label, column: sr.column, value: sr.value, agg: sr.agg, count: sr.count },
-          note: '用户已确认，汇总已追加到表尾：「' + sr.column + '」' + label + '＝ ' + sr.value + '（参与 ' + sr.count + ' 行）。',
+          stage: 'EXECUTED',
+          appendedSummarySheet: {
+            sheetName: '汇总', column: sr.column, agg: sr.agg, label: label, value: sr.value, count: sr.count
+          },
+          note: '用户已确认，汇总已写入独立工作表「汇总」：「' + sr.column + '」' + label + '＝ ' + sr.value + '（参与 ' + sr.count + ' 行），原数据表未改动。',
           noteTone: 'ok',
-          log: push(state, '确认 → 汇总：追加一行「' + sr.column + '」' + label + '＝ ' + sr.value, 'ok')
+          log: push(state, '确认 → 汇总：写入「汇总」sheet「' + sr.column + '」' + label + '＝ ' + sr.value, 'ok')
         });
       }
       // 票 #14（Standards review finding #1 加固）：执行前再跑一次封闭校验。

@@ -327,6 +327,17 @@ Notes 继承地图 #2 既定前提（能力位全 false 不重测 / 第一刀已
 - **一句话理解·可选接真 LLM**（commit b5e70dc）：lib/engine.js 新增 <code>understandAsync(sentence, {llm})</code>——llm 是宿主注入的 async 函数返回 <code>{kind,params}|null</code>，接到就调用并由封闭校验采用（标 via:'llm'），抛错/null/未知 kind 一律静默回落关键词；<code>understand(sentence, llmResult)</code> 支持同步注入；reduce UNDERSTAND 支持 <code>action.llmResult</code>。桥 <code>makeActionHandler({understandLlm})</code> 支持注入同步理解器。不注入时行为不变（纯关键词、零网络）。测试 test/understand-llm.test.js（8 例含桥注入闭环）。
 - **门禁** 全量 npm test 541 tests / 520 pass / 0 fail / 21 skipped；acceptance engineMatchesFile:true；acceptance:formula valuesMatch:true；selfcheck 全通过。git 提交 572fdd9 → 6bbed98 → b5e70dc，三次 CI run 全 success（44878746579 等），origin/master=b5e70dc。
 
+### 第十九波·续：sum 改为写独立工作表「汇总」（2026-11-21 用户选定）
+
+用户选择把汇总从「追加到本表表尾」改为「写入独立 sheet」，避免污染原数据表。改动（向前兼容，无破坏性变更）：
+
+- lib/engine.js：sum preview 文案改为「写入独立工作表『汇总』」；CONFIRM 不再往 rows 追加行、不再标 <code>appendedSummary</code>，改为标 <code>state.appendedSummarySheet={sheetName:'汇总',column,agg,label,value,count}</code>，原 <code>columns/rows</code> 保持不变。
+- scripts/xlsx_bridge.py：<code>append-summary</code> 命令替换为 <code>write-summary-sheet</code>——新建/覆盖同名 sheet（默认「汇总」），写小表「汇总项 / 值」+ 一行「参与行数」；<code>wb.active</code>（原数据表）一行不动；重复执行结果一致（先删同名再建）。
+- lib/panel-bridge.js：applyTable 的 summary 分支改调 <code>write-summary-sheet</code>，返回 <code>summarySheetWritten:1</code>；EXECUTED 落盘触发条件由 <code>vm.appendedSummary</code> 改为 <code>vm.appendedSummarySheet</code>。
+- client/index.js：projection 的 impact.summaryRow 增 <code>sheetName:'汇总'</code>；预览主区新增「汇总：<列> 的<聚合> ＝ <值>（参与 N 行）；确认后写入独立工作表『汇总』」提示行（原先 cells 为空看着像没变化）。
+- 测试：test/sum-action.test.js 第 7 例改断言「原数据行不变 + appendedSummarySheet 有值」，第 8 例改 <code>write-summary-sheet</code> 真写盘闭环（校验新 sheet 存在、B2=430、原表仍 3 行）。
+- 门禁：全量 npm test 541/520/0/21；两 acceptance 绿；selfcheck 全通过。
+
 ## 边界与已知瑕疵（接手须知）
 
 - **云端四格能力位维持全 false**：腾讯三格负面已验证（写侧 CellValue 仅 text/link/number、V3 接口无重算、get_range 无计算值字段），飞书四格未验证 + 使用者豁免 Step7/8/9（按 ⑲ 保守记 false）。未因链路通/豁免重测成 true。

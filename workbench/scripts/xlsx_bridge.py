@@ -207,32 +207,34 @@ def create(path, structure_json):
     wb.save(path)
     print('OK')
 
-def append_summary(path, summary_json):
-    """汇总行追加（用户目标步骤 5「透视/汇总」之一，纯 IO）。
-    summary_json: {label, column, value}。
-    行为：在表尾追加一行——首列（主键列）写 label，目标列写 value，其余列留空。
-    不改任何原始数据行；聚合值与合法性由 lib/engine.js 的 sum 动作保证（桥不判业务）。
+def write_summary_sheet(path, summary_json):
+    """汇总写入独立工作表（用户目标步骤 5「透视/汇总」，纯 IO）。
+    summary_json: {sheetName?, column, agg, label?, value, count?}。
+    行为：新建（或覆盖）一张名为 sheetName（默认「汇总」）的工作表，写一张小表：
+      表头「汇总项 / 值」；行：<列名>·<聚合中文> => value；再补一行「参与行数」=> count（若有）。
+    原数据表（wb.active）的单元格一行都不动；聚合值/合法性由 lib/engine.js 的 sum 动作保证（桥不判业务）。
     """
     from openpyxl import load_workbook
     with open(summary_json, encoding='utf-8') as f:
         sr = json.load(f)
-    wb = load_workbook(path); ws = wb.active
-    header = [('' if c.value is None else str(c.value)) for c in ws[1]]
-    label = sr.get('label') or '汇总'
-    col = sr.get('column')
-    # 目标列不在表头则补一列，避免汇总值写不进去。
-    if col and col not in header:
-        header.append(col); ws.cell(row=1, column=len(header), value=col)
-    new_ri = ws.max_row + 1
-    # 首列（主键列，通常是第 1 列）写 label
-    ws.cell(row=new_ri, column=1, value=label)
-    if col and col in header:
-        ci = header.index(col) + 1
-        ws.cell(row=new_ri, column=ci, value=sr.get('value'))
+    wb = load_workbook(path)
+    sheet_name = str(sr.get('sheetName') or '汇总')[:31]
+    # 覆盖语义：同名 sheet 已存在则先删再建（保证重复执行结果一致、不叠行）。
+    if sheet_name in wb.sheetnames:
+        del wb[sheet_name]
+    ws = wb.create_sheet(title=sheet_name)
+    agg_cn = { 'sum': '合计', 'avg': '平均', 'count': '计数', 'max': '最大', 'min': '最小' }
+    label = sr.get('label') or agg_cn.get(sr.get('agg'), sr.get('agg') or '汇总')
+    col = sr.get('column') or ''
+    ws.append(['汇总项', '值'])
+    ws.append([(col + '·' + label) if col else label, sr.get('value')])
+    if sr.get('count') is not None:
+        ws.append(['参与行数', sr.get('count')])
     try:
         ws.sheet_view.showGridLines = True
     except Exception:
         pass
+    # 把汇总 sheet 放到最后；原数据表（active）不动。
     wb.save(path)
     print('OK')
 
@@ -322,6 +324,6 @@ if __name__ == '__main__':
     elif cmd == 'apply': apply(sys.argv[2], sys.argv[3])
     elif cmd == 'sort': sort(sys.argv[2], sys.argv[3])
     elif cmd == 'create': create(sys.argv[2], sys.argv[3])
-    elif cmd == 'append-summary': append_summary(sys.argv[2], sys.argv[3])
+    elif cmd == 'write-summary-sheet': write_summary_sheet(sys.argv[2], sys.argv[3])
     elif cmd == 'probe': probe(sys.argv[2])
     else: raise SystemExit('unknown command: ' + cmd)

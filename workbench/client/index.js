@@ -251,10 +251,11 @@ function projectPreviewCard(state) {
       columns: Array.isArray(pv.columns) ? pv.columns.slice() : [],
       rows: Array.isArray(pv.rows) ? pv.rows.slice() : [],
       afterRows: Array.isArray(pv.afterRows) ? pv.afterRows.slice() : null,
-      // 汇总（sum）：不改单元格、产一行汇总追加到表尾；把 summaryRow 带出供面板单独显示。
+      // 汇总（sum）：不改任何原始单元格、结果写入一张独立工作表「汇总」；把 summaryRow 带出供面板单独显示。
       summaryRow: pv.summaryRow ? {
         column: pv.summaryRow.column, agg: pv.summaryRow.agg,
-        value: pv.summaryRow.value, count: pv.summaryRow.count
+        value: pv.summaryRow.value, count: pv.summaryRow.count,
+        sheetName: '汇总'
       } : null
     },
     // ⑤ 确认 / 取消：没有合法预览（校验未过或非 PREVIEWED）时禁用确认
@@ -623,6 +624,13 @@ function renderWorkbenchPanel(hostState) {
     if (preview.explanation) lines.push('解释：' + preview.explanation);
     if (typeof preview.affectedRows === 'number') lines.push('影响 ' + preview.affectedRows + ' 行 / 共 ' + (preview.totalRows == null ? '?' : preview.totalRows) + ' 行');
     lines.push('作用范围：' + (preview.scopeLabel || preview.scope || '全部'));
+    // 汇总（sum）：结果不写本表，而是写入一张独立工作表「汇总」；在影响预览处直接给出结果卡，
+    // 让用户在确认前就看到聚合值 + 落点 sheet（否则受影响单元格为 0，看起来像「没变化」）。
+    const sumRow = preview.sections && preview.sections.impact ? preview.sections.impact.summaryRow : null;
+    if (sumRow && sumRow.column) {
+      const aggCn = { sum: '合计', avg: '平均', count: '计数', max: '最大', min: '最小' }[sumRow.agg] || sumRow.agg;
+      lines.push('汇总：' + sumRow.column + ' 的' + aggCn + ' ＝ ' + sumRow.value + '（参与 ' + sumRow.count + ' 行）；确认后写入独立工作表「' + (sumRow.sheetName || '汇总') + '」，不改本表。');
+    }
     const lineEls = lines.map(function (t, i) { return jsx('div', { children: t }, 'l' + i); });
     // 票 #46：始终标明「当前预览的是哪份配方」，点击按钮后也不消失。
     // 优先用 hostState.recipeLabel（点击/派生时由上层显式给出）；否则在默认配方场景回退为默认标签。

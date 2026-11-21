@@ -66,21 +66,22 @@ test('sum understand 关键词：工时合计 → sum', function () {
   assert.equal(after.draft && after.draft.kind, 'sum');
 });
 
-test('sum CONFIRM：把一行「汇总」追加到 rows 末尾并标 appendedSummary', function () {
+test('sum CONFIRM：结果记为独立「汇总」sheet 元数据，原数据行不变', function () {
   const st0 = fresh();
   const st1 = E.reduce(st0, { type: 'UNDERSTAND', text: '统计工时的合计' });
   const st2 = E.reduce(st1, { type: 'PREVIEW' });
   assert.equal(st2.stage, 'PREVIEWED');
   const st3 = E.reduce(st2, { type: 'CONFIRM' });
   assert.equal(st3.stage, 'EXECUTED');
-  assert.equal(st3.rows.length, 4, '原始 3 行 + 1 汇总行');
-  const last = st3.rows[3];
-  assert.equal(last['工时'], 430);
-  assert.ok(String(last['姓名']).indexOf('汇总') === 0, '首列应放汇总标签');
-  assert.ok(st3.appendedSummary && st3.appendedSummary.value === 430);
+  assert.equal(st3.rows.length, 3, '原数据行保持不变（3 行），汇总不追加进本表');
+  assert.ok(st3.appendedSummarySheet, '应标记独立 sheet 元数据');
+  assert.equal(st3.appendedSummarySheet.sheetName, '汇总');
+  assert.equal(st3.appendedSummarySheet.value, 430);
+  assert.equal(st3.appendedSummarySheet.column, '工时');
+  assert.ok(!st3.appendedSummary, '不应再有旧的同表追加标记');
 });
 
-test('sum 桥 append-summary 真写盘：追加一行、原数据不动（纯 IO 闭环）', function () {
+test('sum 桥 write-summary-sheet 真写盘：新建独立「汇总」sheet、原数据表不动（纯 IO 闭环）', function () {
   const { spawnSync } = require('child_process');
   const fs = require('fs');
   const os = require('os');
@@ -95,10 +96,9 @@ test('sum 桥 append-summary 真写盘：追加一行、原数据不动（纯 IO
   }
   const py = hasPython();
   if (!py) { test.skip; return; }
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-sum-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wb-sumsheet-'));
   const file = path.join(dir, 'data.xlsx');
   const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
-  // 建表
   const struct = path.join(dir, 's.json');
   fs.writeFileSync(struct, JSON.stringify({
     primaryKey: '姓名',
@@ -107,17 +107,24 @@ test('sum 桥 append-summary 真写盘：追加一行、原数据不动（纯 IO
   }), 'utf8');
   let r = spawnSync(py, [bridge, 'create', file, struct], { encoding: 'utf8' });
   assert.equal(r.status, 0, 'create 应成功: ' + (r.stderr || ''));
-  // 追加汇总
+  // 写独立汇总 sheet
   const sumFile = path.join(dir, 'sum.json');
-  fs.writeFileSync(sumFile, JSON.stringify({ label: '汇总·合计', column: '工时', value: 430 }), 'utf8');
-  r = spawnSync(py, [bridge, 'append-summary', file, sumFile], { encoding: 'utf8' });
-  assert.equal(r.status, 0, 'append-summary 应成功: ' + (r.stderr || ''));
-  // 读回校验
+  fs.writeFileSync(sumFile, JSON.stringify({ sheetName: '汇总', column: '工时', agg: 'sum', label: '合计', value: 430, count: 3 }), 'utf8');
+  r = spawnSync(py, [bridge, 'write-summary-sheet', file, sumFile], { encoding: 'utf8' });
+  assert.equal(r.status, 0, 'write-summary-sheet 应成功: ' + (r.stderr || ''));
+  // 读回原数据表（应仍 3 行、不被改）
   const rv = spawnSync(py, [bridge, 'read-values', file], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
   assert.equal(rv.status, 0, 'read-values 应成功');
   const parsed = JSON.parse(rv.stdout);
-  assert.equal(parsed.rows.length, 4, '应 4 行（3 数据 + 1 汇总）');
-  assert.equal(parsed.rows[3]['工时'], 430);
-  assert.ok(String(parsed.rows[3]['姓名']).indexOf('汇总') === 0);
-  assert.equal(parsed.rows[0]['工时'], 160, '原始首行不应被改');
+  assert.equal(parsed.rows.length, 3, '原数据表应仍 3 行（汇总不改进本表）');
+  assert.equal(parsed.rows[0]['工时'], 160);
+  // 校验「汇总」sheet 存在且有聚合值 430
+  const verify = spawnSync(py, ['-c',
+    'import openpyxl,sys,json;wb=openpyxl.load_workbook(sys.argv[1]);' +
+    'print(json.dumps({"sheets":wb.sheetnames,"val":wb["汇总"]["B2"].value}))', file],
+    { encoding: 'utf8' });
+  assert.equal(verify.status, 0, '校验脚本应成功: ' + (verify.stderr || ''));
+  const info = JSON.parse(verify.stdout);
+  assert.ok(info.sheets.indexOf('汇总') !== -1, '应存在「汇总」sheet');
+  assert.equal(info.val, 430, '「汇总」sheet B2 应为聚合值 430');
 });
