@@ -153,7 +153,7 @@ function buildReport(opts) {
   return report;
 }
 
-module.exports = { runLocalProbe, runCloudProbes, buildReport };
+module.exports = { runLocalProbe, runCloudProbes, buildReport, locateCli };
 
 // —— 票 #27：持凭据真跑云端链路并把结果登记为矩阵「持凭据实测佐证」（不翻 true）——
 // 需要本机环境变量凭据（FEISHU_APP_ID/SECRET、TENCENT_ACCESS_TOKEN/CLIENT_ID/OPEN_ID）；

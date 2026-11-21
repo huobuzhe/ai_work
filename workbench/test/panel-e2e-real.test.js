@@ -85,6 +85,19 @@ function loadBody() {
 
 const waitTick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
 
+// 反复渲染 + 让出事件循环，直到渲染文本匹配 re 或超时；返回最后一棵树。
+// 消除「异步 action/fetch 尚未落回 hook 就断言」的时序抖动（CI 机器快慢差异致偶发假失败）。
+async function renderUntilContains(shim, body, mkProps, re, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 8000);
+  let tree = null;
+  while (Date.now() < deadline) {
+    await waitTick(5);
+    shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+    if (re.test(textOf(tree).join(' '))) return tree;
+  }
+  return tree;
+}
+
 // ---------- 真实 xlsx fixture（python openpyxl，2 列 4 行：姓名/工时/时薪）----------
 function pyRead(file) {
   const bridge = path.join(__dirname, '..', 'scripts', 'xlsx_bridge.py');
@@ -184,8 +197,7 @@ test('票 #56 真实端到端：真面板 输入→理解→预览→确认，sw
   let btn = findByAttr(tree, 'data-wb-action', 'understand');
   assert.ok(btn && btn.props.onClick, '应有理解按钮');
   btn.props.onClick({ preventDefault() {} });
-  await waitTick(10);
-  shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+  tree = await renderUntilContains(shim, body, mkProps, /已理解成/);
   const afterUnderstand = textOf(tree).join(' ');
   assert.doesNotMatch(afterUnderstand, /输入框是空的/, '理解不应再报「输入框是空的」（bug ②）');
   assert.doesNotMatch(afterUnderstand, /按钮库里还没有这个按钮/, '理解不应触发 RUN_BUTTON 报错（bug ①）');
@@ -199,8 +211,7 @@ test('票 #56 真实端到端：真面板 输入→理解→预览→确认，sw
   btn = findByAttr(tree, 'data-wb-action', 'preview');
   assert.ok(btn && !btn.props.disabled, '预览按钮可用');
   btn.props.onClick({ preventDefault() {} });
-  await waitTick(10);
-  shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+  tree = await renderUntilContains(shim, body, mkProps, /影响 4 行/);
   const afterPreview = textOf(tree).join(' ');
   assert.doesNotMatch(afterPreview, /字段A 与 字段B 不能相同/, 'swap 列名应解析成真实列，不撞默认列名（bug ③）');
   assert.match(afterPreview, /影响 4 行/, '预览应显示影响 4 行');
@@ -209,8 +220,7 @@ test('票 #56 真实端到端：真面板 输入→理解→预览→确认，sw
   btn = findByAttr(tree, 'data-wb-action', 'confirm');
   assert.ok(btn && !btn.props.disabled, '确认按钮可用（PREVIEWED）');
   btn.props.onClick({ preventDefault() {} });
-  await waitTick(30);
-  shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+  tree = await renderUntilContains(shim, body, mkProps, /已写入磁盘/);
   const afterConfirm = textOf(tree).join(' ');
   assert.match(afterConfirm, /已写入磁盘/, '确认后应提示已写入磁盘');
 

@@ -131,8 +131,13 @@ test('AC4 落盘 capability-matrix.md 与 renderMarkdown() 一致（改矩阵须
   assert.equal(onDisk, fresh, '落盘矩阵与本模块 renderMarkdown() 不一致（已忽略持凭据实测佐证）——矩阵结构变了请重新生成产物');
 });
 
-test('AC5 本地 Excel 探针真跑四格全过（=C2*D2 写存活 + 重算值正确）', function () {
-  const { runLocalProbe } = require('../scripts/capability-probe');
+test('AC5 本地 Excel 探针真跑四格全过（=C2*D2 写存活 + 重算值正确）', function (t) {
+  const { runLocalProbe, locateCli } = require('../scripts/capability-probe');
+  // 本探针需要 bundled LibreOffice Kit CLI（仅开发者本机装、CI 无）。缺失时正当跳过，
+  // 而不是失败——能力位声明（local 四格 true）由其他静态测试守护，真跑只在有 LO 的环境验证。
+  const { existsSync } = require('node:fs');
+  const cli = locateCli();
+  if (!cli || !existsSync(cli)) { t.skip('本机无 bundled LibreOffice Kit CLI（WORKBENCH_LO_CLI 未设或路径不存在），跳过真跑'); return; }
   const r = runLocalProbe();
   assert.equal(r.canWriteFormula, true, '公式应写入并存活');
   assert.equal(r.canRecalc, true, '重算应得正确计算值');

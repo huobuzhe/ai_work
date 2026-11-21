@@ -92,6 +92,19 @@ function loadBody() {
 
 const waitTick = (ms) => new Promise((r) => setTimeout(r, ms || 0));
 
+// 反复渲染 + 让出事件循环，直到某个 data-* 元素出现或超时；返回最后一棵渲染树。
+// 用来消除「异步 /state 拉数尚未落到 hook 就断言」的时序抖动（CI 快机器上偶发假失败）。
+async function renderUntilData(shim, body, mkProps, attrKey, timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 4000);
+  let tree = null;
+  while (Date.now() < deadline) {
+    await waitTick(0);
+    shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+    if (findByAttr(tree, attrKey, '1')) return tree;
+  }
+  return tree;
+}
+
 function pyBridgeBin() {
   return process.platform === 'win32' ? ['python', 'py', 'python3'] : ['python3', 'python'];
 }
@@ -181,8 +194,10 @@ for (const kind of ACTIONS) {
     const mkProps = () => ({ useTabInfo: () => ({ tab: { contentId: 'dsh-resource://file/absolute/' + file.replace(/\\/g, '/') } }) });
     shim.reset(); shim.beginRender();
     let tree = body(mkProps()); shim.finishRender();
-    await waitTick(0);
-    shim.beginRender(); tree = body(mkProps()); shim.finishRender();
+    // /state 拉数是异步的（fetch → .then → setSlot 要过几个微任务）。CI 上磁盘/python 更快时，
+    // 单次 waitTick(0) 可能在 setSlot 生效前就断言 → 假失败。这里轮询渲染直到原表出现或超时，
+    // 既消除时序抖动、又保留「必须真的显示出原表」的语义（超时仍失败）。
+    tree = await renderUntilData(shim, body, mkProps, 'data-workbench-orig-table');
 
     // 用户 m08197：打开文件时 tab 面板应直接显示原表（流式主区域 data-workbench-main 里含原表），
     // 浮窗按钮只作覆盖层（默认收起，点开才展开功能面板），pane 不再空白。
